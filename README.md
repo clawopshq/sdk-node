@@ -2,20 +2,20 @@
 
 [ClawOps Voice API](https://api.claw-ops.com/docs)의 공식 Node.js/TypeScript 라이브러리입니다.
 
-[![npm version](https://img.shields.io/npm/v/claw-ops.svg)](https://www.npmjs.com/package/claw-ops)
-[![Node.js 18+](https://img.shields.io/node/v/claw-ops.svg)](https://www.npmjs.com/package/claw-ops)
+[![npm version](https://img.shields.io/npm/v/@teamlearners/clawops.svg)](https://www.npmjs.com/package/@teamlearners/clawops)
+[![Node.js 18+](https://img.shields.io/node/v/@teamlearners/clawops.svg)](https://www.npmjs.com/package/@teamlearners/clawops)
 
 ## 설치
 
 ```bash
 # REST API SDK만 사용
-npm install claw-ops
+npm install @teamlearners/clawops
 
 # AI Agent 포함 (필요한 프로바이더를 함께 설치)
-npm install claw-ops ws openai                          # OpenAI Realtime 모드
-npm install claw-ops ws @google/genai                   # Gemini Realtime 모드
-npm install claw-ops ws @deepgram/sdk openai elevenlabs # Pipeline 모드 (OpenAI LLM)
-npm install claw-ops ws @deepgram/sdk @anthropic-ai/sdk elevenlabs # Pipeline 모드 (Anthropic LLM)
+npm install @teamlearners/clawops ws openai                          # OpenAI Realtime 모드
+npm install @teamlearners/clawops ws @google/genai                   # Gemini Realtime 모드
+npm install @teamlearners/clawops ws @deepgram/sdk openai elevenlabs # Pipeline 모드 (OpenAI LLM)
+npm install @teamlearners/clawops ws @deepgram/sdk @anthropic-ai/sdk elevenlabs # Pipeline 모드 (Anthropic LLM)
 ```
 
 ## AI Agent (음성 에이전트)
@@ -23,7 +23,7 @@ npm install claw-ops ws @deepgram/sdk @anthropic-ai/sdk elevenlabs # Pipeline �
 `ClawOpsAgent`를 사용하면 한 줄로 인바운드 전화를 AI로 처리할 수 있습니다. ngrok 없이 WebSocket 역방향 연결로 동작합니다.
 
 ```typescript
-import { ClawOpsAgent, OpenAIRealtime } from 'claw-ops/agent';
+import { ClawOpsAgent, OpenAIRealtime } from '@teamlearners/clawops/agent';
 
 const agent = new ClawOpsAgent({
   from: '07012341234',
@@ -50,11 +50,11 @@ await agent.serve(); // Ctrl+C로 종료
 MCP 서버를 연결하여 AI에게 외부 도구를 제공할 수 있습니다.
 
 ```bash
-npm install claw-ops ws @modelcontextprotocol/sdk
+npm install @teamlearners/clawops ws @modelcontextprotocol/sdk
 ```
 
 ```typescript
-import { ClawOpsAgent, OpenAIRealtime, mcpServerStdio, mcpServerHTTP } from 'claw-ops/agent';
+import { ClawOpsAgent, OpenAIRealtime, mcpServerStdio, mcpServerHTTP } from '@teamlearners/clawops/agent';
 
 const agent = new ClawOpsAgent({
   from: '07012341234',
@@ -77,7 +77,7 @@ MCP 서버는 전화가 올 때마다 자동으로 시작되고, 통화 종료 �
 통화 흐름, MCP 도구 호출, LLM 세션을 OpenTelemetry로 추적할 수 있습니다.
 
 ```bash
-npm install claw-ops ws @opentelemetry/api @opentelemetry/sdk-trace-base @opentelemetry/exporter-trace-otlp-grpc
+npm install @teamlearners/clawops ws @opentelemetry/api @opentelemetry/sdk-trace-base @opentelemetry/exporter-trace-otlp-grpc
 ```
 
 ```typescript
@@ -89,7 +89,7 @@ const provider = new NodeTracerProvider();
 provider.addSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter()));
 provider.register();
 
-import { ClawOpsAgent, OpenAIRealtime, setTracingConfig } from 'claw-ops/agent';
+import { ClawOpsAgent, OpenAIRealtime, setTracingConfig } from '@teamlearners/clawops/agent';
 
 setTracingConfig({ enabled: true, serviceName: 'my-call-center' });
 
@@ -107,7 +107,7 @@ const agent = new ClawOpsAgent({
 ## REST API 사용법
 
 ```typescript
-import ClawOps from 'claw-ops';
+import ClawOps from '@teamlearners/clawops';
 
 const client = new ClawOps({
   apiKey: 'sk_...',          // 또는 CLAWOPS_API_KEY 환경변수 사용
@@ -224,7 +224,7 @@ client.webhooks.verify({
 ## 에러 처리
 
 ```typescript
-import ClawOps, { BadRequestError, AuthenticationError, NotFoundError } from 'claw-ops';
+import ClawOps, { BadRequestError, AuthenticationError, NotFoundError } from '@teamlearners/clawops';
 
 const client = new ClawOps();
 

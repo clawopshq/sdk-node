@@ -5,7 +5,7 @@ Realtime API 대신 STT, LLM, TTS 제공자를 직접 조합하는 모드입니�
 ## 기본 사용법
 
 ```typescript
-import { ClawOpsAgent, PipelineSession, DeepgramSTT, OpenAILLM, ElevenLabsTTS } from 'claw-ops/agent';
+import { ClawOpsAgent, PipelineSession, DeepgramSTT, OpenAILLM, ElevenLabsTTS } from '@teamlearners/clawops/agent';
 
 const agent = new ClawOpsAgent({
   from: '07012341234',
@@ -44,7 +44,7 @@ PCM16 8kHz → PCM16 16kHz ──► STT ──► SpeechEvent
 Deepgram Nova 모델을 사용한 실시간 음성 인식.
 
 ```typescript
-import { DeepgramSTT } from 'claw-ops/agent';
+import { DeepgramSTT } from '@teamlearners/clawops/agent';
 
 const stt = new DeepgramSTT({
   model: 'nova-3',          // Deepgram 모델
@@ -66,7 +66,7 @@ const stt = new DeepgramSTT({
 OpenAI Chat Completions 스트리밍.
 
 ```typescript
-import { OpenAILLM } from 'claw-ops/agent';
+import { OpenAILLM } from '@teamlearners/clawops/agent';
 
 const llm = new OpenAILLM({
   model: 'gpt-4o-mini',     // 모델명
@@ -86,7 +86,7 @@ const llm = new OpenAILLM({
 Anthropic Claude Messages 스트리밍.
 
 ```typescript
-import { AnthropicLLM } from 'claw-ops/agent';
+import { AnthropicLLM } from '@teamlearners/clawops/agent';
 
 const llm = new AnthropicLLM({
   model: 'claude-sonnet-4-6',  // 모델명
@@ -106,7 +106,7 @@ const llm = new AnthropicLLM({
 Google Gemini 스트리밍.
 
 ```typescript
-import { GeminiLLM } from 'claw-ops/agent';
+import { GeminiLLM } from '@teamlearners/clawops/agent';
 
 const llm = new GeminiLLM({
   model: 'gemini-2.5-flash',  // 모델명
@@ -126,7 +126,7 @@ const llm = new GeminiLLM({
 Ollama 로컬 모델 스트리밍 (OpenAI 호환 API).
 
 ```typescript
-import { OllamaLLM } from 'claw-ops/agent';
+import { OllamaLLM } from '@teamlearners/clawops/agent';
 
 const llm = new OllamaLLM({
   model: 'llama3.2',           // Ollama 모델명
@@ -148,7 +148,7 @@ const llm = new OllamaLLM({
 Mistral AI 스트리밍 (OpenAI 호환 API).
 
 ```typescript
-import { MistralLLM } from 'claw-ops/agent';
+import { MistralLLM } from '@teamlearners/clawops/agent';
 
 const llm = new MistralLLM({ model: 'mistral-small-latest' });
 ```
@@ -160,7 +160,7 @@ const llm = new MistralLLM({ model: 'mistral-small-latest' });
 Groq 초저지연 스트리밍 (OpenAI 호환 API).
 
 ```typescript
-import { GroqLLM } from 'claw-ops/agent';
+import { GroqLLM } from '@teamlearners/clawops/agent';
 
 const llm = new GroqLLM({ model: 'meta-llama/llama-4-scout-17b-16e-instruct' });
 ```
@@ -172,7 +172,7 @@ const llm = new GroqLLM({ model: 'meta-llama/llama-4-scout-17b-16e-instruct' });
 Perplexity 웹 검색 기반 스트리밍 (OpenAI 호환 API).
 
 ```typescript
-import { PerplexityLLM } from 'claw-ops/agent';
+import { PerplexityLLM } from '@teamlearners/clawops/agent';
 
 const llm = new PerplexityLLM({ model: 'sonar' });
 ```
@@ -184,7 +184,7 @@ const llm = new PerplexityLLM({ model: 'sonar' });
 Together AI 스트리밍 (OpenAI 호환 API).
 
 ```typescript
-import { TogetherLLM } from 'claw-ops/agent';
+import { TogetherLLM } from '@teamlearners/clawops/agent';
 
 const llm = new TogetherLLM({ model: 'meta-llama/Llama-4-Scout-17B-16E-Instruct' });
 ```
@@ -196,7 +196,7 @@ const llm = new TogetherLLM({ model: 'meta-llama/Llama-4-Scout-17B-16E-Instruct'
 Fireworks AI 스트리밍 (OpenAI 호환 API).
 
 ```typescript
-import { FireworksLLM } from 'claw-ops/agent';
+import { FireworksLLM } from '@teamlearners/clawops/agent';
 
 const llm = new FireworksLLM({ model: 'accounts/fireworks/models/llama4-scout-instruct-basic' });
 ```
@@ -208,7 +208,7 @@ const llm = new FireworksLLM({ model: 'accounts/fireworks/models/llama4-scout-in
 DeepSeek 스트리밍 (OpenAI 호환 API).
 
 ```typescript
-import { DeepSeekLLM } from 'claw-ops/agent';
+import { DeepSeekLLM } from '@teamlearners/clawops/agent';
 
 const llm = new DeepSeekLLM({ model: 'deepseek-chat' });
 ```
@@ -220,7 +220,7 @@ const llm = new DeepSeekLLM({ model: 'deepseek-chat' });
 xAI Grok 스트리밍 (OpenAI 호환 API).
 
 ```typescript
-import { XaiLLM } from 'claw-ops/agent';
+import { XaiLLM } from '@teamlearners/clawops/agent';
 
 const llm = new XaiLLM({ model: 'grok-4-1-fast' });
 ```
@@ -232,7 +232,7 @@ const llm = new XaiLLM({ model: 'grok-4-1-fast' });
 ElevenLabs WebSocket 스트리밍 음성 합성.
 
 ```typescript
-import { ElevenLabsTTS } from 'claw-ops/agent';
+import { ElevenLabsTTS } from '@teamlearners/clawops/agent';
 
 const tts = new ElevenLabsTTS({
   voiceId: 'EXAVITQu4vr4xnSDxMaL',  // 음성 ID

@@ -4,18 +4,18 @@
 
 ```bash
 # 기본 (OpenAI Realtime 모드)
-npm install claw-ops ws openai
+npm install @teamlearners/clawops ws openai
 
 # Gemini Realtime 모드
-npm install claw-ops ws @google/genai
+npm install @teamlearners/clawops ws @google/genai
 
 # 파이프라인 모드
-npm install claw-ops ws @deepgram/sdk openai elevenlabs       # OpenAI LLM
-npm install claw-ops ws @deepgram/sdk @anthropic-ai/sdk elevenlabs  # Anthropic LLM
-npm install claw-ops ws @deepgram/sdk @google/genai elevenlabs # Gemini LLM
+npm install @teamlearners/clawops ws @deepgram/sdk openai elevenlabs       # OpenAI LLM
+npm install @teamlearners/clawops ws @deepgram/sdk @anthropic-ai/sdk elevenlabs  # Anthropic LLM
+npm install @teamlearners/clawops ws @deepgram/sdk @google/genai elevenlabs # Gemini LLM
 
 # MCP 서버 지원 포함
-npm install claw-ops ws @modelcontextprotocol/sdk
+npm install @teamlearners/clawops ws @modelcontextprotocol/sdk
 ```
 
 ## 환경변수
@@ -40,7 +40,7 @@ export ELEVENLABS_API_KEY="..."          # Pipeline: ElevenLabsTTS
 ## 최소 예제
 
 ```typescript
-import { ClawOpsAgent, OpenAIRealtime } from 'claw-ops/agent';
+import { ClawOpsAgent, OpenAIRealtime } from '@teamlearners/clawops/agent';
 
 const agent = new ClawOpsAgent({
   from: '07012341234',
@@ -57,7 +57,7 @@ await agent.serve(); // Ctrl+C로 종료
 ## 설정 옵션
 
 ```typescript
-import { ClawOpsAgent, OpenAIRealtime } from 'claw-ops/agent';
+import { ClawOpsAgent, OpenAIRealtime } from '@teamlearners/clawops/agent';
 
 const agent = new ClawOpsAgent({
   // 필수
@@ -84,7 +84,7 @@ const agent = new ClawOpsAgent({
 ### Gemini Realtime 사용 시
 
 ```typescript
-import { ClawOpsAgent, GeminiRealtime } from 'claw-ops/agent';
+import { ClawOpsAgent, GeminiRealtime } from '@teamlearners/clawops/agent';
 
 const agent = new ClawOpsAgent({
   from: '07012341234',
@@ -110,7 +110,7 @@ const agent = new ClawOpsAgent({
 ## 발신 (Outbound Call)
 
 ```typescript
-import { ClawOpsAgent, OpenAIRealtime } from 'claw-ops/agent';
+import { ClawOpsAgent, OpenAIRealtime } from '@teamlearners/clawops/agent';
 
 const agent = new ClawOpsAgent({
   from: '07012345678',
@@ -140,8 +140,8 @@ const session2 = await agent.call('01012345678');
 ## 에러 처리
 
 ```typescript
-import { ClawOpsAgent, OpenAIRealtime } from 'claw-ops/agent';
-import { AgentError, AgentConnectionError } from 'claw-ops';
+import { ClawOpsAgent, OpenAIRealtime } from '@teamlearners/clawops/agent';
+import { AgentError, AgentConnectionError } from '@teamlearners/clawops';
 
 const agent = new ClawOpsAgent({
   from: '07012341234',

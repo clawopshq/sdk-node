@@ -5,8 +5,8 @@ STT, LLM, TTS 제공자를 직접 구현하여 파이프라인 모드에서 사�
 ## 인터페이스 정의
 
 ```typescript
-import type { STT, LLM, TTS, SpeechEvent, ConversationMessage, LLMChunk } from 'claw-ops/agent';
-import type { ToolRegistry } from 'claw-ops/agent';
+import type { STT, LLM, TTS, SpeechEvent, ConversationMessage, LLMChunk } from '@teamlearners/clawops/agent';
+import type { ToolRegistry } from '@teamlearners/clawops/agent';
 ```
 
 ### SpeechEvent
@@ -49,7 +49,7 @@ interface STT {
 ### 예시: Whisper 기반 STT
 
 ```typescript
-import type { SpeechEvent } from 'claw-ops/agent';
+import type { SpeechEvent } from '@teamlearners/clawops/agent';
 
 class WhisperSTT {
   private model: string;
@@ -166,8 +166,8 @@ interface LLM {
 ### 예시: 커스텀 LLM
 
 ```typescript
-import type { ConversationMessage, LLMChunk } from 'claw-ops/agent';
-import type { ToolRegistry } from 'claw-ops/agent';
+import type { ConversationMessage, LLMChunk } from '@teamlearners/clawops/agent';
+import type { ToolRegistry } from '@teamlearners/clawops/agent';
 
 class MyLLM {
   async *generate(
@@ -263,7 +263,7 @@ get sampleRate(): number {
 ## 제공자 조합 예시
 
 ```typescript
-import { ClawOpsAgent, PipelineSession, DeepgramSTT, AnthropicLLM } from 'claw-ops/agent';
+import { ClawOpsAgent, PipelineSession, DeepgramSTT, AnthropicLLM } from '@teamlearners/clawops/agent';
 
 // Deepgram STT + Anthropic Claude LLM + Google TTS
 const agent = new ClawOpsAgent({

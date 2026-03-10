@@ -19,7 +19,7 @@ const provider = new NodeTracerProvider();
 provider.addSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter()));
 provider.register();
 
-import { ClawOpsAgent, OpenAIRealtime, setTracingConfig } from 'claw-ops/agent';
+import { ClawOpsAgent, OpenAIRealtime, setTracingConfig } from '@teamlearners/clawops/agent';
 
 setTracingConfig({
   enabled: true,

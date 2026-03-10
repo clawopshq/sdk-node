@@ -5,7 +5,7 @@ MCP(Model Context Protocol) 서버를 연결하여 AI에게 외부 도구를 제
 ## 설치
 
 ```bash
-npm install claw-ops ws @modelcontextprotocol/sdk
+npm install @teamlearners/clawops ws @modelcontextprotocol/sdk
 ```
 
 > `@modelcontextprotocol/sdk` 없이 `mcpServers`를 설정하면 `AgentError: MCP 서버를 사용하려면 npm install @modelcontextprotocol/sdk 를 실행하세요.` 에러가 발생합니다.
@@ -13,7 +13,7 @@ npm install claw-ops ws @modelcontextprotocol/sdk
 ## 사용법
 
 ```typescript
-import { ClawOpsAgent, OpenAIRealtime, mcpServerHTTP, mcpServerStdio } from 'claw-ops/agent';
+import { ClawOpsAgent, OpenAIRealtime, mcpServerHTTP, mcpServerStdio } from '@teamlearners/clawops/agent';
 
 const agent = new ClawOpsAgent({
   from: '07012341234',

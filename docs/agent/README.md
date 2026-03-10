@@ -59,7 +59,7 @@ WebSocket 역방향 연결 방식으로 ngrok 없이 로컬에서 바로 실행�
 OpenAI Realtime API를 사용한 Speech-to-Speech 방식.
 
 ```typescript
-import { ClawOpsAgent, OpenAIRealtime } from 'claw-ops/agent';
+import { ClawOpsAgent, OpenAIRealtime } from '@teamlearners/clawops/agent';
 
 const agent = new ClawOpsAgent({
   from: '07012341234',
@@ -74,7 +74,7 @@ const agent = new ClawOpsAgent({
 Google Gemini Live API를 사용한 Speech-to-Speech 방식.
 
 ```typescript
-import { ClawOpsAgent, GeminiRealtime } from 'claw-ops/agent';
+import { ClawOpsAgent, GeminiRealtime } from '@teamlearners/clawops/agent';
 
 const agent = new ClawOpsAgent({
   from: '07012341234',
@@ -90,8 +90,8 @@ const agent = new ClawOpsAgent({
 STT, LLM, TTS 제공자를 직접 조합합니다. 제공자를 자유롭게 교체할 수 있습니다.
 
 ```typescript
-import { ClawOpsAgent } from 'claw-ops/agent';
-import { PipelineSession, DeepgramSTT, OpenAILLM, ElevenLabsTTS } from 'claw-ops/agent';
+import { ClawOpsAgent } from '@teamlearners/clawops/agent';
+import { PipelineSession, DeepgramSTT, OpenAILLM, ElevenLabsTTS } from '@teamlearners/clawops/agent';
 
 const agent = new ClawOpsAgent({
   from: '07012341234',

@@ -1,0 +1,71 @@
+{
+  "name": "claw-ops",
+  "version": "0.1.0",
+  "description": "Official Node.js/TypeScript SDK for the ClawOps Voice API",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    },
+    "./agent": {
+      "import": "./dist/agent/index.js",
+      "require": "./dist/agent/index.cjs",
+      "types": "./dist/agent/index.d.ts"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts'",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
+  "peerDependencies": {
+    "ws": "^8.0.0",
+    "openai": ">=4.0.0",
+    "@anthropic-ai/sdk": ">=0.30.0",
+    "@google/genai": ">=1.0.0",
+    "@deepgram/sdk": ">=3.0.0",
+    "elevenlabs": ">=1.0.0",
+    "@modelcontextprotocol/sdk": ">=1.0.0",
+    "@opentelemetry/api": ">=1.20.0"
+  },
+  "peerDependenciesMeta": {
+    "ws": { "optional": true },
+    "openai": { "optional": true },
+    "@anthropic-ai/sdk": { "optional": true },
+    "@google/genai": { "optional": true },
+    "@deepgram/sdk": { "optional": true },
+    "elevenlabs": { "optional": true },
+    "@modelcontextprotocol/sdk": { "optional": true },
+    "@opentelemetry/api": { "optional": true }
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^3.0.0",
+    "prettier": "^3.2.0",
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.0.0",
+    "ws": "^8.0.0"
+  },
+  "keywords": ["clawops", "claw-ops", "voice", "api", "sdk", "telephony"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/clawops/clawops-node"
+  }
+}

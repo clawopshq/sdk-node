@@ -1,0 +1,39 @@
+/**
+ * Tracing module exports.
+ */
+
+export type { TracingConfig } from './config.js';
+export { getTracingConfig, setTracingConfig, resetTracingConfig } from './config.js';
+
+export {
+  ATTR_CALL_ID,
+  ATTR_CALL_DIRECTION,
+  ATTR_CALL_FROM,
+  ATTR_CALL_TO,
+  ATTR_CALL_STATUS,
+  ATTR_CALL_DURATION,
+  ATTR_AGENT_ID,
+  ATTR_AGENT_SESSION_TYPE,
+  ATTR_STT_PROVIDER,
+  ATTR_STT_MODEL,
+  ATTR_STT_LANGUAGE,
+  ATTR_STT_TRANSCRIPT,
+  ATTR_LLM_PROVIDER,
+  ATTR_LLM_MODEL,
+  ATTR_LLM_PROMPT_TOKENS,
+  ATTR_LLM_COMPLETION_TOKENS,
+  ATTR_LLM_TOTAL_TOKENS,
+  ATTR_TTS_PROVIDER,
+  ATTR_TTS_VOICE,
+  ATTR_TTS_MODEL,
+  ATTR_TOOL_NAME,
+  ATTR_TOOL_RESULT,
+  ATTR_TOOL_ERROR,
+  ATTR_MCP_SERVER_NAME,
+  ATTR_MCP_SERVER_TYPE,
+  ATTR_AUDIO_SAMPLE_RATE,
+  ATTR_AUDIO_ENCODING,
+  ATTR_AUDIO_DURATION,
+} from './attributes.js';
+
+export { startSpan, withSpan } from './spans.js';

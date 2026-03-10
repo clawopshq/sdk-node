@@ -302,6 +302,12 @@ const client = new ClawOps({
 
 - **[AI Agent 가이드](docs/agent/)** — 음성 에이전트 상세 사용법, 파이프라인 모드, 커스텀 제공자, MCP 연동
 
+## 다른 언어
+
+| 언어 | 패키지 | 저장소 |
+|------|--------|--------|
+| Python | [`clawops`](https://pypi.org/project/clawops/) | [clawops-python](https://github.com/learners-superpumped/clawops-python) |
+
 ## 요구사항
 
 - Node.js 18+

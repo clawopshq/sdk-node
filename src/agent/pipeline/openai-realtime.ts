@@ -8,6 +8,7 @@ import type { CallSession } from '../session.js';
 import type { ToolRegistry } from '../tool.js';
 import type { AudioRecorder } from '../recorder.js';
 import type { Session } from './base.js';
+import { ulawToPcm16 } from '../audio.js';
 
 const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime?model=';
 
@@ -254,7 +255,7 @@ export class OpenAIRealtime implements Session {
     const ulaw = Buffer.from(msg['delta'] as string, 'base64');
 
     if (this._recorder) {
-      this._recorder.writeRawOutbound(ulaw);
+      this._recorder.writeOutbound(ulawToPcm16(ulaw));
     }
 
     // Align to 160B (20ms at 8kHz ulaw) frames, matching Python SDK

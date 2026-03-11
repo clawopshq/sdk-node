@@ -251,7 +251,10 @@ export class PipelineSession implements Session {
       })) {
         if (!this._running || !this._speaking) break;
         if (this._recorder) {
-          this._recorder.writeRawOutbound(audioChunk);
+          const pcm8k = this._sampleRate !== 8000
+            ? resamplePcm16(audioChunk, this._sampleRate, 8000)
+            : audioChunk
+          this._recorder.writeOutbound(pcm8k)
         }
         // Resample TTS output → 8kHz → ulaw, send in 160B frames
         const pcm8k = resamplePcm16(audioChunk, this._sampleRate, 8000);

@@ -315,7 +315,7 @@ export class GeminiRealtime implements Session {
 
     const pcm24k = Buffer.from(b64Data, 'base64');
     if (this._recorder) {
-      this._recorder.writeRawOutbound(pcm24k);
+      this._recorder.writeOutbound(resamplePcm16(pcm24k, 24000, 8000));
     }
 
     // PCM16 24kHz → PCM16 8kHz → G.711 ulaw

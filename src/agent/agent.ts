@@ -363,8 +363,8 @@ export class ClawOpsAgent {
         // Set up recorder if configured
         let recorder: AudioRecorder | null = null;
         if (this._recording) {
-          recorder = new AudioRecorder({ outputDir: this._recordingPath });
-          recorder.start(session.callId);
+          recorder = new AudioRecorder(this._recordingPath, session.callId);
+          recorder.start();
         }
 
         // Connect media WebSocket

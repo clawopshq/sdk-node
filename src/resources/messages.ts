@@ -20,6 +20,7 @@ export class Messages extends APIResource {
       Body: params.body,
       Type: params.type,
       Subject: params.subject,
+      MediaUrl: params.mediaUrl,
     });
     return this._client._post(`${this._basePath}/messages`, {
       body,

@@ -8,6 +8,8 @@ export const MessageSchema = z
     to: z.string(),
     from: z.string(),
     body: z.string().nullable().optional(),
+    numMedia: z.number(),
+    mediaUrl: z.array(z.string()),
     direction: z.enum(['outbound', 'inbound']),
     accountId: z.string(),
     dateCreated: z.string(),

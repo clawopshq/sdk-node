@@ -4,6 +4,7 @@ export interface MessageCreateParams {
   body: string;
   type?: 'sms' | 'mms' | 'rcs' | 'kakao';
   subject?: string;
+  mediaUrl?: string[];
 }
 
 export interface MessageListParams {

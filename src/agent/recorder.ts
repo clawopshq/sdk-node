@@ -73,17 +73,18 @@ export class AudioRecorder {
 
   private _expectedBytes(): number {
     const elapsed = (performance.now() - this._startTime) / 1000 // ms → s
-    return (Math.floor(elapsed * BYTES_PER_SECOND) & ~1) // 2-byte align
+    return Math.floor(elapsed * BYTES_PER_SECOND)
   }
 
   private _padSilence(fd: number, written: number): number {
     const expected = this._expectedBytes()
-    const gap = expected - written
+    let gap = expected - written
+    if (gap <= 0) return 0
+    gap = gap - (gap % 2) // 2-byte align
     if (gap > 0) {
       fs.writeSync(fd, Buffer.alloc(gap))
-      return written + gap
     }
-    return written
+    return gap
   }
 
   private _writeToMix(data: Buffer, trackPos: number): void {
@@ -105,18 +106,24 @@ export class AudioRecorder {
     } else {
       // No overlap: pad gap if needed, then write
       if (trackPos > this._mixWritten) {
-        const gap = Buffer.alloc(trackPos - this._mixWritten)
-        fs.writeSync(this._fdMix, gap, 0, gap.length, 44 + this._mixWritten)
+        let gap = trackPos - this._mixWritten
+        gap = gap - (gap % 2) // 2-byte align
+        if (gap > 0) {
+          const silence = Buffer.alloc(gap)
+          fs.writeSync(this._fdMix, silence, 0, silence.length, 44 + this._mixWritten)
+          this._mixWritten += gap
+        }
       }
-      fs.writeSync(this._fdMix, data, 0, data.length, filePos)
-      this._mixWritten = trackPos + data.length
+      fs.writeSync(this._fdMix, data, 0, data.length, 44 + this._mixWritten)
+      this._mixWritten += data.length
     }
   }
 
   writeInbound(pcm16_8k: Buffer): void {
     if (!this._started || this._fdIn === null) return
     try {
-      this._inWritten = this._padSilence(this._fdIn, this._inWritten)
+      const gap = this._padSilence(this._fdIn, this._inWritten)
+      this._inWritten += gap
       const posBefore = this._inWritten
       fs.writeSync(this._fdIn, pcm16_8k)
       this._inWritten += pcm16_8k.length
@@ -129,7 +136,8 @@ export class AudioRecorder {
   writeOutbound(pcm16_8k: Buffer): void {
     if (!this._started || this._fdOut === null) return
     try {
-      this._outWritten = this._padSilence(this._fdOut, this._outWritten)
+      const gap = this._padSilence(this._fdOut, this._outWritten)
+      this._outWritten += gap
       const posBefore = this._outWritten
       fs.writeSync(this._fdOut, pcm16_8k)
       this._outWritten += pcm16_8k.length

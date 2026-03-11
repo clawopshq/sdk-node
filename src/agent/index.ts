@@ -19,7 +19,6 @@ export { pcm16ToUlaw, ulawToPcm16, resamplePcm16, DECODE_TABLE } from './audio.j
 
 // Recorder
 export { AudioRecorder } from './recorder.js';
-export type { RecorderOptions } from './recorder.js';
 
 // Pipeline
 export type { Session, STT, LLM, TTS, SpeechEvent, ConversationMessage, LLMChunk } from './pipeline/index.js';

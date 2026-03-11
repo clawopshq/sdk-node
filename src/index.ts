@@ -20,6 +20,7 @@ export {
   NotFoundError,
   ConflictError,
   UnprocessableEntityError,
+  RateLimitError,
   InternalServerError,
   ServiceUnavailableError,
   AgentError,

@@ -112,6 +112,25 @@ export class UnprocessableEntityError extends APIStatusError {
   }
 }
 
+/**
+ * HTTP 429 Too Many Requests.
+ *
+ * 동시 통화 한도 초과 등 일시적 제한. SDK는 자동 재시도(최대 2회, 지수 backoff)를 수행한다.
+ * 즉각 피드백이 필요하면 client 생성 시 maxRetries: 0으로 재시도를 비활성화하라.
+ */
+export class RateLimitError extends APIStatusError {
+  override readonly status = 429 as const;
+  constructor(
+    message: string,
+    response: { status: number; headers?: Headers },
+    body: unknown,
+    request: { method: string; url: string },
+  ) {
+    super(message, response, body, request);
+    this.name = 'RateLimitError';
+  }
+}
+
 export class InternalServerError extends APIStatusError {
   override readonly status = 500 as const;
   constructor(
@@ -191,6 +210,7 @@ const STATUS_CODE_TO_ERROR: Record<
   404: NotFoundError,
   409: ConflictError,
   422: UnprocessableEntityError,
+  429: RateLimitError,
   500: InternalServerError,
   503: ServiceUnavailableError,
 };

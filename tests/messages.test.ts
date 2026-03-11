@@ -27,6 +27,8 @@ const sampleMessage = {
   to: '+15551234567',
   from: '+15559876543',
   body: 'Hello World',
+  numMedia: 0,
+  mediaUrl: [],
   direction: 'outbound',
   accountId: 'AC_test',
   dateCreated: '2024-01-01T00:00:00Z',

@@ -1,7 +1,8 @@
 /**
  * Google Gemini Realtime API session (speech-to-speech).
  *
- * Matches Python SDK's GeminiRealtime implementation.
+ * Uses @google/genai SDK's live.connect() method.
+ * Matches Python SDK's GeminiRealtime implementation (v0.14.0).
  */
 
 import type { CallSession } from '../session.js';
@@ -142,8 +143,6 @@ export interface GeminiRealtimeOptions {
   language?: string;
   /** Send initial greeting. Default: true */
   greeting?: boolean;
-  /** Generation config overrides. */
-  generationConfig?: Record<string, unknown>;
 }
 
 export class GeminiRealtime implements Session {
@@ -153,9 +152,9 @@ export class GeminiRealtime implements Session {
   private _voice: string;
   private _language: string;
   private _greeting: boolean;
-  private _generationConfig: Record<string, unknown> | undefined;
 
-  private _ws: import('ws').WebSocket | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private _session: any = null;
   private _call: CallSession | null = null;
   private _tools: ToolRegistry | null = null;
   private _recorder: AudioRecorder | null = null;
@@ -170,7 +169,6 @@ export class GeminiRealtime implements Session {
     this._voice = options.voice ?? 'Kore';
     this._language = options.language ?? 'ko';
     this._greeting = options.greeting ?? true;
-    this._generationConfig = options.generationConfig;
   }
 
   /** Inject per-call ToolRegistry. */
@@ -194,99 +192,93 @@ export class GeminiRealtime implements Session {
       throw new Error('Google API key is required. Set GOOGLE_API_KEY or pass apiKey option.');
     }
 
-    const { WebSocket } = await import('ws');
-    const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${this._apiKey}`;
+    const { GoogleGenAI } = await import('@google/genai');
+    const client = new GoogleGenAI({ apiKey: this._apiKey });
 
-    this._ws = new WebSocket(url);
+    // Build config (Stage 1 + Stage 2 only)
+    const config: Record<string, unknown> = {
+      responseModalities: ['AUDIO'],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: this._voice,
+          },
+        },
+      },
+      inputAudioTranscription: {},
+      outputAudioTranscription: {},
+    };
 
-    return new Promise<void>((resolve, reject) => {
-      const ws = this._ws!;
+    if (this._systemPrompt) {
+      config['systemInstruction'] = this._systemPrompt;
+    }
 
-      ws.on('open', () => {
-        this._sendSetup();
-        // Wait for setupComplete before resolving
-        this._waitSetupComplete().then(() => {
-          if (this._greeting) {
-            this._sendGreeting();
-          }
-          // Start receive loop
-          this._receiveLoop();
-          resolve();
-        }).catch(reject);
-      });
+    // Tools
+    const toolSchemas = this._buildToolSchemas();
+    if (toolSchemas.length > 0) {
+      config['tools'] = [{ functionDeclarations: toolSchemas }];
+    }
 
-      ws.on('close', () => {
-        this._closed = true;
-      });
-
-      ws.on('error', (err: Error) => {
-        if (!this._ws) {
-          reject(err);
-        }
-        console.error('[GeminiRealtime] WebSocket error:', err.message);
-      });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this._session = await (client as any).live.connect({
+      model: this._model,
+      config,
+      callbacks: {
+        onmessage: (msg: Record<string, unknown>) => this._handleMessage(msg),
+        onerror: (err: Error) => {
+          console.error('[GeminiRealtime] SDK error:', err.message);
+        },
+        onclose: () => {
+          this._closed = true;
+        },
+      },
     });
+
+    // Send greeting
+    if (this._greeting) {
+      this._session.sendClientContent({
+        turns: [
+          {
+            role: 'user',
+            parts: [{ text: '인사해 주세요.' }],
+          },
+        ],
+        turnComplete: true,
+      });
+    }
   }
 
   feedAudio(audio: Buffer): void {
-    if (this._ws && this._ws.readyState === 1 && !this._closed) {
+    if (this._session && !this._closed) {
       // G.711 ulaw 8kHz → PCM16 8kHz → PCM16 16kHz
       const pcm8k = ulawToPcm16(audio);
+      if (this._recorder) {
+        this._recorder.writeInbound(pcm8k);
+      }
       const pcm16k = resamplePcm16(pcm8k, 8000, 16000);
 
-      this._ws.send(
-        JSON.stringify({
-          realtimeInput: {
-            mediaChunks: [
-              {
-                mimeType: 'audio/pcm;rate=16000',
-                data: pcm16k.toString('base64'),
-              },
-            ],
-          },
-        }),
-      );
+      this._session.sendRealtimeInput({
+        audio: {
+          data: pcm16k,
+          mimeType: 'audio/pcm;rate=16000',
+        },
+      });
     }
   }
 
   async stop(): Promise<void> {
     this._closed = true;
-    if (this._ws) {
-      this._ws.close();
-      this._ws = null;
+    if (this._session) {
+      try {
+        this._session.close();
+      } catch {
+        // Ignore close errors
+      }
+      this._session = null;
     }
   }
 
-  private _sendSetup(): void {
-    if (!this._ws || this._ws.readyState !== 1) return;
-
-    const setupConfig: Record<string, unknown> = {
-      model: `models/${this._model}`,
-      generationConfig: {
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName: this._voice,
-            },
-          },
-        },
-        ...this._generationConfig,
-      },
-      realtimeInputConfig: {
-        automaticActivityDetection: {
-          disabled: false,
-        },
-      },
-    };
-
-    if (this._systemPrompt) {
-      setupConfig['systemInstruction'] = {
-        parts: [{ text: this._systemPrompt }],
-      };
-    }
-
-    // Tools: user tools + hang_up (Gemini 호환 스키마로 변환)
+  private _buildToolSchemas(): Array<Record<string, unknown>> {
     const toolDefs: Array<Record<string, unknown>> = this._tools
       ? this._tools.toOpenAITools().map((t) => ({
           name: t.function.name,
@@ -297,67 +289,16 @@ export class GeminiRealtime implements Session {
         }))
       : [];
     toolDefs.push(HANG_UP_TOOL);
-    setupConfig['tools'] = [{ functionDeclarations: toolDefs }];
-
-    this._ws.send(JSON.stringify({ setup: setupConfig }));
-  }
-
-  private _waitSetupComplete(): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      if (!this._ws) {
-        reject(new Error('WebSocket not connected'));
-        return;
-      }
-      const onMessage = (data: Buffer | string) => {
-        try {
-          const msg = JSON.parse(data.toString()) as Record<string, unknown>;
-          if ('setupComplete' in msg) {
-            this._ws?.removeListener('message', onMessage);
-            resolve();
-          }
-        } catch {
-          // Ignore parse errors
-        }
-      };
-      this._ws.on('message', onMessage);
-    });
-  }
-
-  private _sendGreeting(): void {
-    if (!this._ws || this._ws.readyState !== 1) return;
-    this._ws.send(
-      JSON.stringify({
-        clientContent: {
-          turns: [
-            {
-              role: 'user',
-              parts: [{ text: '인사해 주세요.' }],
-            },
-          ],
-          turnComplete: true,
-        },
-      }),
-    );
-  }
-
-  private _receiveLoop(): void {
-    if (!this._ws) return;
-    this._ws.on('message', (data: Buffer | string) => {
-      try {
-        const msg = JSON.parse(data.toString()) as Record<string, unknown>;
-        this._handleMessage(msg);
-      } catch {
-        // Ignore parse errors
-      }
-    });
+    return toolDefs;
   }
 
   private _handleMessage(msg: Record<string, unknown>): void {
     if (!this._call) return;
 
-    // Handle server content with audio
+    // Handle server content
     const serverContent = msg['serverContent'] as Record<string, unknown> | undefined;
     if (serverContent) {
+      // Audio from model turn
       const modelTurn = serverContent['modelTurn'] as Record<string, unknown> | undefined;
       if (modelTurn) {
         const parts = modelTurn['parts'] as Array<Record<string, unknown>> | undefined;
@@ -369,12 +310,6 @@ export class GeminiRealtime implements Session {
               if (mimeType.includes('audio')) {
                 this._handleAudioData(inlineData['data'] as string);
               }
-            }
-
-            // Text transcript from model turn
-            const text = part['text'] as string | undefined;
-            if (text && this._call) {
-              this._call._emit('transcript', 'assistant', text);
             }
           }
         }
@@ -393,23 +328,23 @@ export class GeminiRealtime implements Session {
         this._sentAudioChunks = 0;
         this._audioRemainder = Buffer.alloc(0);
       }
-    }
 
-    // Input transcription (top-level field)
-    const inputTranscription = msg['inputTranscription'] as Record<string, unknown> | undefined;
-    if (inputTranscription) {
-      const text = inputTranscription['text'] as string | undefined;
-      if (text && this._call) {
-        this._call._emit('transcript', 'user', text);
+      // Input transcription (under serverContent in SDK)
+      const inputTranscription = serverContent['inputTranscription'] as Record<string, unknown> | undefined;
+      if (inputTranscription) {
+        const text = inputTranscription['text'] as string | undefined;
+        if (text && this._call) {
+          this._call._emit('transcript', 'user', text);
+        }
       }
-    }
 
-    // Output transcription (top-level field)
-    const outputTranscription = msg['outputTranscription'] as Record<string, unknown> | undefined;
-    if (outputTranscription) {
-      const text = outputTranscription['text'] as string | undefined;
-      if (text && this._call) {
-        this._call._emit('transcript', 'assistant', text);
+      // Output transcription (under serverContent in SDK)
+      const outputTranscription = serverContent['outputTranscription'] as Record<string, unknown> | undefined;
+      if (outputTranscription) {
+        const text = outputTranscription['text'] as string | undefined;
+        if (text && this._call) {
+          this._call._emit('transcript', 'assistant', text);
+        }
       }
     }
 
@@ -502,14 +437,10 @@ export class GeminiRealtime implements Session {
       }
     }
 
-    if (this._ws && this._ws.readyState === 1) {
-      this._ws.send(
-        JSON.stringify({
-          toolResponse: {
-            functionResponses: responses,
-          },
-        }),
-      );
+    if (this._session) {
+      this._session.sendToolResponse({
+        functionResponses: responses,
+      });
     }
   }
 }

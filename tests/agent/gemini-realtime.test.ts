@@ -1,49 +1,52 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GeminiRealtime } from '../../src/agent/pipeline/gemini-realtime.js';
 import type { Session } from '../../src/agent/pipeline/base.js';
 
+// Mock @google/genai
+const mockSession = {
+  sendRealtimeInput: vi.fn(),
+  sendClientContent: vi.fn(),
+  sendToolResponse: vi.fn(),
+  close: vi.fn(),
+};
+
+const mockConnect = vi.fn().mockResolvedValue(mockSession);
+
+vi.mock('@google/genai', () => ({
+  GoogleGenAI: vi.fn().mockImplementation(() => ({
+    live: { connect: mockConnect },
+  })),
+}));
+
+// Mock CallSession
+function createMockCallSession() {
+  return {
+    callId: 'test-call-id',
+    fromNumber: '07012345678',
+    toNumber: '07098765432',
+    accountId: 'test-account',
+    direction: 'inbound' as const,
+    startTime: new Date(),
+    metadata: {},
+    sendAudio: vi.fn(),
+    clearAudio: vi.fn(),
+    hangup: vi.fn(),
+    on: vi.fn(),
+    wait: vi.fn(),
+    _emit: vi.fn(),
+    _bindTransport: vi.fn(),
+    _markEnded: vi.fn(),
+  };
+}
+
 describe('GeminiRealtime', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('is constructable with no arguments (uses defaults)', () => {
     const session = new GeminiRealtime();
     expect(session).toBeDefined();
-  });
-
-  it('default model is gemini-2.0-flash-exp', () => {
-    const session = new GeminiRealtime();
-    expect(session).toBeDefined();
-    // Verified by source: default model is 'gemini-2.0-flash-exp'
-  });
-
-  it('default voice falls back to Aoede', () => {
-    const session = new GeminiRealtime();
-    expect(session).toBeDefined();
-    // Verified by source: voiceName defaults to 'Aoede'
-  });
-
-  it('initialization with custom parameters', () => {
-    const session = new GeminiRealtime({
-      apiKey: 'custom-key',
-      model: 'gemini-2.5-pro',
-      voice: 'Kore',
-      systemInstruction: 'Be helpful',
-      generationConfig: { temperature: 0.5 },
-    });
-    expect(session).toBeDefined();
-  });
-
-  it('has start method', () => {
-    const session = new GeminiRealtime();
-    expect(session.start).toBeInstanceOf(Function);
-  });
-
-  it('has stop method', () => {
-    const session = new GeminiRealtime();
-    expect(session.stop).toBeInstanceOf(Function);
-  });
-
-  it('has feedAudio method', () => {
-    const session = new GeminiRealtime();
-    expect(session.feedAudio).toBeInstanceOf(Function);
   });
 
   it('implements Session interface', () => {
@@ -58,10 +61,185 @@ describe('GeminiRealtime', () => {
     await expect(session.stop()).resolves.toBeUndefined();
   });
 
-  it('accepts systemInstruction option', () => {
-    const session = new GeminiRealtime({
-      systemInstruction: 'You are a Korean voice assistant.',
+  describe('start()', () => {
+    it('connects via SDK with Stage 1+2 config only', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'test-key',
+        systemPrompt: 'Test prompt',
+        voice: 'Kore',
+      });
+      const call = createMockCallSession();
+
+      await session.start(call);
+
+      // live.connect() 호출 확인
+      expect(mockConnect).toHaveBeenCalledOnce();
+      const connectArgs = mockConnect.mock.calls[0][0];
+
+      // model 확인
+      expect(connectArgs.model).toBe('gemini-2.5-flash-native-audio-preview-12-2025');
+
+      // config 확인
+      const config = connectArgs.config;
+      expect(config.responseModalities).toEqual(['AUDIO']);
+      expect(config.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Kore');
+      expect(config.systemInstruction).toBe('Test prompt');
+
+      // Stage 2: transcription 포함
+      expect(config).toHaveProperty('inputAudioTranscription');
+      expect(config).toHaveProperty('outputAudioTranscription');
+
+      // Stage 3: 포함되지 않음
+      expect(config).not.toHaveProperty('realtimeInputConfig');
+      expect(config).not.toHaveProperty('contextWindowCompression');
+
+      // greeting 전송 확인
+      expect(mockSession.sendClientContent).toHaveBeenCalledOnce();
+
+      await session.stop();
     });
-    expect(session).toBeDefined();
+
+    it('skips greeting when greeting=false', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'test-key',
+        greeting: false,
+      });
+      const call = createMockCallSession();
+
+      await session.start(call);
+
+      expect(mockSession.sendClientContent).not.toHaveBeenCalled();
+
+      await session.stop();
+    });
+
+    it('omits systemInstruction when systemPrompt is empty', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'test-key',
+        systemPrompt: '',
+      });
+      const call = createMockCallSession();
+
+      await session.start(call);
+
+      const config = mockConnect.mock.calls[0][0].config;
+      expect(config).not.toHaveProperty('systemInstruction');
+
+      await session.stop();
+    });
+  });
+
+  describe('feedAudio()', () => {
+    it('sends PCM16 16kHz audio via SDK sendRealtimeInput', async () => {
+      const session = new GeminiRealtime({ apiKey: 'test-key' });
+      const call = createMockCallSession();
+      await session.start(call);
+
+      // 160 bytes of ulaw silence (0xff)
+      const ulawData = Buffer.alloc(160, 0xff);
+      session.feedAudio(ulawData);
+
+      // sendRealtimeInput 호출 확인
+      expect(mockSession.sendRealtimeInput).toHaveBeenCalledOnce();
+      const sendArgs = mockSession.sendRealtimeInput.mock.calls[0][0];
+      expect(sendArgs.audio.mimeType).toBe('audio/pcm;rate=16000');
+
+      // PCM16 16kHz: 160 ulaw → 160 PCM16 samples (320 bytes) → 320 PCM16 16kHz samples (640 bytes)
+      expect(sendArgs.audio.data.length).toBe(640);
+
+      await session.stop();
+    });
+  });
+
+  describe('stop()', () => {
+    it('calls session.close()', async () => {
+      const session = new GeminiRealtime({ apiKey: 'test-key' });
+      const call = createMockCallSession();
+      await session.start(call);
+
+      await session.stop();
+
+      expect(mockSession.close).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('_handleMessage()', () => {
+    it('emits user transcript from inputTranscription', async () => {
+      const session = new GeminiRealtime({ apiKey: 'test-key' });
+      const call = createMockCallSession();
+      await session.start(call);
+
+      // onmessage 콜백 가져오기
+      const onmessage = mockConnect.mock.calls[0][0].callbacks.onmessage;
+
+      onmessage({
+        serverContent: {
+          inputTranscription: { text: '안녕하세요' },
+        },
+      });
+
+      expect(call._emit).toHaveBeenCalledWith('transcript', 'user', '안녕하세요');
+
+      await session.stop();
+    });
+
+    it('emits assistant transcript from outputTranscription', async () => {
+      const session = new GeminiRealtime({ apiKey: 'test-key' });
+      const call = createMockCallSession();
+      await session.start(call);
+
+      const onmessage = mockConnect.mock.calls[0][0].callbacks.onmessage;
+
+      onmessage({
+        serverContent: {
+          outputTranscription: { text: '반갑습니다' },
+        },
+      });
+
+      expect(call._emit).toHaveBeenCalledWith('transcript', 'assistant', '반갑습니다');
+
+      await session.stop();
+    });
+
+    it('calls clearAudio on barge-in (interrupted)', async () => {
+      const session = new GeminiRealtime({ apiKey: 'test-key' });
+      const call = createMockCallSession();
+      await session.start(call);
+
+      const onmessage = mockConnect.mock.calls[0][0].callbacks.onmessage;
+
+      onmessage({
+        serverContent: {
+          interrupted: true,
+        },
+      });
+
+      expect(call.clearAudio).toHaveBeenCalledOnce();
+
+      await session.stop();
+    });
+
+    it('calls hangup on hang_up tool call', async () => {
+      const session = new GeminiRealtime({ apiKey: 'test-key' });
+      const call = createMockCallSession();
+      await session.start(call);
+
+      const onmessage = mockConnect.mock.calls[0][0].callbacks.onmessage;
+
+      onmessage({
+        toolCall: {
+          functionCalls: [{ name: 'hang_up', id: 'tc1', args: {} }],
+        },
+      });
+
+      // hang_up은 비동기이므로 잠시 대기
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(call.hangup).toHaveBeenCalledOnce();
+      // hang_up은 toolResponse를 보내지 않음
+      expect(mockSession.sendToolResponse).not.toHaveBeenCalled();
+
+      await session.stop();
+    });
   });
 });

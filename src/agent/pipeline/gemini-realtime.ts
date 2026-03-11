@@ -9,6 +9,7 @@ import type { CallSession } from '../session.js';
 import type { ToolRegistry } from '../tool.js';
 import type { AudioRecorder } from '../recorder.js';
 import type { Session } from './base.js';
+import type { LiveServerMessage, LiveServerToolCall } from '@google/genai/node';
 import { pcm16ToUlaw, resamplePcm16, ulawToPcm16 } from '../audio.js';
 
 const HANG_UP_TOOL = {
@@ -192,7 +193,9 @@ export class GeminiRealtime implements Session {
       throw new Error('Google API key is required. Set GOOGLE_API_KEY or pass apiKey option.');
     }
 
-    const { GoogleGenAI } = await import('@google/genai');
+    // @google/genai의 conditional exports 타입이 bundler 모드에서
+    // live 프로퍼티를 인식하지 못하므로 node 엔트리 직접 import
+    const { GoogleGenAI } = await import('@google/genai/node');
     const client = new GoogleGenAI({ apiKey: this._apiKey });
 
     // Build config (Stage 1 + Stage 2 only)
@@ -219,14 +222,13 @@ export class GeminiRealtime implements Session {
       config['tools'] = [{ functionDeclarations: toolSchemas }];
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    this._session = await (client as any).live.connect({
+    this._session = await client.live.connect({
       model: this._model,
       config,
       callbacks: {
-        onmessage: (msg: Record<string, unknown>) => this._handleMessage(msg),
-        onerror: (err: Error) => {
-          console.error('[GeminiRealtime] SDK error:', err.message);
+        onmessage: (msg) => this._handleMessage(msg),
+        onerror: (err) => {
+          console.error('[GeminiRealtime] SDK error:', err);
         },
         onclose: () => {
           this._closed = true;
@@ -292,36 +294,34 @@ export class GeminiRealtime implements Session {
     return toolDefs;
   }
 
-  private _handleMessage(msg: Record<string, unknown>): void {
+  private _handleMessage(msg: LiveServerMessage): void {
     if (!this._call) return;
 
     // Handle server content
-    const serverContent = msg['serverContent'] as Record<string, unknown> | undefined;
+    const serverContent = msg.serverContent;
     if (serverContent) {
       // Audio from model turn
-      const modelTurn = serverContent['modelTurn'] as Record<string, unknown> | undefined;
+      const modelTurn = serverContent.modelTurn;
       if (modelTurn) {
-        const parts = modelTurn['parts'] as Array<Record<string, unknown>> | undefined;
-        if (parts) {
-          for (const part of parts) {
-            const inlineData = part['inlineData'] as Record<string, unknown> | undefined;
-            if (inlineData && inlineData['data']) {
-              const mimeType = (inlineData['mimeType'] as string) ?? '';
-              if (mimeType.includes('audio')) {
-                this._handleAudioData(inlineData['data'] as string);
-              }
+        for (const part of modelTurn.parts ?? []) {
+          const inlineData = part.inlineData;
+          if (inlineData?.data) {
+            const mimeType = inlineData.mimeType ?? '';
+            if (mimeType.includes('audio')) {
+              this._handleAudioData(inlineData.data as string);
             }
           }
+          // NOTE: modelTurn text는 outputTranscription과 중복이므로 emit하지 않음
         }
       }
 
       // Turn complete - flush audio remainder
-      if (serverContent['turnComplete']) {
+      if (serverContent.turnComplete) {
         this._flushAudioRemainder();
       }
 
       // Barge-in (interrupt)
-      if (serverContent['interrupted']) {
+      if (serverContent.interrupted) {
         if (this._call) {
           this._call.clearAudio();
         }
@@ -330,33 +330,21 @@ export class GeminiRealtime implements Session {
       }
 
       // Input transcription (under serverContent in SDK)
-      const inputTranscription = serverContent['inputTranscription'] as Record<string, unknown> | undefined;
-      if (inputTranscription) {
-        const text = inputTranscription['text'] as string | undefined;
-        if (text && this._call) {
-          this._call._emit('transcript', 'user', text);
-        }
+      const inputText = serverContent.inputTranscription?.text;
+      if (inputText && this._call) {
+        this._call._emit('transcript', 'user', inputText);
       }
 
       // Output transcription (under serverContent in SDK)
-      const outputTranscription = serverContent['outputTranscription'] as Record<string, unknown> | undefined;
-      if (outputTranscription) {
-        const text = outputTranscription['text'] as string | undefined;
-        if (text && this._call) {
-          this._call._emit('transcript', 'assistant', text);
-        }
+      const outputText = serverContent.outputTranscription?.text;
+      if (outputText && this._call) {
+        this._call._emit('transcript', 'assistant', outputText);
       }
     }
 
     // Handle tool calls
-    const toolCall = msg['toolCall'] as Record<string, unknown> | undefined;
-    if (toolCall) {
-      this._handleToolCall(toolCall);
-    }
-
-    // Handle tool call cancellation
-    if (msg['toolCallCancellation']) {
-      // Logged but no action needed
+    if (msg.toolCall) {
+      this._handleToolCall(msg.toolCall);
     }
   }
 
@@ -395,16 +383,16 @@ export class GeminiRealtime implements Session {
     }
   }
 
-  private async _handleToolCall(toolCall: Record<string, unknown>): Promise<void> {
-    const functionCalls = toolCall['functionCalls'] as Array<Record<string, unknown>> | undefined;
+  private async _handleToolCall(toolCall: LiveServerToolCall): Promise<void> {
+    const functionCalls = toolCall.functionCalls;
     if (!functionCalls) return;
 
     const responses: Array<Record<string, unknown>> = [];
 
     for (const fc of functionCalls) {
-      const name = fc['name'] as string;
-      const fcId = (fc['id'] as string) ?? '';
-      const args = (fc['args'] as Record<string, unknown>) ?? {};
+      const name = fc.name ?? '';
+      const fcId = fc.id ?? '';
+      const args = fc.args ?? {};
 
       // Built-in hang_up tool
       if (name === 'hang_up') {

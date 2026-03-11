@@ -16,6 +16,119 @@ const HANG_UP_TOOL = {
   parameters: { type: 'object', properties: {} },
 };
 
+/**
+ * $ref 문자열을 $defs에서 찾아 반환한다.
+ */
+function resolveRef(ref: string, defs: Record<string, unknown>): Record<string, unknown> {
+  const parts = ref.replace(/^#\//, '').split('/');
+  let result: unknown = defs;
+  for (const part of parts) {
+    if (result && typeof result === 'object' && !Array.isArray(result)) {
+      result = (result as Record<string, unknown>)[part];
+    } else {
+      return {};
+    }
+  }
+  return typeof result === 'object' && result !== null && !Array.isArray(result)
+    ? (result as Record<string, unknown>)
+    : {};
+}
+
+/**
+ * JSON Schema를 Gemini functionDeclarations 호환 형식으로 변환한다.
+ *
+ * - $ref를 인라인으로 resolve
+ * - oneOf/anyOf/allOf를 단순화 (첫 번째 object 타입 또는 첫 번째 항목 사용)
+ * - 지원되지 않는 키워드 제거
+ * - 재귀 깊이 제한으로 순환 참조 방지
+ */
+function sanitizeSchemaForGemini(
+  schema: Record<string, unknown>,
+  defs?: Record<string, unknown>,
+  depth = 0,
+): Record<string, unknown> {
+  if (depth > 15) return { type: 'object', properties: {} };
+  if (!schema || typeof schema !== 'object') return { type: 'object', properties: {} };
+
+  // 최상위에서 $defs 추출
+  if (defs === undefined) {
+    defs = (schema['$defs'] ?? schema['definitions'] ?? {}) as Record<string, unknown>;
+  }
+
+  // $ref resolve
+  if (typeof schema['$ref'] === 'string') {
+    const resolved = resolveRef(schema['$ref'], { $defs: defs, definitions: defs });
+    if (resolved && Object.keys(resolved).length > 0) {
+      return sanitizeSchemaForGemini(resolved, defs, depth + 1);
+    }
+    return { type: 'object', properties: {} };
+  }
+
+  // oneOf / anyOf / allOf 처리
+  for (const comboKey of ['oneOf', 'anyOf', 'allOf'] as const) {
+    const variants = schema[comboKey];
+    if (Array.isArray(variants) && variants.length > 0) {
+      // object 타입 우선 선택
+      for (const v of variants) {
+        if (v && typeof v === 'object') {
+          const resolved = sanitizeSchemaForGemini(v as Record<string, unknown>, defs, depth + 1);
+          if (resolved['type'] === 'object' && resolved['properties']) {
+            return resolved;
+          }
+        }
+      }
+      // 없으면 첫 번째 항목
+      const first = variants[0];
+      if (first && typeof first === 'object') {
+        return sanitizeSchemaForGemini(first as Record<string, unknown>, defs, depth + 1);
+      }
+    }
+  }
+
+  const result: Record<string, unknown> = {};
+
+  // type 처리 - 배열 type에서 null 제거
+  let schemaType = schema['type'];
+  if (Array.isArray(schemaType)) {
+    const nonNull = schemaType.filter((t) => t !== 'null');
+    schemaType = nonNull[0] ?? 'string';
+  }
+  if (schemaType) result['type'] = schemaType;
+
+  // description 유지
+  if (schema['description']) result['description'] = schema['description'];
+
+  // enum 유지
+  if (schema['enum']) result['enum'] = schema['enum'];
+
+  // required 유지
+  if (schema['required']) result['required'] = schema['required'];
+
+  // properties 재귀 처리
+  if (schema['properties'] && typeof schema['properties'] === 'object') {
+    const props: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(schema['properties'] as Record<string, unknown>)) {
+      if (val && typeof val === 'object') {
+        props[key] = sanitizeSchemaForGemini(val as Record<string, unknown>, defs, depth + 1);
+      }
+    }
+    result['properties'] = props;
+  }
+
+  // items 재귀 처리 (array)
+  if (schema['items'] && typeof schema['items'] === 'object' && !Array.isArray(schema['items'])) {
+    result['items'] = sanitizeSchemaForGemini(schema['items'] as Record<string, unknown>, defs, depth + 1);
+  }
+
+  // type이 없고 properties가 있으면 object로 추정
+  if (!result['type'] && result['properties']) result['type'] = 'object';
+
+  // type이 object인데 properties가 없으면 빈 properties 추가
+  if (result['type'] === 'object' && !result['properties']) result['properties'] = {};
+
+  return result;
+}
+
 export interface GeminiRealtimeOptions {
   /** Google API key. Falls back to GOOGLE_API_KEY env var. */
   apiKey?: string;
@@ -173,12 +286,14 @@ export class GeminiRealtime implements Session {
       };
     }
 
-    // Tools: user tools + hang_up
+    // Tools: user tools + hang_up (Gemini 호환 스키마로 변환)
     const toolDefs: Array<Record<string, unknown>> = this._tools
       ? this._tools.toOpenAITools().map((t) => ({
           name: t.function.name,
           description: t.function.description,
-          parameters: t.function.parameters,
+          parameters: sanitizeSchemaForGemini(
+            (t.function.parameters ?? { type: 'object', properties: {} }) as Record<string, unknown>,
+          ),
         }))
       : [];
     toolDefs.push(HANG_UP_TOOL);

@@ -5,14 +5,13 @@
 
 export type CallDirection = 'inbound' | 'outbound';
 export type CallStatus = 'ringing' | 'active' | 'ended';
-export type SessionEventType = 'ended' | 'dtmf' | 'speech';
 
-export interface SessionEvent {
-  type: SessionEventType;
-  data?: unknown;
-}
-
-type SessionEventHandler = (event: SessionEvent) => void | Promise<void>;
+/**
+ * Session event handler: receives (call, ...args) like the Python SDK.
+ * For example, 'transcript' events pass (call, role, text).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type SessionEventHandler = (...args: any[]) => void | Promise<void>;
 
 export interface SendAudioFn {
   (audio: Buffer): void;
@@ -39,7 +38,7 @@ export class CallSession {
   private _sendAudioFn: SendAudioFn | null = null;
   private _clearAudioFn: ClearAudioFn | null = null;
   private _hangupFn: HangupFn | null = null;
-  private _handlers: Map<SessionEventType, SessionEventHandler[]> = new Map();
+  private _handlers: Map<string, SessionEventHandler[]> = new Map();
   private _endedPromise: Promise<void>;
   private _resolveEnded!: () => void;
 
@@ -103,7 +102,7 @@ export class CallSession {
   }
 
   /** Register an event handler. */
-  on(event: SessionEventType, handler: SessionEventHandler): void {
+  on(event: string, handler: SessionEventHandler): void {
     let list = this._handlers.get(event);
     if (!list) {
       list = [];
@@ -120,24 +119,24 @@ export class CallSession {
   /** Mark the session as ended (called internally). */
   _markEnded(): void {
     this._status = 'ended';
-    this._emit({ type: 'ended' });
     this._resolveEnded();
   }
 
-  /** Emit an event to registered handlers. */
-  _emit(event: SessionEvent): void {
-    const handlers = this._handlers.get(event.type);
+  /** Emit an event to registered handlers. Matches Python SDK: _emit(event, ...args) */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  _emit(event: string, ...args: any[]): void {
+    const handlers = this._handlers.get(event);
     if (handlers) {
       for (const handler of handlers) {
         try {
-          const result = handler(event);
+          const result = handler(this, ...args);
           if (result && typeof result.catch === 'function') {
             result.catch((err: unknown) => {
-              console.error(`[CallSession] Error in ${event.type} handler:`, err);
+              console.error(`[CallSession] Error in ${event} handler:`, err);
             });
           }
         } catch (err) {
-          console.error(`[CallSession] Error in ${event.type} handler:`, err);
+          console.error(`[CallSession] Error in ${event} handler:`, err);
         }
       }
     }

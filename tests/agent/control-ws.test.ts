@@ -6,57 +6,56 @@ describe('buildControlWsUrl', () => {
     const url = buildControlWsUrl({
       baseUrl: 'https://api.claw-ops.com',
       apiKey: 'key123',
-      agentId: 'AG123',
+      accountId: 'AC123',
     });
     expect(url).toMatch(/^wss:\/\//);
-    expect(url).toContain('AG123');
-    expect(url).toContain('key123');
+    expect(url).toContain('AC123');
   });
 
   it('converts HTTP to WS', () => {
     const url = buildControlWsUrl({
       baseUrl: 'http://localhost:8080',
       apiKey: 'key123',
-      agentId: 'AG123',
+      accountId: 'AC123',
     });
     expect(url).toMatch(/^ws:\/\//);
   });
 
-  it('uses default path /v1/agent/control', () => {
+  it('uses path /v1/accounts/{accountId}/agent/listen', () => {
     const url = buildControlWsUrl({
       baseUrl: 'https://api.claw-ops.com',
       apiKey: 'key123',
-      agentId: 'AG123',
+      accountId: 'AC123',
     });
-    expect(url).toContain('/v1/agent/control');
+    expect(url).toContain('/v1/accounts/AC123/agent/listen');
   });
 
-  it('uses custom path when provided', () => {
+  it('appends number as query param', () => {
     const url = buildControlWsUrl({
       baseUrl: 'https://api.claw-ops.com',
       apiKey: 'key123',
-      agentId: 'AG123',
-      path: '/v2/custom/path',
+      accountId: 'AC123',
+      number: '07012345678',
     });
-    expect(url).toContain('/v2/custom/path');
-    expect(url).not.toContain('/v1/agent/control');
+    expect(url).toContain('?number=07012345678');
   });
 
-  it('URL-encodes apiKey and agentId', () => {
+  it('URL-encodes accountId and number', () => {
     const url = buildControlWsUrl({
       baseUrl: 'https://api.claw-ops.com',
-      apiKey: 'key with spaces',
-      agentId: 'agent/special',
+      apiKey: 'key123',
+      accountId: 'account/special',
+      number: '+82 10',
     });
-    expect(url).toContain('key%20with%20spaces');
-    expect(url).toContain('agent%2Fspecial');
+    expect(url).toContain('account%2Fspecial');
+    expect(url).toContain('%2B82%2010');
   });
 
   it('strips trailing slash from baseUrl', () => {
     const url = buildControlWsUrl({
       baseUrl: 'https://api.claw-ops.com/',
       apiKey: 'key123',
-      agentId: 'AG123',
+      accountId: 'AC123',
     });
     expect(url).not.toContain('.com//');
   });

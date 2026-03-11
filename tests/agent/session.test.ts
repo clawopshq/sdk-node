@@ -64,20 +64,18 @@ describe('CallSession', () => {
   it('emits events and invokes handlers', () => {
     const { session } = makeSession();
     const handler = vi.fn();
-    session.on('dtmf', handler);
-    session._emit({ type: 'dtmf', data: '5' });
-    expect(handler).toHaveBeenCalledWith({ type: 'dtmf', data: '5' });
+    session.on('transcript', handler);
+    session._emit('transcript', 'user', 'hello');
+    // Handler receives (call, ...args) matching Python SDK
+    expect(handler).toHaveBeenCalledWith(session, 'user', 'hello');
   });
 
   it('marks session as ended and resolves wait()', async () => {
     const { session } = makeSession();
-    const handler = vi.fn();
-    session.on('ended', handler);
 
     session._markEnded();
 
     expect(session.status).toBe('ended');
-    expect(handler).toHaveBeenCalled();
     await session.wait(); // should resolve immediately
   });
 

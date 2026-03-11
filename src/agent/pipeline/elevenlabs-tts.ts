@@ -7,20 +7,18 @@ import type { TTS } from './base.js';
 export interface ElevenLabsTTSOptions {
   /** ElevenLabs API key. Falls back to ELEVENLABS_API_KEY env var. */
   apiKey?: string;
-  /** Voice ID. Default: '21m00Tcm4TlvDq8ikWAM' (Rachel) */
+  /** Voice ID. Default: 'EXAVITQu4vr4xnSDxMaL' (Rachel) */
   voiceId?: string;
-  /** Model ID. Default: 'eleven_multilingual_v2' */
-  modelId?: string;
-  /** Output format. Default: 'pcm_16000' */
+  /** Model ID. Default: 'eleven_flash_v2_5' */
+  model?: string;
+  /** Output format. Default: 'pcm_24000' */
   outputFormat?: string;
   /** Stability. Default: 0.5 */
   stability?: number;
   /** Similarity boost. Default: 0.75 */
   similarityBoost?: number;
-  /** Style. Default: 0 */
-  style?: number;
-  /** Use speaker boost. Default: true */
-  useSpeakerBoost?: boolean;
+  /** Language code. Default: 'ko' */
+  languageCode?: string;
 }
 
 export class ElevenLabsTTS implements TTS {
@@ -28,13 +26,12 @@ export class ElevenLabsTTS implements TTS {
 
   constructor(options: ElevenLabsTTSOptions = {}) {
     this._options = {
-      voiceId: '21m00Tcm4TlvDq8ikWAM',
-      modelId: 'eleven_multilingual_v2',
-      outputFormat: 'pcm_16000',
+      voiceId: 'EXAVITQu4vr4xnSDxMaL',
+      model: 'eleven_flash_v2_5',
+      outputFormat: 'pcm_24000',
       stability: 0.5,
       similarityBoost: 0.75,
-      style: 0,
-      useSpeakerBoost: true,
+      languageCode: 'ko',
       ...options,
     };
   }
@@ -74,12 +71,10 @@ export class ElevenLabsTTS implements TTS {
       },
       body: JSON.stringify({
         text,
-        model_id: this._options.modelId,
+        model_id: this._options.model,
         voice_settings: {
           stability: this._options.stability,
           similarity_boost: this._options.similarityBoost,
-          style: this._options.style,
-          use_speaker_boost: this._options.useSpeakerBoost,
         },
       }),
     });
@@ -112,7 +107,7 @@ export class ElevenLabsTTS implements TTS {
   ): AsyncGenerator<Buffer> {
     const { WebSocket } = await import('ws');
 
-    const url = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${this._options.modelId}&output_format=${this._options.outputFormat}`;
+    const url = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${this._options.model}&output_format=${this._options.outputFormat}`;
 
     const ws = new WebSocket(url);
 
@@ -128,8 +123,6 @@ export class ElevenLabsTTS implements TTS {
           voice_settings: {
             stability: this._options.stability,
             similarity_boost: this._options.similarityBoost,
-            style: this._options.style,
-            use_speaker_boost: this._options.useSpeakerBoost,
           },
           xi_api_key: apiKey,
         }),

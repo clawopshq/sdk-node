@@ -4,16 +4,14 @@
 
 import { DEFAULT_BASE_URL } from '../constants.js';
 import { AgentConnectionError, AgentError } from '../error.js';
-import { pcm16ToUlaw, resamplePcm16, ulawToPcm16 } from './audio.js';
+import { ulawToPcm16 } from './audio.js';
 import { ControlWebSocket } from './control-ws.js';
 import type { ControlEvent } from './control-ws.js';
 import { MCPClient } from './mcp/client.js';
-import type { MCPServerStdio } from './mcp/stdio.js';
-import type { MCPServerHTTP } from './mcp/http.js';
+import type { MCPServerStdio, MCPServerHTTP } from './mcp/index.js';
 import { MediaWebSocket } from './media-ws.js';
 import { AudioRecorder } from './recorder.js';
 import { CallSession } from './session.js';
-import type { CallDirection } from './session.js';
 import { ToolRegistry } from './tool.js';
 import type { FunctionTool } from './tool.js';
 import type { Session } from './pipeline/base.js';
@@ -23,65 +21,58 @@ import { withSpan } from './tracing/spans.js';
 import { ATTR_CALL_ID, ATTR_CALL_DIRECTION, ATTR_AGENT_ID } from './tracing/attributes.js';
 
 export type AgentEventType =
-  | 'call.incoming'
-  | 'call.ended'
-  | 'call.outbound_ready'
-  | 'call.ringing'
-  | 'call.failed';
+  | 'call_start'
+  | 'call_end'
+  | 'call_failed'
+  | 'transcript';
 
-type AgentEventHandler = (session: CallSession) => void | Promise<void>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AgentEventHandler = (...args: any[]) => void | Promise<void>;
 
 export interface ClawOpsAgentOptions {
   /** ClawOps API key. Falls back to CLAWOPS_API_KEY env var. */
   apiKey?: string;
-  /** Agent ID. Falls back to CLAWOPS_AGENT_ID env var. */
-  agentId?: string;
+  /** Account ID. Falls back to CLAWOPS_ACCOUNT_ID env var. */
+  accountId?: string;
   /** API base URL. */
   baseUrl?: string;
-  /** Session factory: returns the session handler for each call. */
-  session?: Session | (() => Session);
-  /** Recording output directory. If set, calls are recorded. */
-  recordingDir?: string;
+  /** Phone number to send/receive calls from. Required. */
+  from: string;
+  /** Session implementation (OpenAIRealtime, GeminiRealtime, PipelineSession, etc.). */
+  session: Session;
+  /** Enable call recording. */
+  recording?: boolean;
+  /** Recording output directory. Default: './recordings' */
+  recordingPath?: string;
   /** MCP server configurations. */
-  mcpServers?: Record<string, MCPServerStdio | MCPServerHTTP>;
+  mcpServers?: Array<MCPServerStdio | MCPServerHTTP>;
   /** Tracing configuration. */
   tracing?: TracingConfig;
 }
 
 export class ClawOpsAgent {
   private _apiKey: string;
-  private _agentId: string;
+  private _accountId: string;
   private _baseUrl: string;
-  private _sessionFactory: (() => Session) | null = null;
+  private _fromNumber: string;
+  private _session: Session;
   private _tools: ToolRegistry = new ToolRegistry();
-  private _handlers: Map<AgentEventType, AgentEventHandler[]> = new Map();
+  private _handlers: Map<string, AgentEventHandler[]> = new Map();
   private _controlWs: ControlWebSocket | null = null;
-  private _mcpClient: MCPClient | null = null;
-  private _recordingDir: string | null;
+  private _mcpServers: Array<MCPServerStdio | MCPServerHTTP>;
+  private _recording: boolean;
+  private _recordingPath: string;
   private _activeSessions: Map<string, CallSession> = new Map();
 
-  constructor(options: ClawOpsAgentOptions = {}) {
+  constructor(options: ClawOpsAgentOptions) {
     this._apiKey = options.apiKey ?? process.env['CLAWOPS_API_KEY'] ?? '';
-    this._agentId = options.agentId ?? process.env['CLAWOPS_AGENT_ID'] ?? '';
+    this._accountId = options.accountId ?? process.env['CLAWOPS_ACCOUNT_ID'] ?? '';
     this._baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
-    this._recordingDir = options.recordingDir ?? null;
-
-    if (options.session) {
-      if (typeof options.session === 'function') {
-        this._sessionFactory = options.session as () => Session;
-      } else {
-        const sessionInstance = options.session;
-        this._sessionFactory = () => sessionInstance;
-      }
-    }
-
-    // Configure MCP
-    if (options.mcpServers) {
-      this._mcpClient = new MCPClient();
-      for (const [name, config] of Object.entries(options.mcpServers)) {
-        this._mcpClient.addServer(name, config);
-      }
-    }
+    this._fromNumber = options.from;
+    this._session = options.session;
+    this._recording = options.recording ?? false;
+    this._recordingPath = options.recordingPath ?? './recordings';
+    this._mcpServers = options.mcpServers ?? [];
 
     // Configure tracing
     if (options.tracing) {
@@ -89,13 +80,43 @@ export class ClawOpsAgent {
     }
   }
 
-  /** Register a function tool. */
-  tool(tool: FunctionTool): this {
-    this._tools.register(tool);
+  /**
+   * Register a function tool.
+   *
+   * Supports two signatures (matching Python SDK):
+   *   agent.tool(name, description, parameters, handler)
+   *   agent.tool(functionToolObject)
+   */
+  tool(
+    nameOrTool: string | FunctionTool,
+    description?: string,
+    parameters?: Record<string, unknown>,
+    handler?: (args: Record<string, unknown>) => unknown | Promise<unknown>,
+  ): this {
+    if (typeof nameOrTool === 'string') {
+      if (!description || !parameters || !handler) {
+        throw new AgentError('tool(name, description, parameters, handler) requires all arguments.');
+      }
+      this._tools.register({
+        name: nameOrTool,
+        description,
+        parameters,
+        required: Object.keys(parameters),
+        handler,
+      });
+    } else {
+      this._tools.register(nameOrTool);
+    }
     return this;
   }
 
-  /** Register an event handler. */
+  /**
+   * Register an event handler.
+   *
+   * Matches Python SDK decorator style:
+   *   agent.on("call_start", (call) => { ... })
+   *   agent.on("transcript", (call, role, text) => { ... })
+   */
   on(event: AgentEventType, handler: AgentEventHandler): this {
     let list = this._handlers.get(event);
     if (!list) {
@@ -111,25 +132,16 @@ export class ClawOpsAgent {
     if (!this._apiKey) {
       throw new AgentError('API key is required. Set CLAWOPS_API_KEY or pass apiKey option.');
     }
-    if (!this._agentId) {
-      throw new AgentError('Agent ID is required. Set CLAWOPS_AGENT_ID or pass agentId option.');
-    }
-
-    // Connect MCP and register tools
-    if (this._mcpClient) {
-      try {
-        const mcpTools = await this._mcpClient.connect();
-        this._tools.registerMcpTools(mcpTools);
-      } catch (err) {
-        console.error('[ClawOpsAgent] MCP connection error:', err);
-      }
+    if (!this._accountId) {
+      throw new AgentError('Account ID is required. Set CLAWOPS_ACCOUNT_ID or pass accountId option.');
     }
 
     // Connect control WebSocket
     this._controlWs = new ControlWebSocket({
       baseUrl: this._baseUrl,
       apiKey: this._apiKey,
-      agentId: this._agentId,
+      accountId: this._accountId,
+      number: this._fromNumber,
     });
 
     this._controlWs.on('call.incoming', (event) => this._handleIncoming(event));
@@ -146,6 +158,8 @@ export class ClawOpsAgent {
         `Failed to connect to ClawOps: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+
+    console.log(`[ClawOpsAgent] Connected on ${this._fromNumber}`);
   }
 
   /**
@@ -169,112 +183,152 @@ export class ClawOpsAgent {
 
   /** Disconnect from the platform. */
   async disconnect(): Promise<void> {
-    // Close control WebSocket
     if (this._controlWs) {
       this._controlWs.close();
       this._controlWs = null;
     }
 
-    // End active sessions
     for (const session of this._activeSessions.values()) {
       session._markEnded();
     }
     this._activeSessions.clear();
-
-    // Disconnect MCP
-    if (this._mcpClient) {
-      await this._mcpClient.disconnect();
-      this._tools.clearMcpTools();
-    }
+    console.log('[ClawOpsAgent] Disconnected');
   }
 
   /**
    * Initiate an outbound call.
+   * Matches Python SDK: agent.call(to, { timeout })
    */
-  call(options: {
-    to: string;
-    from: string;
-    metadata?: Record<string, unknown>;
-  }): void {
-    if (!this._controlWs) {
-      throw new AgentError('Agent is not connected. Call connect() first.');
+  async call(to: string, options?: { timeout?: number }): Promise<CallSession> {
+    await this.connect();
+
+    const url = `${this._baseUrl}/v1/accounts/${this._accountId}/calls`;
+    const body = { To: to, From: this._fromNumber, Timeout: options?.timeout ?? 60 };
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this._apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (resp.status !== 201) {
+      const error = (await resp.json()) as Record<string, unknown>;
+      throw new AgentError(`발신 실패 (${resp.status}): ${(error['error'] as string) ?? ''}`);
     }
 
-    this._controlWs.send({
-      action: 'call.create',
-      data: {
-        to_number: options.to,
-        from_number: options.from,
-        metadata: options.metadata,
-      },
+    const data = (await resp.json()) as Record<string, unknown>;
+
+    const callSession = new CallSession({
+      callId: data['callId'] as string,
+      fromNumber: this._fromNumber,
+      toNumber: to,
+      accountId: this._accountId,
+      direction: 'outbound',
     });
+
+    // Register all agent-level event handlers on the session
+    for (const [evt, handlers] of this._handlers) {
+      for (const handler of handlers) {
+        callSession.on(evt, handler);
+      }
+    }
+
+    this._activeSessions.set(callSession.callId, callSession);
+    console.log(`[ClawOpsAgent] Outbound call initiated: ${this._fromNumber} -> ${to} (${callSession.callId})`);
+    return callSession;
   }
 
   private _handleIncoming(event: ControlEvent): void {
-    const data = event.data;
+    const callId = event['callId'] as string;
+    const fromNumber = (event['from'] as string) ?? '';
+    const mediaUrl = (event['mediaUrl'] as string) ?? '';
+
     const session = new CallSession({
-      callId: data.call_id,
-      fromNumber: data.from_number ?? '',
-      toNumber: data.to_number ?? '',
-      accountId: data.account_id ?? '',
-      direction: (data.direction as CallDirection) ?? 'inbound',
-      metadata: data.metadata,
+      callId,
+      fromNumber,
+      toNumber: this._fromNumber,
+      accountId: this._accountId,
+      direction: 'inbound',
     });
 
-    this._activeSessions.set(data.call_id, session);
-    this._emitEvent('call.incoming', session);
+    // Register all agent-level event handlers on the session
+    for (const [evt, handlers] of this._handlers) {
+      for (const handler of handlers) {
+        session.on(evt, handler);
+      }
+    }
 
-    // Start the call session handler
-    if (data.media_ws_url) {
-      this._startCallSession(session, data.media_ws_url).catch((err) => {
-        console.error(`[ClawOpsAgent] Error in call session ${data.call_id}:`, err);
+    this._activeSessions.set(callId, session);
+
+    // Accept the call
+    if (this._controlWs) {
+      this._controlWs.send({ event: 'call.accept', callId });
+    }
+
+    if (mediaUrl) {
+      this._startCallSession(session, mediaUrl).catch((err) => {
+        console.error(`[ClawOpsAgent] Error in call session ${callId}:`, err);
       });
     }
   }
 
   private _handleEnded(event: ControlEvent): void {
-    const session = this._activeSessions.get(event.data.call_id);
+    const callId = event['callId'] as string;
+    const session = this._activeSessions.get(callId);
     if (session) {
       session._markEnded();
-      this._activeSessions.delete(event.data.call_id);
-      this._emitEvent('call.ended', session);
+      this._activeSessions.delete(callId);
     }
   }
 
   private _handleOutboundReady(event: ControlEvent): void {
-    const data = event.data;
-    const session = new CallSession({
-      callId: data.call_id,
-      fromNumber: data.from_number ?? '',
-      toNumber: data.to_number ?? '',
-      accountId: data.account_id ?? '',
-      direction: 'outbound',
-      metadata: data.metadata,
-    });
+    const callId = event['callId'] as string;
+    const mediaUrl = (event['mediaUrl'] as string) ?? '';
+    let session = this._activeSessions.get(callId);
 
-    this._activeSessions.set(data.call_id, session);
-    this._emitEvent('call.outbound_ready', session);
+    if (!session) {
+      session = new CallSession({
+        callId,
+        fromNumber: this._fromNumber,
+        toNumber: (event['to'] as string) ?? '',
+        accountId: this._accountId,
+        direction: 'outbound',
+      });
 
-    if (data.media_ws_url) {
-      this._startCallSession(session, data.media_ws_url).catch((err) => {
-        console.error(`[ClawOpsAgent] Error in call session ${data.call_id}:`, err);
+      // Register all agent-level event handlers on the session
+      for (const [evt, handlers] of this._handlers) {
+        for (const handler of handlers) {
+          session.on(evt, handler);
+        }
+      }
+
+      this._activeSessions.set(callId, session);
+    }
+
+    if (mediaUrl) {
+      this._startCallSession(session, mediaUrl).catch((err) => {
+        console.error(`[ClawOpsAgent] Error in call session ${callId}:`, err);
       });
     }
   }
 
   private _handleRinging(event: ControlEvent): void {
-    const session = this._activeSessions.get(event.data.call_id);
+    const callId = event['callId'] as string;
+    const session = this._activeSessions.get(callId);
     if (session) {
-      this._emitEvent('call.ringing', session);
+      console.log(`[ClawOpsAgent] Outbound call ringing: ${callId}`);
     }
   }
 
   private _handleFailed(event: ControlEvent): void {
-    const session = this._activeSessions.get(event.data.call_id);
+    const callId = event['callId'] as string;
+    const session = this._activeSessions.get(callId);
     if (session) {
+      session._emit('call_failed', (event['reason'] as string) ?? 'failed');
       session._markEnded();
-      this._activeSessions.delete(event.data.call_id);
-      this._emitEvent('call.failed', session);
+      this._activeSessions.delete(callId);
     }
   }
 
@@ -284,31 +338,42 @@ export class ClawOpsAgent {
       {
         [ATTR_CALL_ID]: session.callId,
         [ATTR_CALL_DIRECTION]: session.direction,
-        [ATTR_AGENT_ID]: this._agentId,
+        [ATTR_AGENT_ID]: this._accountId,
       },
       async () => {
-        // Fork tools for this session
+        // Fork tools for this session (per-call MCP isolation)
         const sessionTools = this._tools.fork();
+
+        // MCP: start servers per call
+        const mcpClients: MCPClient[] = [];
+        if (this._mcpServers.length > 0) {
+          for (const serverConfig of this._mcpServers) {
+            const client = new MCPClient();
+            client.addServer('mcp', serverConfig);
+            try {
+              const tools = await client.connect();
+              sessionTools.registerMcpTools(tools);
+              mcpClients.push(client);
+            } catch (err) {
+              console.error('[ClawOpsAgent] MCP connection error:', err);
+            }
+          }
+        }
 
         // Set up recorder if configured
         let recorder: AudioRecorder | null = null;
-        if (this._recordingDir) {
-          recorder = new AudioRecorder({ outputDir: this._recordingDir });
+        if (this._recording) {
+          recorder = new AudioRecorder({ outputDir: this._recordingPath });
           recorder.start(session.callId);
         }
 
         // Connect media WebSocket
         const mediaWs = new MediaWebSocket();
 
-        // Bind transport functions to session
+        // Bind transport functions to session — sessions send ulaw bytes directly
         session._bindTransport(
           (audio: Buffer) => {
-            // Convert PCM16 to ulaw for telephony
-            const ulaw = pcm16ToUlaw(audio);
-            mediaWs.sendAudio(ulaw.toString('base64'));
-            if (recorder) {
-              recorder.writeRawOutbound(audio);
-            }
+            mediaWs.sendAudio(audio.toString('base64'));
           },
           () => {
             mediaWs.sendClear();
@@ -318,20 +383,23 @@ export class ClawOpsAgent {
           },
         );
 
-        // Get or create session handler
-        const sessionHandler = this._sessionFactory ? this._sessionFactory() : null;
+        const sessionHandler = this._session;
 
-        // Handle inbound audio
-        mediaWs.onAudio((ulawAudio: Buffer) => {
-          // Convert ulaw to PCM16
-          const pcm = ulawToPcm16(ulawAudio);
-          if (recorder) {
-            recorder.writeInbound(pcm);
-          }
+        // Inject tools and recorder into session if supported
+        if ('setToolRegistry' in sessionHandler && typeof sessionHandler.setToolRegistry === 'function') {
+          sessionHandler.setToolRegistry(sessionTools);
+        }
+        if (recorder && 'setRecorder' in sessionHandler && typeof sessionHandler.setRecorder === 'function') {
+          sessionHandler.setRecorder(recorder);
+        }
+
+        // Handle inbound audio — feed raw ulaw to session (each session converts as needed)
+        mediaWs.onAudio((ulawAudio: Buffer, _timestamp: number) => {
           if (sessionHandler) {
-            // Resample from 8kHz to 16kHz for most STT/realtime APIs
-            const resampled = resamplePcm16(pcm, 8000, 16000);
-            sessionHandler.feedAudio(resampled);
+            sessionHandler.feedAudio(ulawAudio);
+          }
+          if (recorder) {
+            recorder.writeInbound(ulawToPcm16(ulawAudio));
           }
         });
 
@@ -342,48 +410,42 @@ export class ClawOpsAgent {
           session._markEnded();
         });
 
+        // Emit call_start
+        session._emit('call_start');
+
         try {
-          await mediaWs.connect(mediaWsUrl);
+          await mediaWs.connect(mediaWsUrl, this._apiKey);
 
           // Start the session handler
-          if (sessionHandler) {
-            await sessionHandler.start(session, sessionTools);
-          }
+          await sessionHandler.start(session, sessionTools);
 
           // Wait for the call to end
           await session.wait();
 
           // Stop the session handler
-          if (sessionHandler) {
-            await sessionHandler.stop();
-          }
+          await sessionHandler.stop();
         } catch (err) {
           console.error(`[ClawOpsAgent] Call session error:`, err);
         } finally {
+          // Clean up MCP clients
+          if (mcpClients.length > 0) {
+            sessionTools.clearMcpTools();
+            for (const c of mcpClients) {
+              await c.disconnect();
+            }
+          }
+
           mediaWs.close();
           if (recorder) {
             recorder.stop();
           }
+
+          // Emit call_end
+          session._emit('call_end');
+          session._markEnded();
+          this._activeSessions.delete(session.callId);
         }
       },
     );
-  }
-
-  private _emitEvent(event: AgentEventType, session: CallSession): void {
-    const handlers = this._handlers.get(event);
-    if (handlers) {
-      for (const handler of handlers) {
-        try {
-          const result = handler(session);
-          if (result && typeof result.catch === 'function') {
-            result.catch((err: unknown) => {
-              console.error(`[ClawOpsAgent] Error in ${event} handler:`, err);
-            });
-          }
-        } catch (err) {
-          console.error(`[ClawOpsAgent] Error in ${event} handler:`, err);
-        }
-      }
-    }
   }
 }

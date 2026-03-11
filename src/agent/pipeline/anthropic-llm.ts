@@ -8,11 +8,11 @@ import type { ToolRegistry } from '../tool.js';
 export interface AnthropicLLMOptions {
   /** Anthropic API key. Falls back to ANTHROPIC_API_KEY env var. */
   apiKey?: string;
-  /** Model to use. Default: 'claude-sonnet-4-20250514' */
+  /** Model to use. Default: 'claude-sonnet-4-6' */
   model?: string;
-  /** Default temperature. */
+  /** Default temperature. Default: 0.8 */
   temperature?: number;
-  /** Default max tokens. Default: 1024 */
+  /** Default max tokens. Default: 4096 */
   maxTokens?: number;
 }
 
@@ -21,8 +21,9 @@ export class AnthropicLLM implements LLM {
 
   constructor(options: AnthropicLLMOptions = {}) {
     this._options = {
-      model: 'claude-sonnet-4-20250514',
-      maxTokens: 1024,
+      model: 'claude-sonnet-4-6',
+      temperature: 0.8,
+      maxTokens: 4096,
       ...options,
     };
   }

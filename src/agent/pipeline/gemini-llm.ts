@@ -8,11 +8,11 @@ import type { ToolRegistry } from '../tool.js';
 export interface GeminiLLMOptions {
   /** Google API key. Falls back to GOOGLE_API_KEY env var. */
   apiKey?: string;
-  /** Model to use. Default: 'gemini-2.0-flash' */
+  /** Model to use. Default: 'gemini-2.5-flash' */
   model?: string;
-  /** Default temperature. */
+  /** Default temperature. Default: 0.8 */
   temperature?: number;
-  /** Default max tokens. */
+  /** Default max tokens. Default: 4096 */
   maxTokens?: number;
 }
 
@@ -21,7 +21,9 @@ export class GeminiLLM implements LLM {
 
   constructor(options: GeminiLLMOptions = {}) {
     this._options = {
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
+      temperature: 0.8,
+      maxTokens: 4096,
       ...options,
     };
   }

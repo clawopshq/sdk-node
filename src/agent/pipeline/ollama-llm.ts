@@ -8,13 +8,13 @@ import type { ToolRegistry } from '../tool.js';
 import { OpenAICompatLLM } from './openai-compat-llm.js';
 
 export interface OllamaLLMOptions {
-  /** Ollama server URL. Default: 'http://localhost:11434' */
+  /** Ollama server URL. Falls back to OLLAMA_BASE_URL env var. Default: 'http://localhost:11434/v1' */
   baseUrl?: string;
-  /** Model to use. Default: 'llama3.1' */
+  /** Model to use. Default: 'llama3.2' */
   model?: string;
-  /** Default temperature. */
+  /** Default temperature. Default: 0.8 */
   temperature?: number;
-  /** Default max tokens. */
+  /** Default max tokens. Default: 4096 */
   maxTokens?: number;
 }
 
@@ -22,13 +22,13 @@ export class OllamaLLM implements LLM {
   private _inner: OpenAICompatLLM;
 
   constructor(options: OllamaLLMOptions = {}) {
-    const baseUrl = (options.baseUrl ?? 'http://localhost:11434').replace(/\/$/, '');
+    const baseUrl = options.baseUrl ?? process.env['OLLAMA_BASE_URL'] ?? 'http://localhost:11434/v1';
     this._inner = new OpenAICompatLLM({
-      baseUrl: `${baseUrl}/v1`,
-      model: options.model ?? 'llama3.1',
+      baseUrl: baseUrl.replace(/\/$/, ''),
+      model: options.model ?? 'llama3.2',
       apiKey: 'ollama',
-      temperature: options.temperature,
-      maxTokens: options.maxTokens,
+      temperature: options.temperature ?? 0.8,
+      maxTokens: options.maxTokens ?? 4096,
     });
   }
 

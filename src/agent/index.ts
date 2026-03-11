@@ -8,7 +8,7 @@ export type { ClawOpsAgentOptions, AgentEventType } from './agent.js';
 
 // Session
 export { CallSession } from './session.js';
-export type { CallDirection, CallStatus, SessionEventType } from './session.js';
+export type { CallDirection, CallStatus } from './session.js';
 
 // Tools
 export { ToolRegistry, functionTool, zodToToolParams } from './tool.js';

@@ -7,22 +7,22 @@ import type { SpeechEvent, STT } from './base.js';
 export interface DeepgramSTTOptions {
   /** Deepgram API key. Falls back to DEEPGRAM_API_KEY env var. */
   apiKey?: string;
-  /** Model to use. Default: 'nova-2' */
+  /** Model to use. Default: 'nova-3' */
   model?: string;
   /** Language code. Default: 'ko' */
   language?: string;
-  /** Enable interim results. Default: true */
-  interimResults?: boolean;
-  /** Enable punctuation. Default: true */
-  punctuate?: boolean;
-  /** Enable smart formatting. Default: true */
-  smartFormat?: boolean;
+  /** Sample rate. Default: 16000 */
+  sampleRate?: number;
   /** Encoding. Default: 'linear16' */
   encoding?: string;
-  /** Sample rate. Default: 8000 */
-  sampleRate?: number;
-  /** Number of channels. Default: 1 */
-  channels?: number;
+  /** Enable punctuation. Default: true */
+  punctuate?: boolean;
+  /** Enable interim results. Default: true */
+  interimResults?: boolean;
+  /** Endpointing timeout in ms. Default: 300 */
+  endpointing?: number;
+  /** Utterance end silence timeout in ms. Default: 1000 */
+  utteranceEndMs?: number;
 }
 
 export class DeepgramSTT implements STT {
@@ -30,14 +30,14 @@ export class DeepgramSTT implements STT {
 
   constructor(options: DeepgramSTTOptions = {}) {
     this._options = {
-      model: 'nova-2',
+      model: 'nova-3',
       language: 'ko',
-      interimResults: true,
-      punctuate: true,
-      smartFormat: true,
+      sampleRate: 16000,
       encoding: 'linear16',
-      sampleRate: 8000,
-      channels: 1,
+      punctuate: true,
+      interimResults: true,
+      endpointing: 300,
+      utteranceEndMs: 1000,
       ...options,
     };
   }
@@ -62,10 +62,10 @@ export class DeepgramSTT implements STT {
       language: language!,
       punctuate: String(this._options.punctuate),
       interim_results: String(this._options.interimResults),
-      smart_format: String(this._options.smartFormat),
       encoding: this._options.encoding!,
       sample_rate: String(sampleRate),
-      channels: String(this._options.channels),
+      endpointing: String(this._options.endpointing),
+      utterance_end_ms: String(this._options.utteranceEndMs),
     });
 
     const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;

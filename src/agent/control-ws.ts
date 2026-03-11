@@ -7,40 +7,37 @@ import type { WebSocket as WsType } from 'ws';
 export interface ControlWsOptions {
   baseUrl: string;
   apiKey: string;
-  agentId: string;
-  /** Override control WS path. Default: /v1/agent/control */
-  path?: string;
+  accountId: string;
+  /** Phone number to register on. */
+  number?: string;
 }
 
-export interface ControlEventData {
-  call_id: string;
-  from_number?: string;
-  to_number?: string;
-  account_id?: string;
-  direction?: 'inbound' | 'outbound';
-  media_ws_url?: string;
-  metadata?: Record<string, unknown>;
-  reason?: string;
-}
-
+/**
+ * Control event is a flat JSON object with an 'event' field.
+ * Example: { "event": "call.incoming", "callId": "xxx", "from": "070...", "mediaUrl": "wss://..." }
+ */
 export interface ControlEvent {
   event: string;
-  data: ControlEventData;
+  [key: string]: unknown;
 }
 
 type ControlEventHandler = (event: ControlEvent) => void | Promise<void>;
 
-const DEFAULT_PATH = '/v1/agent/control';
 const INITIAL_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30000;
 
 /**
  * Build the full control WebSocket URL from options.
+ * Matches Python SDK: /v1/accounts/{account_id}/agent/listen?number={number}
  */
 export function buildControlWsUrl(options: ControlWsOptions): string {
-  const base = options.baseUrl.replace(/^http/, 'ws').replace(/\/$/, '');
-  const path = options.path ?? DEFAULT_PATH;
-  return `${base}${path}?api_key=${encodeURIComponent(options.apiKey)}&agent_id=${encodeURIComponent(options.agentId)}`;
+  const scheme = options.baseUrl.startsWith('https') ? 'wss' : 'ws';
+  const host = options.baseUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  let url = `${scheme}://${host}/v1/accounts/${encodeURIComponent(options.accountId)}/agent/listen`;
+  if (options.number) {
+    url += `?number=${encodeURIComponent(options.number)}`;
+  }
+  return url;
 }
 
 export class ControlWebSocket {
@@ -99,7 +96,12 @@ export class ControlWebSocket {
   private async _doConnect(): Promise<void> {
     const { WebSocket } = await import('ws');
 
-    const ws = new WebSocket(this._url);
+    const ws = new WebSocket(this._url, {
+      followRedirects: true,
+      headers: {
+        Authorization: `Bearer ${this._options.apiKey}`,
+      },
+    });
     this._ws = ws;
 
     ws.on('open', () => {

@@ -1,26 +1,22 @@
 /**
  * Media WebSocket for streaming audio to/from the telephony platform.
+ *
+ * ClawOps VoiceML Stream protocol:
+ * connected -> start -> media (G.711 ulaw 8kHz base64) -> mark -> stop
  */
 
 import type { WebSocket as WsType } from 'ws';
 
 export interface MediaStartEvent {
-  streamSid: string;
-  callSid: string;
-  accountSid: string;
-  tracks: string[];
-  customParameters: Record<string, string>;
-  mediaFormat: {
-    encoding: string;
-    sampleRate: number;
-    channels: number;
-  };
+  streamId: string;
+  callId: string;
+  accountId: string;
+  sampleRate: number;
 }
 
 export interface MediaEvent {
-  track: string;
-  chunk: string;
-  timestamp: string;
+  audio: Buffer;
+  timestamp: number;
 }
 
 /**
@@ -28,17 +24,12 @@ export interface MediaEvent {
  */
 export function parseStartEvent(data: Record<string, unknown>): MediaStartEvent {
   const start = data['start'] as Record<string, unknown>;
+  const fmt = (start['mediaFormat'] ?? {}) as Record<string, unknown>;
   return {
-    streamSid: (start['streamSid'] ?? data['streamSid'] ?? '') as string,
-    callSid: (start['callSid'] ?? '') as string,
-    accountSid: (start['accountSid'] ?? '') as string,
-    tracks: (start['tracks'] ?? []) as string[],
-    customParameters: (start['customParameters'] ?? {}) as Record<string, string>,
-    mediaFormat: (start['mediaFormat'] ?? {
-      encoding: 'audio/x-mulaw',
-      sampleRate: 8000,
-      channels: 1,
-    }) as MediaStartEvent['mediaFormat'],
+    streamId: (start['streamId'] ?? '') as string,
+    callId: (start['callId'] ?? '') as string,
+    accountId: (start['accountId'] ?? '') as string,
+    sampleRate: (fmt['sampleRate'] ?? 8000) as number,
   };
 }
 
@@ -48,39 +39,34 @@ export function parseStartEvent(data: Record<string, unknown>): MediaStartEvent 
 export function parseMediaEvent(data: Record<string, unknown>): MediaEvent {
   const media = data['media'] as Record<string, unknown>;
   return {
-    track: (media['track'] ?? 'inbound') as string,
-    chunk: (media['chunk'] ?? media['payload'] ?? '') as string,
-    timestamp: (media['timestamp'] ?? '') as string,
+    audio: Buffer.from((media['payload'] ?? '') as string, 'base64'),
+    timestamp: parseInt((media['timestamp'] as string) ?? '0', 10) || 0,
   };
 }
 
 /**
  * Build a media response message to send audio back.
  */
-export function buildMediaResponse(streamSid: string, payload: string): string {
+export function buildMediaResponse(audioBase64: string): string {
   return JSON.stringify({
     event: 'media',
-    streamSid,
     media: {
-      payload,
+      payload: audioBase64,
     },
   });
 }
 
 export class MediaWebSocket {
   private _ws: WsType | null = null;
-  private _streamSid: string | null = null;
   private _audioQueue: string[] = [];
   private _sendLoopRunning = false;
   private _closed = false;
-  private _onAudio: ((audio: Buffer) => void) | null = null;
+  private _onAudio: ((audio: Buffer, timestamp: number) => void) | null = null;
   private _onStart: ((event: MediaStartEvent) => void) | null = null;
   private _onClose: (() => void) | null = null;
-  private _markSeq = 0;
-  private _markResolves: Map<string, () => void> = new Map();
 
   /** Set the handler for inbound audio data. */
-  onAudio(handler: (audio: Buffer) => void): void {
+  onAudio(handler: (audio: Buffer, timestamp: number) => void): void {
     this._onAudio = handler;
   }
 
@@ -94,12 +80,17 @@ export class MediaWebSocket {
     this._onClose = handler;
   }
 
-  /** Connect to a media WebSocket URL. */
-  async connect(url: string): Promise<void> {
+  /** Connect to a media WebSocket URL with Bearer authentication. */
+  async connect(url: string, apiKey: string): Promise<void> {
     const { WebSocket } = await import('ws');
 
     return new Promise<void>((resolve, reject) => {
-      const ws = new WebSocket(url);
+      const ws = new WebSocket(url, {
+        followRedirects: true,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      });
       this._ws = ws;
       this._closed = false;
 
@@ -141,31 +132,21 @@ export class MediaWebSocket {
   /** Clear all queued outbound audio. */
   sendClear(): void {
     this._audioQueue.length = 0;
-    if (this._ws && this._streamSid && this._ws.readyState === 1) {
-      this._ws.send(
-        JSON.stringify({
-          event: 'clear',
-          streamSid: this._streamSid,
-        }),
-      );
+    if (this._ws && this._ws.readyState === 1) {
+      this._ws.send(JSON.stringify({ event: 'clear' }));
     }
   }
 
-  /** Send a mark event and return a promise that resolves when the mark is acknowledged. */
-  sendMark(): Promise<void> {
-    const label = `mark_${++this._markSeq}`;
-    return new Promise<void>((resolve) => {
-      this._markResolves.set(label, resolve);
-      if (this._ws && this._streamSid && this._ws.readyState === 1) {
-        this._ws.send(
-          JSON.stringify({
-            event: 'mark',
-            streamSid: this._streamSid,
-            mark: { name: label },
-          }),
-        );
-      }
-    });
+  /** Send a mark event. */
+  sendMark(name: string): void {
+    if (this._ws && this._ws.readyState === 1) {
+      this._ws.send(
+        JSON.stringify({
+          event: 'mark',
+          mark: { name },
+        }),
+      );
+    }
   }
 
   /** Close the media WebSocket. */
@@ -175,11 +156,6 @@ export class MediaWebSocket {
       this._ws.close();
       this._ws = null;
     }
-    // Resolve any pending marks
-    for (const resolve of this._markResolves.values()) {
-      resolve();
-    }
-    this._markResolves.clear();
   }
 
   private _handleMessage(msg: Record<string, unknown>): void {
@@ -188,7 +164,6 @@ export class MediaWebSocket {
     switch (event) {
       case 'start': {
         const startEvt = parseStartEvent(msg);
-        this._streamSid = startEvt.streamSid;
         if (this._onStart) {
           this._onStart(startEvt);
         }
@@ -196,18 +171,8 @@ export class MediaWebSocket {
       }
       case 'media': {
         const mediaEvt = parseMediaEvent(msg);
-        if (mediaEvt.track === 'inbound' && this._onAudio) {
-          const audioBuf = Buffer.from(mediaEvt.chunk, 'base64');
-          this._onAudio(audioBuf);
-        }
-        break;
-      }
-      case 'mark': {
-        const mark = msg['mark'] as Record<string, unknown> | undefined;
-        const name = mark?.['name'] as string | undefined;
-        if (name && this._markResolves.has(name)) {
-          this._markResolves.get(name)!();
-          this._markResolves.delete(name);
+        if (this._onAudio) {
+          this._onAudio(mediaEvt.audio, mediaEvt.timestamp);
         }
         break;
       }
@@ -230,9 +195,7 @@ export class MediaWebSocket {
 
       while (this._audioQueue.length > 0 && this._ws && this._ws.readyState === 1) {
         const payload = this._audioQueue.shift()!;
-        if (this._streamSid) {
-          this._ws.send(buildMediaResponse(this._streamSid, payload));
-        }
+        this._ws.send(buildMediaResponse(payload));
       }
 
       setTimeout(loop, 20);

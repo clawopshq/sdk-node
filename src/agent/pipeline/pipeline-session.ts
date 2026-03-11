@@ -2,6 +2,8 @@
  * PipelineSession orchestrates STT -> LLM -> TTS for a voice call.
  */
 
+import { pcm16ToUlaw, resamplePcm16, ulawToPcm16 } from '../audio.js';
+import type { AudioRecorder } from '../recorder.js';
 import type { CallSession } from '../session.js';
 import type { ToolRegistry } from '../tool.js';
 import type {
@@ -9,7 +11,6 @@ import type {
   LLM,
   LLMChunk,
   Session,
-  SpeechEvent,
   STT,
   TTS,
 } from './base.js';
@@ -20,6 +21,14 @@ export interface PipelineSessionOptions {
   tts: TTS;
   /** System prompt for the LLM. */
   systemPrompt?: string;
+  /** Send initial greeting. Default: true */
+  greeting?: boolean;
+  /** Language code. Default: 'ko' */
+  language?: string;
+  /** Tool registry for function calling. */
+  toolRegistry?: ToolRegistry;
+  /** Audio recorder for the session. */
+  recorder?: AudioRecorder;
   /** LLM temperature. */
   temperature?: number;
   /** Max tokens for LLM generation. */
@@ -35,6 +44,8 @@ export class PipelineSession implements Session {
   private _llm: LLM;
   private _tts: TTS;
   private _systemPrompt: string | undefined;
+  private _greeting: boolean;
+  private _language: string;
   private _temperature: number | undefined;
   private _maxTokens: number | undefined;
   private _sampleRate: number;
@@ -42,6 +53,7 @@ export class PipelineSession implements Session {
 
   private _callSession: CallSession | null = null;
   private _tools: ToolRegistry | null = null;
+  private _recorder: AudioRecorder | null = null;
   private _conversation: ConversationMessage[] = [];
   private _audioBuffer: Buffer[] = [];
   private _running = false;
@@ -52,10 +64,22 @@ export class PipelineSession implements Session {
     this._llm = options.llm;
     this._tts = options.tts;
     this._systemPrompt = options.systemPrompt;
+    this._greeting = options.greeting ?? true;
+    this._language = options.language ?? 'ko';
     this._temperature = options.temperature;
     this._maxTokens = options.maxTokens;
     this._sampleRate = options.sampleRate ?? 8000;
     this._interruptOnSpeech = options.interruptOnSpeech ?? true;
+    if (options.toolRegistry) this._tools = options.toolRegistry;
+    if (options.recorder) this._recorder = options.recorder;
+  }
+
+  setToolRegistry(registry: ToolRegistry): void {
+    this._tools = registry;
+  }
+
+  setRecorder(recorder: AudioRecorder): void {
+    this._recorder = recorder;
   }
 
   async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
@@ -68,6 +92,13 @@ export class PipelineSession implements Session {
       this._conversation.push({
         role: 'system',
         content: this._systemPrompt,
+      });
+    }
+
+    // Generate initial greeting if enabled
+    if (this._greeting) {
+      this._generateGreeting().catch((err) => {
+        console.error('[PipelineSession] Greeting error:', err);
       });
     }
 
@@ -113,7 +144,11 @@ export class PipelineSession implements Session {
   private async *_createAudioStream(): AsyncGenerator<Buffer> {
     while (this._running) {
       if (this._audioBuffer.length > 0) {
-        yield this._audioBuffer.shift()!;
+        const ulaw = this._audioBuffer.shift()!;
+        // G.711 ulaw 8kHz → PCM16 8kHz → PCM16 16kHz
+        const pcm8k = ulawToPcm16(ulaw);
+        const pcm16k = resamplePcm16(pcm8k, 8000, 16000);
+        yield pcm16k;
       } else {
         // Wait a bit before checking again
         await new Promise((resolve) => setTimeout(resolve, 20));
@@ -121,9 +156,17 @@ export class PipelineSession implements Session {
     }
   }
 
+  private async _generateGreeting(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await this._respond();
+  }
+
   private async _handleUserSpeech(transcript: string): Promise<void> {
     this._conversation.push({ role: 'user', content: transcript });
+    await this._respond();
+  }
 
+  private async _respond(): Promise<void> {
     // Run LLM generation (may include tool calls)
     let fullResponse = '';
     const textChunks: string[] = [];
@@ -207,7 +250,19 @@ export class PipelineSession implements Session {
         sampleRate: this._sampleRate,
       })) {
         if (!this._running || !this._speaking) break;
-        this._callSession.sendAudio(audioChunk);
+        if (this._recorder) {
+          this._recorder.writeRawOutbound(audioChunk);
+        }
+        // Resample TTS output → 8kHz → ulaw, send in 160B frames
+        const pcm8k = resamplePcm16(audioChunk, this._sampleRate, 8000);
+        const ulaw = pcm16ToUlaw(pcm8k);
+        for (let off = 0; off < ulaw.length; off += 160) {
+          let chunk = ulaw.subarray(off, off + 160);
+          if (chunk.length < 160) {
+            chunk = Buffer.concat([chunk, Buffer.alloc(160 - chunk.length, 0xff)]);
+          }
+          this._callSession.sendAudio(chunk);
+        }
       }
     } catch (err) {
       console.error('[PipelineSession] TTS error:', err);

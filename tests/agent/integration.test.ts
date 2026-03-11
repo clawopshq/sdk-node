@@ -115,10 +115,11 @@ vi.mock('../../src/agent/pipeline/xai-llm.js', () => ({
 describe('Agent integration', () => {
   it('full agent setup with tools and events', async () => {
     const { ClawOpsAgent, OpenAIRealtime } = await import('../../src/agent/index.js');
-    const session = new OpenAIRealtime({ instructions: 'test' });
+    const session = new OpenAIRealtime({ systemPrompt: 'test' });
     const agent = new ClawOpsAgent({
       apiKey: 'sk_test',
-      agentId: 'AG123',
+      accountId: 'AC123',
+      from: '07012345678',
       session,
     });
     agent.tool({
@@ -128,7 +129,7 @@ describe('Agent integration', () => {
       required: ['id'],
       handler: async (args) => `OK ${args.id}`,
     });
-    agent.on('call.incoming', async () => {});
+    agent.on('call_start', async () => {});
     expect(agent).toBeDefined();
   });
 
@@ -174,14 +175,15 @@ describe('Agent integration', () => {
     const { ClawOpsAgent, OpenAIRealtime, mcpServerStdio } = await import(
       '../../src/agent/index.js'
     );
-    const session = new OpenAIRealtime({ instructions: 'test' });
+    const session = new OpenAIRealtime({ systemPrompt: 'test' });
     const agent = new ClawOpsAgent({
       apiKey: 'sk_test',
-      agentId: 'AG123',
+      accountId: 'AC123',
+      from: '07012345678',
       session,
-      mcpServers: {
-        myServer: mcpServerStdio({ command: 'npx', args: ['@mcp/server'] }),
-      },
+      mcpServers: [
+        mcpServerStdio({ command: 'npx', args: ['@mcp/server'] }),
+      ],
     });
     expect(agent).toBeDefined();
   });

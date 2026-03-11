@@ -144,8 +144,11 @@ describe('GeminiRealtime', () => {
       const sendArgs = mockSession.sendRealtimeInput.mock.calls[0][0];
       expect(sendArgs.audio.mimeType).toBe('audio/pcm;rate=16000');
 
-      // PCM16 16kHz: 160 ulaw → 160 PCM16 samples (320 bytes) → 320 PCM16 16kHz samples (640 bytes)
-      expect(sendArgs.audio.data.length).toBe(640);
+      // SDK Blob.data는 base64 문자열이어야 함
+      expect(typeof sendArgs.audio.data).toBe('string');
+      // PCM16 16kHz: 160 ulaw → 320B pcm8k → 640B pcm16k → base64(640) = 856 chars
+      const decoded = Buffer.from(sendArgs.audio.data, 'base64');
+      expect(decoded.length).toBe(640);
 
       await session.stop();
     });

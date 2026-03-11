@@ -259,9 +259,10 @@ export class GeminiRealtime implements Session {
       }
       const pcm16k = resamplePcm16(pcm8k, 8000, 16000);
 
+      // SDK Blob.data expects base64 string, not Buffer
       this._session.sendRealtimeInput({
         audio: {
-          data: pcm16k,
+          data: Buffer.from(pcm16k).toString('base64'),
           mimeType: 'audio/pcm;rate=16000',
         },
       });

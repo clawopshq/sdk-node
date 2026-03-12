@@ -372,7 +372,7 @@ export class OpenAIRealtime implements Session {
     // Built-in hang_up tool
     if (funcName === 'hang_up') {
       if (this._call) {
-        this._call.hangup();
+        await this._call.hangup();
       }
       return;
     }

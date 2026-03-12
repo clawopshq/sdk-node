@@ -14,13 +14,15 @@ import { pcm16ToUlaw, resamplePcm16, ulawToPcm16 } from '../audio.js';
 
 const HANG_UP_TOOL = {
   name: 'hang_up',
-  description: 'End the phone call. Use when the conversation is finished or the caller says goodbye.',
+  description:
+    'End the phone call. Use when the conversation is finished or the caller says goodbye.',
   parameters: { type: 'object', properties: {} },
 };
 
 const COLLECT_DTMF_TOOL = {
   name: 'collect_dtmf',
-  description: '사용자로부터 DTMF(전화 키패드) 입력을 수집합니다. 반드시 사용자에게 무엇을 입력해야 하는지 안내한 후 호출하세요.',
+  description:
+    '사용자로부터 DTMF(전화 키패드) 입력을 수집합니다. 반드시 사용자에게 무엇을 입력해야 하는지 안내한 후 호출하세요.',
   parameters: {
     type: 'object' as const,
     properties: {
@@ -38,7 +40,10 @@ const SEND_DTMF_TOOL = {
   parameters: {
     type: 'object' as const,
     properties: {
-      digits: { type: 'string' as const, description: "전송할 번호 (0-9, *, #). 'w'는 500ms 대기, 'W'는 1000ms 대기." },
+      digits: {
+        type: 'string' as const,
+        description: "전송할 번호 (0-9, *, #). 'w'는 500ms 대기, 'W'는 1000ms 대기.",
+      },
     },
     required: ['digits'] as string[],
   },
@@ -145,7 +150,11 @@ function sanitizeSchemaForGemini(
 
   // items 재귀 처리 (array)
   if (schema['items'] && typeof schema['items'] === 'object' && !Array.isArray(schema['items'])) {
-    result['items'] = sanitizeSchemaForGemini(schema['items'] as Record<string, unknown>, defs, depth + 1);
+    result['items'] = sanitizeSchemaForGemini(
+      schema['items'] as Record<string, unknown>,
+      defs,
+      depth + 1,
+    );
   }
 
   // type이 없고 properties가 있으면 object로 추정
@@ -262,7 +271,10 @@ export class GeminiRealtime implements Session {
         onerror: (err) => {
           console.error('[GeminiRealtime] SDK error:', err);
         },
-        onclose: () => {
+        onclose: (ev) => {
+          console.log(
+            `[GeminiRealtime] Connection closed: code=${(ev as { code?: number })?.code ?? 'unknown'}`,
+          );
           this._closed = true;
         },
       },
@@ -328,7 +340,10 @@ export class GeminiRealtime implements Session {
           name: t.function.name,
           description: t.function.description,
           parameters: sanitizeSchemaForGemini(
-            (t.function.parameters ?? { type: 'object', properties: {} }) as Record<string, unknown>,
+            (t.function.parameters ?? { type: 'object', properties: {} }) as Record<
+              string,
+              unknown
+            >,
           ),
         }))
       : [];
@@ -362,11 +377,13 @@ export class GeminiRealtime implements Session {
 
       // Turn complete - flush audio remainder
       if (serverContent.turnComplete) {
+        console.log('[GeminiRealtime] Turn complete');
         this._flushAudioRemainder();
       }
 
       // Barge-in (interrupt)
       if (serverContent.interrupted) {
+        console.log('[GeminiRealtime] Barge-in detected');
         if (this._call) {
           this._call.clearAudio();
         }
@@ -377,12 +394,14 @@ export class GeminiRealtime implements Session {
       // Input transcription (under serverContent in SDK)
       const inputText = serverContent.inputTranscription?.text;
       if (inputText && this._call) {
+        console.log(`[GeminiRealtime] [TRANSCRIPT-USER] ${inputText}`);
         this._call._emit('transcript', 'user', inputText);
       }
 
       // Output transcription (under serverContent in SDK)
       const outputText = serverContent.outputTranscription?.text;
       if (outputText && this._call) {
+        console.log(`[GeminiRealtime] [TRANSCRIPT-ASSISTANT] ${outputText}`);
         this._call._emit('transcript', 'assistant', outputText);
       }
     }
@@ -390,6 +409,16 @@ export class GeminiRealtime implements Session {
     // Handle tool calls
     if (msg.toolCall) {
       this._handleToolCall(msg.toolCall);
+    }
+
+    // Handle tool call cancellation
+    const toolCancellation = (msg as unknown as Record<string, unknown>)['toolCallCancellation'] as
+      | { ids?: string[] }
+      | undefined;
+    if (toolCancellation) {
+      console.log(
+        `[GeminiRealtime] Tool call cancelled: ${(toolCancellation.ids ?? []).join(', ')}`,
+      );
     }
   }
 
@@ -436,18 +465,22 @@ export class GeminiRealtime implements Session {
     // 도구 호출 중에는 오디오 입력 중단 (Gemini가 tool call 상태에서 audio input 수신 시 1008 에러)
     this._toolCallInProgress = true;
 
-    console.log(`[GeminiRealtime] toolCall: ${functionCalls.map((fc: { name?: string }) => fc.name).join(', ')}`);
+    console.log(
+      `[GeminiRealtime] toolCall: ${functionCalls.map((fc: { name?: string }) => fc.name).join(', ')}`,
+    );
     const responses: Array<Record<string, unknown>> = [];
 
     for (const fc of functionCalls) {
       const name = fc.name ?? '';
       const fcId = fc.id ?? '';
       const args = fc.args ?? {};
+      console.log(`[GeminiRealtime] Tool call: ${name}(${JSON.stringify(args)})`);
 
       // Built-in hang_up tool
       if (name === 'hang_up') {
+        console.log('[GeminiRealtime] hang_up: ending call');
         if (this._call) {
-          this._call.hangup();
+          await this._call.hangup();
         }
         return;
       }
@@ -456,14 +489,17 @@ export class GeminiRealtime implements Session {
         if (this._call) {
           let result: string;
           try {
-            console.log(`[GeminiRealtime] collect_dtmf: waiting for digits (maxDigits=${(args['max_digits'] as number) ?? 4})`);
+            console.log(
+              `[GeminiRealtime] collect_dtmf: waiting for digits (maxDigits=${(args['max_digits'] as number) ?? 4}, timeout=${(args['timeout'] as number) ?? 5})`,
+            );
             result = await this._call.collectDtmf({
               maxDigits: (args['max_digits'] as number) ?? 4,
               finishOnKey: (args['finish_on_key'] as string) ?? '#',
               timeout: (args['timeout'] as number) ?? 5,
             });
-            console.log(`[GeminiRealtime] collect_dtmf: result="${result}"`);
+            console.log(`[GeminiRealtime] DTMF collected: ${result || '(empty)'}`);
           } catch (err) {
+            console.error(`[GeminiRealtime] collect_dtmf error:`, err);
             result = `Error: ${err}`;
           }
           responses.push({
@@ -479,9 +515,12 @@ export class GeminiRealtime implements Session {
         if (this._call) {
           let result: string;
           try {
+            console.log(`[GeminiRealtime] send_dtmf: digits="${(args['digits'] as string) ?? ''}"`);
             await this._call.sendDtmfSequence((args['digits'] as string) ?? '');
             result = 'sent';
+            console.log(`[GeminiRealtime] send_dtmf: sent`);
           } catch (err) {
+            console.error(`[GeminiRealtime] send_dtmf error:`, err);
             result = `Error: ${err}`;
           }
           responses.push({ id: fcId, name, response: { result } });
@@ -497,13 +536,15 @@ export class GeminiRealtime implements Session {
 
       try {
         const result = await this._tools.call(name, args);
+        const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+        console.log(`[GeminiRealtime] Tool result: ${name} -> ${resultStr.substring(0, 200)}`);
         responses.push({
           id: fcId,
           name,
-          response: { result: typeof result === 'string' ? result : JSON.stringify(result) },
+          response: { result: resultStr },
         });
       } catch (err) {
-        console.error(`[GeminiRealtime] Tool call error for ${name}:`, err);
+        console.error(`[GeminiRealtime] Tool call failed: ${name}:`, err);
         responses.push({
           id: fcId,
           name,
@@ -512,7 +553,8 @@ export class GeminiRealtime implements Session {
       }
     }
 
-    if (this._session) {
+    if (responses.length > 0 && this._session) {
+      console.log(`[GeminiRealtime] Sending ${responses.length} tool response(s)`);
       this._session.sendToolResponse({
         functionResponses: responses,
       });

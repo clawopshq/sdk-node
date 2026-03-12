@@ -3,6 +3,7 @@
  */
 
 import { pcm16ToUlaw, resamplePcm16, ulawToPcm16 } from '../audio.js';
+import { BuiltinTool } from '../builtin-tool.js';
 import type { AudioRecorder } from '../recorder.js';
 import type { CallSession } from '../session.js';
 import { ToolRegistry } from '../tool.js';
@@ -90,7 +91,7 @@ export class PipelineSession implements Session {
   private _audioBuffer: Buffer[] = [];
   private _running = false;
   private _speaking = false;
-  private _dtmfTools = true;
+  private _builtinTools: Set<BuiltinTool> | null = null;
 
   constructor(options: PipelineSessionOptions) {
     this._stt = options.stt;
@@ -115,8 +116,8 @@ export class PipelineSession implements Session {
     this._recorder = recorder;
   }
 
-  setDtmfTools(enabled: boolean): void {
-    this._dtmfTools = enabled;
+  setBuiltinTools(tools: Set<BuiltinTool>): void {
+    this._builtinTools = tools;
   }
 
   async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
@@ -212,23 +213,31 @@ export class PipelineSession implements Session {
   }
 
   private _buildEffectiveTools(): ToolRegistry | undefined {
-    if (!this._dtmfTools) return this._tools ?? undefined;
+    const includeCollectDtmf = !this._builtinTools || this._builtinTools.has(BuiltinTool.COLLECT_DTMF);
+    const includeSendDtmf = !this._builtinTools || this._builtinTools.has(BuiltinTool.SEND_DTMF);
+
+    if (!includeCollectDtmf && !includeSendDtmf) return this._tools ?? undefined;
+
     // Inject DTMF tool stubs into a forked registry so the LLM sees them
     const base = this._tools ? this._tools.fork() : new ToolRegistry();
-    base.register({
-      name: 'collect_dtmf',
-      description: COLLECT_DTMF_TOOL.function.description,
-      parameters: COLLECT_DTMF_TOOL.function.parameters.properties as Record<string, unknown>,
-      required: COLLECT_DTMF_TOOL.function.parameters.required,
-      handler: async () => '',
-    });
-    base.register({
-      name: 'send_dtmf',
-      description: SEND_DTMF_TOOL.function.description,
-      parameters: SEND_DTMF_TOOL.function.parameters.properties as Record<string, unknown>,
-      required: SEND_DTMF_TOOL.function.parameters.required,
-      handler: async () => '',
-    });
+    if (includeCollectDtmf) {
+      base.register({
+        name: 'collect_dtmf',
+        description: COLLECT_DTMF_TOOL.function.description,
+        parameters: COLLECT_DTMF_TOOL.function.parameters.properties as Record<string, unknown>,
+        required: COLLECT_DTMF_TOOL.function.parameters.required,
+        handler: async () => '',
+      });
+    }
+    if (includeSendDtmf) {
+      base.register({
+        name: 'send_dtmf',
+        description: SEND_DTMF_TOOL.function.description,
+        parameters: SEND_DTMF_TOOL.function.parameters.properties as Record<string, unknown>,
+        required: SEND_DTMF_TOOL.function.parameters.required,
+        handler: async () => '',
+      });
+    }
     return base;
   }
 

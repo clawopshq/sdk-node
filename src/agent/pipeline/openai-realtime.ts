@@ -9,6 +9,7 @@ import type { ToolRegistry } from '../tool.js';
 import type { AudioRecorder } from '../recorder.js';
 import type { Session } from './base.js';
 import { ulawToPcm16 } from '../audio.js';
+import { BuiltinTool } from '../builtin-tool.js';
 
 const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime?model=';
 
@@ -73,10 +74,10 @@ export class OpenAIRealtime implements Session {
   private _eagerness: string;
   private _greeting: boolean;
 
-  private _dtmfTools = true;
+  private _builtinTools: Set<BuiltinTool> | null = null;
 
-  setDtmfTools(enabled: boolean): void {
-    this._dtmfTools = enabled;
+  setBuiltinTools(tools: Set<BuiltinTool>): void {
+    this._builtinTools = tools;
   }
 
   private _ws: import('ws').WebSocket | null = null;
@@ -213,10 +214,9 @@ export class OpenAIRealtime implements Session {
     const toolSchemas = this._tools
       ? this._tools.toOpenAITools().map((t) => ({ type: 'function' as const, ...t.function }))
       : [];
-    toolSchemas.push(HANG_UP_TOOL);
-    if (this._dtmfTools) {
-      toolSchemas.push(COLLECT_DTMF_TOOL, SEND_DTMF_TOOL);
-    }
+    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.HANG_UP)) toolSchemas.push(HANG_UP_TOOL);
+    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.COLLECT_DTMF)) toolSchemas.push(COLLECT_DTMF_TOOL);
+    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.SEND_DTMF)) toolSchemas.push(SEND_DTMF_TOOL);
 
     this._send({
       type: 'session.update',

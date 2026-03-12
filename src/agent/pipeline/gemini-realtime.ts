@@ -11,6 +11,7 @@ import type { AudioRecorder } from '../recorder.js';
 import type { Session } from './base.js';
 import type { LiveServerMessage, LiveServerToolCall } from '@google/genai/node';
 import { pcm16ToUlaw, resamplePcm16, ulawToPcm16 } from '../audio.js';
+import { BuiltinTool } from '../builtin-tool.js';
 
 const HANG_UP_TOOL = {
   name: 'hang_up',
@@ -197,7 +198,7 @@ export class GeminiRealtime implements Session {
   private _closed = false;
   private _sentAudioChunks = 0;
   private _audioRemainder: Buffer = Buffer.alloc(0);
-  private _dtmfTools = true;
+  private _builtinTools: Set<BuiltinTool> | null = null;
   private _toolCallInProgress = false;
 
   constructor(options: GeminiRealtimeOptions = {}) {
@@ -219,8 +220,8 @@ export class GeminiRealtime implements Session {
     this._recorder = recorder;
   }
 
-  setDtmfTools(enabled: boolean): void {
-    this._dtmfTools = enabled;
+  setBuiltinTools(tools: Set<BuiltinTool>): void {
+    this._builtinTools = tools;
   }
 
   async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
@@ -347,10 +348,9 @@ export class GeminiRealtime implements Session {
           ),
         }))
       : [];
-    toolDefs.push(HANG_UP_TOOL);
-    if (this._dtmfTools) {
-      toolDefs.push(COLLECT_DTMF_TOOL, SEND_DTMF_TOOL);
-    }
+    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.HANG_UP)) toolDefs.push(HANG_UP_TOOL);
+    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.COLLECT_DTMF)) toolDefs.push(COLLECT_DTMF_TOOL);
+    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.SEND_DTMF)) toolDefs.push(SEND_DTMF_TOOL);
     return toolDefs;
   }
 

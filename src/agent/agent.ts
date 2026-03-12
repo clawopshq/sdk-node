@@ -12,6 +12,7 @@ import type { MCPServerStdio, MCPServerHTTP } from './mcp/index.js';
 import { MediaWebSocket } from './media-ws.js';
 import { AudioRecorder } from './recorder.js';
 import { CallSession } from './session.js';
+import { BuiltinTool, resolveBuiltinTools } from './builtin-tool.js';
 import { ToolRegistry } from './tool.js';
 import type { FunctionTool } from './tool.js';
 import type { Session } from './pipeline/base.js';
@@ -44,8 +45,8 @@ export interface ClawOpsAgentOptions {
   mcpServers?: Array<MCPServerStdio | MCPServerHTTP>;
   /** Tracing configuration. */
   tracing?: TracingConfig;
-  /** Enable DTMF tool registration on session handlers. Default: true */
-  dtmfTools?: boolean;
+  /** 활성화할 내장 도구. Default: BuiltinTool.ALL */
+  builtinTools?: BuiltinTool | BuiltinTool[];
   /** Debounce time (ms) for passive DTMF accumulation. Default: 500 */
   passiveDtmfDebounceMs?: number;
 }
@@ -63,7 +64,7 @@ export class ClawOpsAgent {
   private _recording: boolean;
   private _recordingPath: string;
   private _activeSessions: Map<string, CallSession> = new Map();
-  private _dtmfTools: boolean;
+  private _builtinTools!: Set<BuiltinTool>;
   private _passiveDtmfDebounceMs: number;
   private _passiveDtmfBuffer: string[] = [];
   private _passiveDtmfTimer: ReturnType<typeof setTimeout> | null = null;
@@ -79,7 +80,7 @@ export class ClawOpsAgent {
     this._recording = options.recording ?? false;
     this._recordingPath = options.recordingPath ?? './recordings';
     this._mcpServers = options.mcpServers ?? [];
-    this._dtmfTools = options.dtmfTools ?? true;
+    this._builtinTools = resolveBuiltinTools(options.builtinTools ?? BuiltinTool.ALL);
     this._passiveDtmfDebounceMs = options.passiveDtmfDebounceMs ?? 500;
 
     // Configure tracing
@@ -453,8 +454,8 @@ export class ClawOpsAgent {
         ) {
           sessionHandler.setRecorder(recorder);
         }
-        if ('setDtmfTools' in sessionHandler && typeof sessionHandler.setDtmfTools === 'function') {
-          (sessionHandler as any).setDtmfTools(this._dtmfTools);
+        if ('setBuiltinTools' in sessionHandler && typeof sessionHandler.setBuiltinTools === 'function') {
+          (sessionHandler as any).setBuiltinTools(this._builtinTools);
         }
 
         // Save session handler for DTMF routing

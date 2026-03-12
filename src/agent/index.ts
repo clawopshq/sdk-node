@@ -14,6 +14,9 @@ export type { CallDirection, CallStatus } from './session.js';
 export { ToolRegistry, functionTool, zodToToolParams } from './tool.js';
 export type { FunctionTool, OpenAIToolDefinition } from './tool.js';
 
+// Built-in Tools
+export { BuiltinTool } from './builtin-tool.js';
+
 // Audio utilities
 export { pcm16ToUlaw, ulawToPcm16, resamplePcm16, DECODE_TABLE } from './audio.js';
 

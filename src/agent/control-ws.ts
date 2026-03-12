@@ -3,6 +3,8 @@
  */
 
 import type { WebSocket as WsType } from 'ws';
+import type { Logger } from 'pino';
+import { NOOP_LOGGER } from './logger.js';
 
 export interface ControlWsOptions {
   baseUrl: string;
@@ -48,6 +50,11 @@ export class ControlWebSocket {
   private _closed = false;
   private _connectedResolve: (() => void) | null = null;
   private _connectedPromise: Promise<void>;
+  private _log: Logger = NOOP_LOGGER;
+
+  setLogger(logger: Logger): void {
+    this._log = logger;
+  }
 
   constructor(private readonly _options: ControlWsOptions) {
     this._url = buildControlWsUrl(_options);
@@ -110,6 +117,7 @@ export class ControlWebSocket {
         this._connectedResolve();
         this._connectedResolve = null;
       }
+      this._log.info('Control WS connected: %s', this._url);
     });
 
     ws.on('message', (data: Buffer | string) => {
@@ -117,7 +125,7 @@ export class ControlWebSocket {
         const msg = JSON.parse(data.toString()) as ControlEvent;
         this._dispatchEvent(msg);
       } catch {
-        console.error('[ControlWebSocket] Failed to parse message');
+        this._log.warn('Control WS parse error');
       }
     });
 
@@ -128,7 +136,7 @@ export class ControlWebSocket {
     });
 
     ws.on('error', (err: Error) => {
-      console.error('[ControlWebSocket] Error:', err.message);
+      this._log.warn('Control WS error: %s', err.message);
     });
   }
 
@@ -140,11 +148,11 @@ export class ControlWebSocket {
           const result = handler(event);
           if (result && typeof result.catch === 'function') {
             result.catch((err: unknown) => {
-              console.error(`[ControlWebSocket] Error in handler for ${event.event}:`, err);
+              this._log.error({ err }, 'Control WS handler error: %s', event.event);
             });
           }
         } catch (err) {
-          console.error(`[ControlWebSocket] Error in handler for ${event.event}:`, err);
+          this._log.error({ err }, 'Control WS handler error: %s', event.event);
         }
       }
     }
@@ -153,11 +161,12 @@ export class ControlWebSocket {
   private _scheduleReconnect(): void {
     const delay = this._reconnectDelay;
     this._reconnectDelay = Math.min(this._reconnectDelay * 2, MAX_RECONNECT_DELAY);
+    this._log.info('Control WS reconnecting in %ds...', delay / 1000);
 
     setTimeout(() => {
       if (!this._closed) {
         this._doConnect().catch((err) => {
-          console.error('[ControlWebSocket] Reconnect failed:', err);
+          this._log.warn({ err }, 'Control WS reconnect failed');
           this._scheduleReconnect();
         });
       }

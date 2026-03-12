@@ -85,6 +85,10 @@ const agent = new ClawOpsAgent({
 });
 ```
 
+> **Known Issue (2026-03-12):** `gemini-2.5-flash-native-audio-preview-12-2025` 모델에서 function calling(tool use)과 실시간 오디오 스트리밍을 함께 사용할 때 WebSocket 1008 (Policy Violation) 에러로 세션이 간헐적으로 종료될 수 있습니다. 이는 Google Gemini Live API의 서버 측 알려진 이슈입니다.
+> - [Google AI Forum #114644](https://discuss.ai.google.dev/t/gemini-live-api-websocket-error-1008-operation-is-not-implemented-or-supported-or-enabled/114644)
+> - [googleapis/js-genai #1236](https://github.com/googleapis/js-genai/issues/1236)
+
 ### Pipeline 모드
 
 STT, LLM, TTS 제공자를 직접 조합합니다. 제공자를 자유롭게 교체할 수 있습니다.

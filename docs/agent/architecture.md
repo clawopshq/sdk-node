@@ -30,8 +30,9 @@ ClawOpsAgent
 ├── GeminiRealtime (콜별)   # Google Gemini Live API
 │   ├── setup/setupComplete # 세션 초기화
 │   ├── audio bridging      # G.711 μ-law ↔ PCM16 16kHz/24kHz 변환
-│   ├── tool calls          # 등록된 함수 자동 호출
+│   ├── tool calls          # 등록된 함수 자동 호출 (⚠ Known Issue 참고)
 │   └── barge-in            # 자동 인터럽트 처리
+│   # ⚠ function calling + 실시간 오디오 시 1008 에러 가능 (Google 서버 이슈)
 │
 ├── PipelineSession (콜별)  # STT → LLM → TTS (파이프라인 모드)
 │   ├── STT loop            # 오디오 → SpeechEvent

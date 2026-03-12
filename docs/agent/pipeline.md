@@ -2,6 +2,8 @@
 
 Realtime API 대신 STT, LLM, TTS 제공자를 직접 조합하는 모드입니다. `PipelineSession`을 사용합니다.
 
+> 각 제공자의 검증 상태와 지원 현황은 **[제공자 호환성](providers.md)** 문서를 반드시 확인하세요.
+
 ## 기본 사용법
 
 ```typescript

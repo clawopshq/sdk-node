@@ -9,6 +9,7 @@ WebSocket 역방향 연결 방식으로 ngrok 없이 로컬에서 바로 실행�
 | 문서 | 내용 |
 |------|------|
 | [빠른 시작](quickstart.md) | 설치, 환경변수, 기본 사용법 |
+| [검증된 제공자](providers.md) | SDK별 제공자 호환성 매트릭스 |
 | [파이프라인 모드](pipeline.md) | 커스텀 STT/LLM/TTS 조합 |
 | [커스텀 제공자](custom-providers.md) | 나만의 STT/LLM/TTS 제공자 구현 가이드 |
 | [Tool](tools.md) | AI 함수 호출 (`agent.tool()`) |
@@ -53,6 +54,8 @@ WebSocket 역방향 연결 방식으로 ngrok 없이 로컬에서 바로 실행�
 ## 세션 타입
 
 `ClawOpsAgent`의 `session` 옵션으로 세션 타입을 지정합니다.
+
+> 각 제공자의 검증 상태와 지원 현황은 **[제공자 호환성](providers.md)** 문서를 반드시 확인하세요.
 
 ### OpenAI Realtime
 

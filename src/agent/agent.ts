@@ -204,6 +204,7 @@ export class ClawOpsAgent {
       session._markEnded();
     }
     this._activeSessions.clear();
+    this._callSessions.clear();
     console.log('[ClawOpsAgent] Disconnected');
   }
 

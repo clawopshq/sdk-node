@@ -190,6 +190,21 @@ export class MediaWebSocket {
     }
   }
 
+  /** Wait for all queued audio to be sent. */
+  flush(): Promise<void> {
+    if (this._audioQueue.length === 0 || this._closed) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const check = () => {
+        if (this._audioQueue.length === 0 || this._closed) {
+          resolve();
+        } else {
+          setTimeout(check, 5);
+        }
+      };
+      setTimeout(check, 5);
+    });
+  }
+
   /** Wait for a named mark to be echoed back by the server. */
   waitForMark(name: string, timeoutMs = 5000): Promise<void> {
     if (this._closed) return Promise.resolve();

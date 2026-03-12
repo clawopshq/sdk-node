@@ -60,6 +60,10 @@ export type { DeepSeekLLMOptions } from './pipeline/index.js';
 export { XaiLLM } from './pipeline/index.js';
 export type { XaiLLMOptions } from './pipeline/index.js';
 
+// Logger
+export type { Logger } from './logger.js';
+export { createAgentLogger, createPipelineLogger } from './logger.js';
+
 // MCP
 export { MCPClient, mcpServerStdio, mcpServerHTTP } from './mcp/index.js';
 export type { MCPServerConfig, MCPServerStdio, MCPServerHTTP } from './mcp/index.js';

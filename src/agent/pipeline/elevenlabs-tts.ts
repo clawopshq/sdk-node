@@ -2,7 +2,10 @@
  * ElevenLabs TTS (Text-to-Speech) provider.
  */
 
+import type { Logger } from 'pino';
+
 import type { TTS } from './base.js';
+import { NOOP_LOGGER } from '../logger.js';
 
 export interface ElevenLabsTTSOptions {
   /** ElevenLabs API key. Falls back to ELEVENLABS_API_KEY env var. */
@@ -23,6 +26,11 @@ export interface ElevenLabsTTSOptions {
 
 export class ElevenLabsTTS implements TTS {
   private _options: ElevenLabsTTSOptions;
+  private _log: Logger = NOOP_LOGGER;
+
+  setLogger(logger: Logger): void {
+    this._log = logger;
+  }
 
   constructor(options: ElevenLabsTTSOptions = {}) {
     this._options = {
@@ -154,7 +162,7 @@ export class ElevenLabsTTS implements TTS {
     });
 
     ws.on('error', (err: Error) => {
-      console.error('[ElevenLabsTTS] WebSocket error:', err.message);
+      this._log.error({ err }, 'ElevenLabs TTS error');
       done = true;
       if (resolveWait) {
         resolveWait();
@@ -167,6 +175,7 @@ export class ElevenLabsTTS implements TTS {
       ws.on('open', resolve);
       ws.on('error', reject);
     });
+    this._log.info('ElevenLabs TTS connected');
 
     // Feed text in background
     const feedPromise = (async () => {
@@ -174,12 +183,14 @@ export class ElevenLabsTTS implements TTS {
         for await (const chunk of textStream) {
           if (done) break;
           if (ws.readyState === 1) {
+            this._log.debug('ElevenLabs sending text: %s', chunk.substring(0, 60));
             ws.send(JSON.stringify({ text: chunk }));
           }
         }
       } finally {
         // Send end-of-stream
         if (ws.readyState === 1) {
+          this._log.debug('ElevenLabs sending EOS');
           ws.send(JSON.stringify({ text: '' }));
         }
       }

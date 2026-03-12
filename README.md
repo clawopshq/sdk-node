@@ -183,6 +183,15 @@ const mms = await client.messages.create({
   subject: '제목',
 });
 
+// LMS (장문 문자) 발송
+const lms = await client.messages.create({
+  to: '01012345678',
+  from: '07052358010',
+  body: '긴 내용의 메시지입니다...',
+  type: 'lms',
+  subject: '알림',
+});
+
 // 메시지 목록 조회 (필터링)
 const msgPage = await client.messages.list({ type: 'sms', status: 'sent', page: 0, pageSize: 20 });
 for (const m of msgPage) {

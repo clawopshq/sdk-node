@@ -4,10 +4,11 @@ export const MessageSchema = z
   .object({
     messageId: z.string(),
     status: z.enum(['queued', 'sending', 'sent', 'failed', 'received']),
-    type: z.enum(['sms', 'mms', 'rcs', 'kakao']),
+    type: z.enum(['sms', 'lms', 'mms', 'rcs', 'kakao']),
     to: z.string(),
     from: z.string(),
     body: z.string().nullable().optional(),
+    subject: z.string().nullable().optional(),
     numMedia: z.number(),
     mediaUrl: z.array(z.string()),
     direction: z.enum(['outbound', 'inbound']),

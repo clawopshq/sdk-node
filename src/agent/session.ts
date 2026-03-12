@@ -22,7 +22,7 @@ export interface ClearAudioFn {
 }
 
 export interface HangupFn {
-  (): void;
+  (): void | Promise<void>;
 }
 
 export interface SendDtmfFn {
@@ -111,10 +111,10 @@ export class CallSession {
     }
   }
 
-  /** Hang up the call. */
-  hangup(): void {
+  /** Hang up the call, waiting for pending audio to finish. */
+  async hangup(): Promise<void> {
     if (this._hangupFn) {
-      this._hangupFn();
+      await this._hangupFn();
     }
   }
 

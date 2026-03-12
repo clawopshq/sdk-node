@@ -424,7 +424,10 @@ export class ClawOpsAgent {
           () => {
             mediaWs.sendClear();
           },
-          () => {
+          async () => {
+            const markName = `hangup-${Date.now()}`;
+            mediaWs.sendMark(markName);
+            await mediaWs.waitForMark(markName, 5000);
             mediaWs.close();
           },
           async (digit: string) => {

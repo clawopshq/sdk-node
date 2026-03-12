@@ -87,6 +87,7 @@ export class MediaWebSocket {
   private _onStart: ((event: MediaStartEvent) => void) | null = null;
   private _onClose: (() => void) | null = null;
   private _onDtmf: ((digit: string) => void) | null = null;
+  private _markWaiters: Map<string, () => void> = new Map();
 
   /** Set the handler for inbound audio data. */
   onAudio(handler: (audio: Buffer, timestamp: number) => void): void {
@@ -189,6 +190,21 @@ export class MediaWebSocket {
     }
   }
 
+  /** Wait for a named mark to be echoed back by the server. */
+  waitForMark(name: string, timeoutMs = 5000): Promise<void> {
+    if (this._closed) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        this._markWaiters.delete(name);
+        resolve();
+      }, timeoutMs);
+      this._markWaiters.set(name, () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  }
+
   /** Close the media WebSocket. */
   close(): void {
     this._closed = true;
@@ -220,6 +236,17 @@ export class MediaWebSocket {
         const dtmfEvt = parseDtmfEvent(msg);
         if (this._onDtmf) {
           this._onDtmf(dtmfEvt.digit);
+        }
+        break;
+      }
+      case 'mark': {
+        const markName = (msg['mark'] as Record<string, unknown>)?.['name'] as string;
+        if (markName) {
+          const resolve = this._markWaiters.get(markName);
+          if (resolve) {
+            this._markWaiters.delete(markName);
+            resolve();
+          }
         }
         break;
       }

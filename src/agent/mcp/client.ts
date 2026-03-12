@@ -3,6 +3,8 @@
  */
 
 import type { FunctionTool } from '../tool.js';
+import type { Logger } from 'pino';
+import { NOOP_LOGGER } from '../logger.js';
 
 export interface MCPServerConfig {
   /** Server type discriminator. */
@@ -23,6 +25,11 @@ export interface MCPToolDefinition {
 export class MCPClient {
   private _servers: Map<string, MCPServerConfig & Record<string, unknown>> = new Map();
   private _clients: Map<string, unknown> = new Map();
+  private _log: Logger = NOOP_LOGGER;
+
+  setLogger(logger: Logger): void {
+    this._log = logger;
+  }
 
   /** Add an MCP server configuration. */
   addServer(name: string, config: MCPServerConfig & Record<string, unknown>): void {
@@ -38,7 +45,7 @@ export class MCPClient {
         const tools = await this._connectServer(name, config);
         allTools.push(...tools);
       } catch (err) {
-        console.error(`[MCPClient] Failed to connect to server '${name}':`, err);
+        this._log.error({ err }, 'MCP connection failed: %s', name);
       }
     }
 
@@ -49,12 +56,13 @@ export class MCPClient {
   async disconnect(): Promise<void> {
     for (const [name, client] of this._clients) {
       try {
+        this._log.debug('MCP closing: %s', name);
         const c = client as { close?: () => Promise<void> };
         if (c.close) {
           await c.close();
         }
       } catch (err) {
-        console.error(`[MCPClient] Error disconnecting from '${name}':`, err);
+        this._log.error({ err }, 'MCP disconnect error: %s', name);
       }
     }
     this._clients.clear();
@@ -69,6 +77,12 @@ export class MCPClient {
     const { Client } = sdk;
 
     const client = new Client({ name: `clawops-${name}`, version: '1.0.0' });
+
+    if (config.type === 'stdio') {
+      this._log.debug('MCP connecting (stdio): %s', config['command']);
+    } else if (config.type === 'http') {
+      this._log.debug('MCP connecting (http): %s', config['url']);
+    }
 
     let transport: unknown;
 
@@ -107,6 +121,7 @@ export class MCPClient {
         parameters: inputSchema.properties ?? {},
         required: inputSchema.required ?? [],
         handler: async (args: Record<string, unknown>) => {
+          this._log.debug('MCP call_tool: %s', toolDef.name);
           const result = await client.callTool({
             name: toolDef.name,
             arguments: args,
@@ -123,6 +138,9 @@ export class MCPClient {
         },
       });
     }
+
+    this._log.info('MCP server connected: %d tools found', tools.length);
+    this._log.debug('MCP tools: %s', tools.map(t => t.name));
 
     return tools;
   }

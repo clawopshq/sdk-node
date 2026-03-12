@@ -8,6 +8,8 @@
  */
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import type { Logger } from 'pino';
+import { NOOP_LOGGER } from './logger.js';
 
 const SAMPLE_RATE = 8000
 const CHANNELS = 1
@@ -53,6 +55,11 @@ export class AudioRecorder {
   private _mixWritten = 0
   private _startTime = 0
   private _started = false
+  private _log: Logger = NOOP_LOGGER;
+
+  setLogger(logger: Logger): void {
+    this._log = logger;
+  }
 
   constructor(recordingPath: string, callId: string) {
     this._dir = path.join(recordingPath, callId)
@@ -69,6 +76,7 @@ export class AudioRecorder {
     fs.writeSync(this._fdMix, header)
     this._startTime = performance.now()
     this._started = true
+    this._log.info('Recording started: %s', this._dir);
   }
 
   private _expectedBytes(): number {
@@ -129,7 +137,7 @@ export class AudioRecorder {
       this._inWritten += pcm16_8k.length
       this._writeToMix(pcm16_8k, posBefore)
     } catch (err) {
-      console.error('Error writing inbound audio:', err)
+      this._log.error({ err }, 'Recording write error (inbound)');
     }
   }
 
@@ -143,7 +151,7 @@ export class AudioRecorder {
       this._outWritten += pcm16_8k.length
       this._writeToMix(pcm16_8k, posBefore)
     } catch (err) {
-      console.error('Error writing outbound audio:', err)
+      this._log.error({ err }, 'Recording write error (outbound)');
     }
   }
 
@@ -167,8 +175,10 @@ export class AudioRecorder {
         fs.writeSync(fd, makeWavHeader(maxWritten), 0, 44, 0)
         fs.closeSync(fd)
       }
+      const maxSec = maxWritten / 16000;
+      this._log.info('Recording stopped: %s (%ds)', this._dir, maxSec);
     } catch (err) {
-      console.error('Error stopping recorder:', err)
+      this._log.error({ err }, 'Recording stop error');
     } finally {
       this._fdIn = null
       this._fdOut = null

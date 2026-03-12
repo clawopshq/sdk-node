@@ -2,7 +2,10 @@
  * Deepgram STT (Speech-to-Text) provider.
  */
 
+import type { Logger } from 'pino';
+
 import type { SpeechEvent, STT } from './base.js';
+import { NOOP_LOGGER } from '../logger.js';
 
 export interface DeepgramSTTOptions {
   /** Deepgram API key. Falls back to DEEPGRAM_API_KEY env var. */
@@ -27,6 +30,11 @@ export interface DeepgramSTTOptions {
 
 export class DeepgramSTT implements STT {
   private _options: DeepgramSTTOptions;
+  private _log: Logger = NOOP_LOGGER;
+
+  setLogger(logger: Logger): void {
+    this._log = logger;
+  }
 
   constructor(options: DeepgramSTTOptions = {}) {
     this._options = {
@@ -117,7 +125,7 @@ export class DeepgramSTT implements STT {
     });
 
     ws.on('error', (err: Error) => {
-      console.error('[DeepgramSTT] WebSocket error:', err.message);
+      this._log.error({ err }, 'Deepgram STT error');
       done = true;
       if (resolveWait) {
         resolveWait();
@@ -130,6 +138,7 @@ export class DeepgramSTT implements STT {
       ws.on('open', resolve);
       ws.on('error', reject);
     });
+    this._log.info('Deepgram STT connected');
 
     // Feed audio in background
     const feedPromise = (async () => {

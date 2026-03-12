@@ -2,6 +2,8 @@
  * Base interfaces for the voice agent pipeline.
  */
 
+import type { Logger } from 'pino';
+
 import type { CallSession } from '../session.js';
 import type { ToolRegistry } from '../tool.js';
 
@@ -46,6 +48,8 @@ export interface Session {
   feedDtmf?(digits: string): Promise<void>;
   /** Stop the session. */
   stop(): Promise<void>;
+  /** Set the logger instance for this session. */
+  setLogger?(logger: Logger): void;
 }
 
 /**

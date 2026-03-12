@@ -6,6 +6,8 @@
  */
 
 import type { WebSocket as WsType } from 'ws';
+import type { Logger } from 'pino';
+import { NOOP_LOGGER } from './logger.js';
 
 export interface MediaStartEvent {
   streamId: string;
@@ -88,6 +90,11 @@ export class MediaWebSocket {
   private _onClose: (() => void) | null = null;
   private _onDtmf: ((digit: string) => void) | null = null;
   private _markWaiters: Map<string, () => void> = new Map();
+  private _log: Logger = NOOP_LOGGER;
+
+  setLogger(logger: Logger): void {
+    this._log = logger;
+  }
 
   /** Set the handler for inbound audio data. */
   onAudio(handler: (audio: Buffer, timestamp: number) => void): void {
@@ -138,6 +145,7 @@ export class MediaWebSocket {
       ws.on('open', () => {
         this._startSendLoop();
         resolve();
+        this._log.info('Media WS connected: %s', url);
       });
 
       ws.on('message', (data: Buffer | string) => {
@@ -160,7 +168,7 @@ export class MediaWebSocket {
         if (!this._ws) {
           reject(err);
         }
-        console.error('[MediaWebSocket] Error:', err.message);
+        this._log.error({ err }, 'Media WS error');
       });
     });
   }

@@ -3,6 +3,9 @@
  * send audio, hang up, and listen for lifecycle events.
  */
 
+import type { Logger } from 'pino';
+import { NOOP_LOGGER } from './logger.js';
+
 export type CallDirection = 'inbound' | 'outbound';
 export type CallStatus = 'ringing' | 'active' | 'ended';
 
@@ -47,6 +50,7 @@ export class CallSession {
   private _dtmfCollectorActive = false;
   private _dtmfResolvers: ((digit: string) => void)[] = [];
   private _dtmfBuffer: string[] = [];
+  private _log: Logger = NOOP_LOGGER;
   private _handlers: Map<string, SessionEventHandler[]> = new Map();
   private _endedPromise: Promise<void>;
   private _resolveEnded!: () => void;
@@ -71,6 +75,10 @@ export class CallSession {
     this._endedPromise = new Promise<void>((resolve) => {
       this._resolveEnded = resolve;
     });
+  }
+
+  setLogger(logger: Logger): void {
+    this._log = logger;
   }
 
   get status(): CallStatus {
@@ -174,7 +182,9 @@ export class CallSession {
       this._dtmfBuffer = [];
     }
 
-    return collected.join('');
+    const result = collected.join('');
+    this._log.info('DTMF collected: %s', result);
+    return result;
   }
 
   /** Send a sequence of DTMF digits. */
@@ -231,11 +241,11 @@ export class CallSession {
           const result = handler(this, ...args);
           if (result && typeof result.catch === 'function') {
             result.catch((err: unknown) => {
-              console.error(`[CallSession] Error in ${event} handler:`, err);
+              this._log.error({ err }, 'CallSession handler error: %s', event);
             });
           }
         } catch (err) {
-          console.error(`[CallSession] Error in ${event} handler:`, err);
+          this._log.error({ err }, 'CallSession handler error: %s', event);
         }
       }
     }

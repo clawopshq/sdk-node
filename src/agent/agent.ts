@@ -20,6 +20,8 @@ import { setTracingConfig } from './tracing/config.js';
 import type { TracingConfig } from './tracing/config.js';
 import { withSpan } from './tracing/spans.js';
 import { ATTR_CALL_ID, ATTR_CALL_DIRECTION, ATTR_AGENT_ID } from './tracing/attributes.js';
+import type { Logger } from 'pino';
+import { createAgentLogger, createPipelineLogger } from './logger.js';
 
 export type AgentEventType = 'call_start' | 'call_end' | 'call_failed' | 'transcript' | 'dtmf';
 
@@ -49,6 +51,8 @@ export interface ClawOpsAgentOptions {
   builtinTools?: BuiltinTool | BuiltinTool[];
   /** Debounce time (ms) for passive DTMF accumulation. Default: 500 */
   passiveDtmfDebounceMs?: number;
+  /** Custom pino logger instance. If omitted, a default logger is created. */
+  logger?: Logger;
 }
 
 export class ClawOpsAgent {
@@ -70,6 +74,9 @@ export class ClawOpsAgent {
   private _passiveDtmfTimer: ReturnType<typeof setTimeout> | null = null;
   private _passiveDtmfCallId: string | null = null;
   private _callSessions = new Map<string, Session>();
+  private _log: Logger;
+  private _pipelineLog: Logger;
+  private _isPipelineSession = false;
 
   constructor(options: ClawOpsAgentOptions) {
     this._apiKey = options.apiKey ?? process.env['CLAWOPS_API_KEY'] ?? '';
@@ -87,6 +94,11 @@ export class ClawOpsAgent {
     if (options.tracing) {
       setTracingConfig(options.tracing);
     }
+
+    this._log = createAgentLogger(options.logger);
+    this._pipelineLog = createPipelineLogger(this._log);
+    // Detect PipelineSession at construction time (duck-type check)
+    this._isPipelineSession = '_stt' in this._session && '_llm' in this._session;
   }
 
   /**
@@ -157,6 +169,8 @@ export class ClawOpsAgent {
       number: this._fromNumber,
     });
 
+    this._controlWs.setLogger(this._log);
+
     this._controlWs.on('call.incoming', (event) => this._handleIncoming(event));
     this._controlWs.on('call.ended', (event) => this._handleEnded(event));
     this._controlWs.on('call.outbound_ready', (event) => this._handleOutboundReady(event));
@@ -172,7 +186,7 @@ export class ClawOpsAgent {
       );
     }
 
-    console.log(`[ClawOpsAgent] Connected on ${this._fromNumber}`);
+    this._log.info('ClawOpsAgent connected on %s', this._fromNumber);
   }
 
   /**
@@ -206,7 +220,7 @@ export class ClawOpsAgent {
     }
     this._activeSessions.clear();
     this._callSessions.clear();
-    console.log('[ClawOpsAgent] Disconnected');
+    this._log.info('ClawOpsAgent disconnected');
   }
 
   /**
@@ -249,10 +263,9 @@ export class ClawOpsAgent {
       }
     }
 
+    callSession.setLogger(this._log);
     this._activeSessions.set(callSession.callId, callSession);
-    console.log(
-      `[ClawOpsAgent] Outbound call initiated: ${this._fromNumber} -> ${to} (${callSession.callId})`,
-    );
+    this._log.info('Outbound call initiated: %s -> %s (%s)', this._fromNumber, to, callSession.callId);
     return callSession;
   }
 
@@ -276,7 +289,9 @@ export class ClawOpsAgent {
       }
     }
 
+    session.setLogger(this._log);
     this._activeSessions.set(callId, session);
+    this._log.info('Incoming call: %s -> %s (%s)', fromNumber, this._fromNumber, callId);
 
     // Accept the call
     if (this._controlWs) {
@@ -285,7 +300,7 @@ export class ClawOpsAgent {
 
     if (mediaUrl) {
       this._startCallSession(session, mediaUrl).catch((err) => {
-        console.error(`[ClawOpsAgent] Error in call session ${callId}:`, err);
+        this._log.error({ err }, 'Call session error: %s', callId);
       });
     }
   }
@@ -294,6 +309,7 @@ export class ClawOpsAgent {
     const callId = event['callId'] as string;
     const session = this._activeSessions.get(callId);
     if (session) {
+      this._log.info('Call ended (server): %s', callId);
       session._markEnded();
       this._activeSessions.delete(callId);
     }
@@ -312,6 +328,7 @@ export class ClawOpsAgent {
         accountId: this._accountId,
         direction: 'outbound',
       });
+      session.setLogger(this._log);
 
       // Register all agent-level event handlers on the session
       for (const [evt, handlers] of this._handlers) {
@@ -324,8 +341,9 @@ export class ClawOpsAgent {
     }
 
     if (mediaUrl) {
+      this._log.info('Outbound call answered: %s -> %s (%s)', this._fromNumber, session.toNumber, callId);
       this._startCallSession(session, mediaUrl).catch((err) => {
-        console.error(`[ClawOpsAgent] Error in call session ${callId}:`, err);
+        this._log.error({ err }, 'Call session error: %s', callId);
       });
     }
   }
@@ -334,7 +352,7 @@ export class ClawOpsAgent {
     const callId = event['callId'] as string;
     const session = this._activeSessions.get(callId);
     if (session) {
-      console.log(`[ClawOpsAgent] Outbound call ringing: ${callId}`);
+      this._log.info('Outbound call ringing: %s', callId);
     }
   }
 
@@ -342,6 +360,7 @@ export class ClawOpsAgent {
     const callId = event['callId'] as string;
     const session = this._activeSessions.get(callId);
     if (session) {
+      this._log.info('Outbound call failed: %s (%s)', callId, (event['reason'] as string) ?? 'failed');
       session._emit('call_failed', (event['reason'] as string) ?? 'failed');
       session._markEnded();
       this._activeSessions.delete(callId);
@@ -373,7 +392,7 @@ export class ClawOpsAgent {
       this._passiveDtmfCallId = null;
       if (digits && sessionHandler && sessionHandler.feedDtmf) {
         sessionHandler.feedDtmf(digits).catch((err: unknown) => {
-          console.error('[ClawOpsAgent] feedDtmf error:', err);
+          this._log.error({ err }, 'DTMF feed error');
         });
       }
     }, this._passiveDtmfDebounceMs);
@@ -396,13 +415,14 @@ export class ClawOpsAgent {
         if (this._mcpServers.length > 0) {
           for (const serverConfig of this._mcpServers) {
             const client = new MCPClient();
+            client.setLogger(this._log);
             client.addServer('mcp', serverConfig);
             try {
               const tools = await client.connect();
               sessionTools.registerMcpTools(tools);
               mcpClients.push(client);
             } catch (err) {
-              console.error('[ClawOpsAgent] MCP connection error:', err);
+              this._log.error({ err }, 'MCP connection error');
             }
           }
         }
@@ -411,11 +431,13 @@ export class ClawOpsAgent {
         let recorder: AudioRecorder | null = null;
         if (this._recording) {
           recorder = new AudioRecorder(this._recordingPath, session.callId);
+          recorder.setLogger(this._log);
           recorder.start();
         }
 
         // Connect media WebSocket
         const mediaWs = new MediaWebSocket();
+        mediaWs.setLogger(this._log);
 
         // Bind transport functions to session — sessions send ulaw bytes directly
         session._bindTransport(
@@ -457,6 +479,9 @@ export class ClawOpsAgent {
         if ('setBuiltinTools' in sessionHandler && typeof sessionHandler.setBuiltinTools === 'function') {
           (sessionHandler as any).setBuiltinTools(this._builtinTools);
         }
+        if ('setLogger' in sessionHandler && typeof sessionHandler.setLogger === 'function') {
+          sessionHandler.setLogger(this._isPipelineSession ? this._pipelineLog : this._log);
+        }
 
         // Save session handler for DTMF routing
         this._callSessions.set(session.callId, sessionHandler);
@@ -477,6 +502,7 @@ export class ClawOpsAgent {
         });
 
         mediaWs.onClose(() => {
+          this._log.info('Media stream stopped: %s', session.callId);
           if (recorder) {
             recorder.stop();
           }
@@ -488,6 +514,7 @@ export class ClawOpsAgent {
 
         try {
           await mediaWs.connect(mediaWsUrl, this._apiKey);
+          this._log.info('Media stream started: %s', session.callId);
 
           // Start the session handler
           await sessionHandler.start(session, sessionTools);
@@ -498,7 +525,7 @@ export class ClawOpsAgent {
           // Stop the session handler
           await sessionHandler.stop();
         } catch (err) {
-          console.error(`[ClawOpsAgent] Call session error:`, err);
+          this._log.error({ err }, 'Call session error: %s', session.callId);
         } finally {
           // Clean up MCP clients
           if (mcpClients.length > 0) {

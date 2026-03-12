@@ -16,14 +16,20 @@ const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime?model=';
 const HANG_UP_TOOL = {
   type: 'function' as const,
   name: 'hang_up',
-  description: 'End the phone call. Use when the conversation is finished or the caller says goodbye.',
-  parameters: { type: 'object' as const, properties: {} as Record<string, unknown>, required: [] as string[] },
+  description:
+    'End the phone call. Use when the conversation is finished or the caller says goodbye.',
+  parameters: {
+    type: 'object' as const,
+    properties: {} as Record<string, unknown>,
+    required: [] as string[],
+  },
 };
 
 const COLLECT_DTMF_TOOL = {
   type: 'function' as const,
   name: 'collect_dtmf',
-  description: '사용자로부터 DTMF(전화 키패드) 입력을 수집합니다. 반드시 사용자에게 무엇을 입력해야 하는지 안내한 후 호출하세요.',
+  description:
+    '사용자로부터 DTMF(전화 키패드) 입력을 수집합니다. 반드시 사용자에게 무엇을 입력해야 하는지 안내한 후 호출하세요.',
   parameters: {
     type: 'object' as const,
     properties: {
@@ -42,7 +48,10 @@ const SEND_DTMF_TOOL = {
   parameters: {
     type: 'object' as const,
     properties: {
-      digits: { type: 'string' as const, description: "전송할 번호 (0-9, *, #). 'w'는 500ms 대기, 'W'는 1000ms 대기." },
+      digits: {
+        type: 'string' as const,
+        description: "전송할 번호 (0-9, *, #). 'w'는 500ms 대기, 'W'는 1000ms 대기.",
+      },
     },
     required: ['digits'] as string[],
   },
@@ -214,9 +223,12 @@ export class OpenAIRealtime implements Session {
     const toolSchemas = this._tools
       ? this._tools.toOpenAITools().map((t) => ({ type: 'function' as const, ...t.function }))
       : [];
-    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.HANG_UP)) toolSchemas.push(HANG_UP_TOOL);
-    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.COLLECT_DTMF)) toolSchemas.push(COLLECT_DTMF_TOOL);
-    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.SEND_DTMF)) toolSchemas.push(SEND_DTMF_TOOL);
+    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.HANG_UP))
+      toolSchemas.push(HANG_UP_TOOL);
+    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.COLLECT_DTMF))
+      toolSchemas.push(COLLECT_DTMF_TOOL);
+    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.SEND_DTMF))
+      toolSchemas.push(SEND_DTMF_TOOL);
 
     this._send({
       type: 'session.update',
@@ -227,7 +239,7 @@ export class OpenAIRealtime implements Session {
         input_audio_format: 'g711_ulaw',
         output_audio_format: 'g711_ulaw',
         input_audio_transcription: {
-          model: 'gpt-4o-mini-transcribe',
+          model: 'whisper-1',
           language: this._language,
         },
         input_audio_noise_reduction: { type: 'far_field' },

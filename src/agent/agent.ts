@@ -24,7 +24,8 @@ export type AgentEventType =
   | 'call_start'
   | 'call_end'
   | 'call_failed'
-  | 'transcript';
+  | 'transcript'
+  | 'dtmf';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentEventHandler = (...args: any[]) => void | Promise<void>;

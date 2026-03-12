@@ -10,6 +10,8 @@ import type { AudioRecorder } from '../recorder.js';
 import type { Session } from './base.js';
 import { ulawToPcm16 } from '../audio.js';
 import { BuiltinTool } from '../builtin-tool.js';
+import type { Logger } from 'pino';
+import { NOOP_LOGGER } from '../logger.js';
 
 const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime?model=';
 
@@ -83,7 +85,12 @@ export class OpenAIRealtime implements Session {
   private _eagerness: string;
   private _greeting: boolean;
 
+  private _log: Logger = NOOP_LOGGER;
   private _builtinTools: Set<BuiltinTool> | null = null;
+
+  setLogger(logger: Logger): void {
+    this._log = logger;
+  }
 
   setBuiltinTools(tools: Set<BuiltinTool>): void {
     this._builtinTools = tools;
@@ -153,6 +160,7 @@ export class OpenAIRealtime implements Session {
 
       ws.on('open', () => {
         this._sendSessionUpdate();
+        this._log.info('OpenAI Realtime connected');
 
         // Send initial greeting if enabled (matching Python SDK)
         if (this._greeting) {
@@ -179,7 +187,7 @@ export class OpenAIRealtime implements Session {
         if (!this._ws) {
           reject(err);
         }
-        console.error('[OpenAIRealtime] WebSocket error:', err.message);
+        this._log.error({ err }, 'OpenAI Realtime WS error');
       });
     });
   }
@@ -316,7 +324,7 @@ export class OpenAIRealtime implements Session {
         break;
       }
       case 'error': {
-        console.error('[OpenAIRealtime] API error:', msg['error']);
+        this._log.error({ apiError: msg['error'] }, 'OpenAI error');
         break;
       }
     }
@@ -380,6 +388,7 @@ export class OpenAIRealtime implements Session {
   private async _handleToolCall(item: Record<string, unknown>): Promise<void> {
     const funcName = item['name'] as string;
     const callId = item['call_id'] as string;
+    this._log.info('Tool call: %s', funcName);
 
     // Built-in hang_up tool
     if (funcName === 'hang_up') {
@@ -441,7 +450,7 @@ export class OpenAIRealtime implements Session {
     }
 
     if (!this._tools || !this._tools.has(funcName)) {
-      console.error(`[OpenAIRealtime] Unknown tool: ${funcName}`);
+      this._log.error('Unknown tool: %s', funcName);
       return;
     }
 
@@ -450,7 +459,7 @@ export class OpenAIRealtime implements Session {
       const args = JSON.parse((item['arguments'] as string) ?? '{}') as Record<string, unknown>;
       result = await this._tools.call(funcName, args);
     } catch (err) {
-      console.error(`[OpenAIRealtime] Tool call failed: ${funcName}:`, err);
+      this._log.error({ err }, 'Tool call failed: %s', funcName);
       result = `Error: ${err}`;
     }
 

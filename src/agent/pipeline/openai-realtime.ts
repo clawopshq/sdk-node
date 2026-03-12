@@ -91,6 +91,10 @@ export class OpenAIRealtime implements Session {
   private _sentAudioChunks = 0;
   private _audioRemainder: Buffer = Buffer.alloc(0);
 
+  // Response state tracking — prevent sending response.create while one is active
+  private _responseInProgress = false;
+  private _onResponseDone: (() => void) | null = null;
+
   constructor(options: OpenAIRealtimeOptions = {}) {
     this._apiKey = options.apiKey ?? process.env['OPENAI_API_KEY'] ?? '';
     this._systemPrompt = options.systemPrompt ?? '';
@@ -171,6 +175,7 @@ export class OpenAIRealtime implements Session {
   }
 
   async feedDtmf(digits: string): Promise<void> {
+    await this._waitForResponseDone();
     this._send({
       type: 'conversation.item.create',
       item: {
@@ -285,6 +290,19 @@ export class OpenAIRealtime implements Session {
         }
         break;
       }
+      case 'response.created': {
+        this._responseInProgress = true;
+        break;
+      }
+      case 'response.done': {
+        this._responseInProgress = false;
+        if (this._onResponseDone) {
+          const cb = this._onResponseDone;
+          this._onResponseDone = null;
+          cb();
+        }
+        break;
+      }
       case 'error': {
         console.error('[OpenAIRealtime] API error:', msg['error']);
         break;
@@ -372,6 +390,7 @@ export class OpenAIRealtime implements Session {
         } catch (err) {
           result = `Error: ${err}`;
         }
+        await this._waitForResponseDone();
         this._send({
           type: 'conversation.item.create',
           item: {
@@ -395,6 +414,7 @@ export class OpenAIRealtime implements Session {
         } catch (err) {
           result = `Error: ${err}`;
         }
+        await this._waitForResponseDone();
         this._send({
           type: 'conversation.item.create',
           item: {
@@ -422,6 +442,7 @@ export class OpenAIRealtime implements Session {
       result = `Error: ${err}`;
     }
 
+    await this._waitForResponseDone();
     this._send({
       type: 'conversation.item.create',
       item: {
@@ -432,6 +453,13 @@ export class OpenAIRealtime implements Session {
     });
 
     this._send({ type: 'response.create' });
+  }
+
+  private _waitForResponseDone(): Promise<void> {
+    if (!this._responseInProgress) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this._onResponseDone = resolve;
+    });
   }
 
   private _send(data: Record<string, unknown>): void {

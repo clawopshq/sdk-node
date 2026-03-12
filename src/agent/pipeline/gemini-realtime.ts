@@ -189,6 +189,7 @@ export class GeminiRealtime implements Session {
   private _sentAudioChunks = 0;
   private _audioRemainder: Buffer = Buffer.alloc(0);
   private _dtmfTools = true;
+  private _toolCallInProgress = false;
 
   constructor(options: GeminiRealtimeOptions = {}) {
     this._apiKey = options.apiKey ?? process.env['GOOGLE_API_KEY'] ?? '';
@@ -229,7 +230,7 @@ export class GeminiRealtime implements Session {
     const { GoogleGenAI } = await import('@google/genai/node');
     const client = new GoogleGenAI({ apiKey: this._apiKey });
 
-    // Build config (Stage 1 + Stage 2 only)
+    // Build config
     const config: Record<string, unknown> = {
       responseModalities: ['AUDIO'],
       speechConfig: {
@@ -282,7 +283,7 @@ export class GeminiRealtime implements Session {
   }
 
   feedAudio(audio: Buffer): void {
-    if (this._session && !this._closed) {
+    if (this._session && !this._closed && !this._toolCallInProgress) {
       // G.711 ulaw 8kHz → PCM16 8kHz → PCM16 16kHz
       const pcm8k = ulawToPcm16(audio);
       if (this._recorder) {
@@ -405,12 +406,13 @@ export class GeminiRealtime implements Session {
     const ulaw = pcm16ToUlaw(pcm8k);
 
     // 160B frame alignment (160B = 20ms at 8kHz ulaw)
+    // 프레임 정렬 후 한 번에 전송 (개별 160B 전송 대신 배치 전송)
     const combined = Buffer.concat([this._audioRemainder, ulaw]);
     const chunkSize = 160;
     const fullEnd = Math.floor(combined.length / chunkSize) * chunkSize;
-    for (let off = 0; off < fullEnd; off += chunkSize) {
-      this._call.sendAudio(combined.subarray(off, off + chunkSize));
-      this._sentAudioChunks++;
+    if (fullEnd > 0) {
+      this._call.sendAudio(combined.subarray(0, fullEnd));
+      this._sentAudioChunks += fullEnd / chunkSize;
     }
     this._audioRemainder = combined.subarray(fullEnd);
   }
@@ -431,6 +433,10 @@ export class GeminiRealtime implements Session {
     const functionCalls = toolCall.functionCalls;
     if (!functionCalls) return;
 
+    // 도구 호출 중에는 오디오 입력 중단 (Gemini가 tool call 상태에서 audio input 수신 시 1008 에러)
+    this._toolCallInProgress = true;
+
+    console.log(`[GeminiRealtime] toolCall: ${functionCalls.map((fc: { name?: string }) => fc.name).join(', ')}`);
     const responses: Array<Record<string, unknown>> = [];
 
     for (const fc of functionCalls) {
@@ -450,11 +456,13 @@ export class GeminiRealtime implements Session {
         if (this._call) {
           let result: string;
           try {
+            console.log(`[GeminiRealtime] collect_dtmf: waiting for digits (maxDigits=${(args['max_digits'] as number) ?? 4})`);
             result = await this._call.collectDtmf({
               maxDigits: (args['max_digits'] as number) ?? 4,
               finishOnKey: (args['finish_on_key'] as string) ?? '#',
               timeout: (args['timeout'] as number) ?? 5,
             });
+            console.log(`[GeminiRealtime] collect_dtmf: result="${result}"`);
           } catch (err) {
             result = `Error: ${err}`;
           }
@@ -509,5 +517,6 @@ export class GeminiRealtime implements Session {
         functionResponses: responses,
       });
     }
+    this._toolCallInProgress = false;
   }
 }

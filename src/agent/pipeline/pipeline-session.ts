@@ -5,7 +5,7 @@
 import { pcm16ToUlaw, resamplePcm16, ulawToPcm16 } from '../audio.js';
 import type { AudioRecorder } from '../recorder.js';
 import type { CallSession } from '../session.js';
-import type { ToolRegistry } from '../tool.js';
+import { ToolRegistry } from '../tool.js';
 import type {
   ConversationMessage,
   LLM,
@@ -14,6 +14,38 @@ import type {
   STT,
   TTS,
 } from './base.js';
+
+const COLLECT_DTMF_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'collect_dtmf',
+    description: '사용자로부터 DTMF(전화 키패드) 입력을 수집합니다.',
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        max_digits: { type: 'integer' as const, description: '수집할 최대 자릿수' },
+        finish_on_key: { type: 'string' as const, description: '입력 종료 키 (기본: #)' },
+        timeout: { type: 'integer' as const, description: '입력 대기 시간(초, 기본: 5)' },
+      },
+      required: ['max_digits'] as string[],
+    },
+  },
+};
+
+const SEND_DTMF_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'send_dtmf',
+    description: 'DTMF 신호를 전송합니다. ARS 메뉴 탐색이나 내선번호 입력 시 사용합니다.',
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        digits: { type: 'string' as const, description: "전송할 번호 (0-9, *, #). 'w'는 500ms 대기, 'W'는 1000ms 대기." },
+      },
+      required: ['digits'] as string[],
+    },
+  },
+};
 
 export interface PipelineSessionOptions {
   stt: STT;
@@ -58,6 +90,7 @@ export class PipelineSession implements Session {
   private _audioBuffer: Buffer[] = [];
   private _running = false;
   private _speaking = false;
+  private _dtmfTools = true;
 
   constructor(options: PipelineSessionOptions) {
     this._stt = options.stt;
@@ -80,6 +113,10 @@ export class PipelineSession implements Session {
 
   setRecorder(recorder: AudioRecorder): void {
     this._recorder = recorder;
+  }
+
+  setDtmfTools(enabled: boolean): void {
+    this._dtmfTools = enabled;
   }
 
   async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
@@ -112,6 +149,14 @@ export class PipelineSession implements Session {
     if (this._running) {
       this._audioBuffer.push(audio);
     }
+  }
+
+  async feedDtmf(digits: string): Promise<void> {
+    this._conversation.push({
+      role: 'user',
+      content: `[DTMF 입력: ${digits}]`,
+    });
+    await this._respond();
   }
 
   async stop(): Promise<void> {
@@ -166,13 +211,35 @@ export class PipelineSession implements Session {
     await this._respond();
   }
 
+  private _buildEffectiveTools(): ToolRegistry | undefined {
+    if (!this._dtmfTools) return this._tools ?? undefined;
+    // Inject DTMF tool stubs into a forked registry so the LLM sees them
+    const base = this._tools ? this._tools.fork() : new ToolRegistry();
+    base.register({
+      name: 'collect_dtmf',
+      description: COLLECT_DTMF_TOOL.function.description,
+      parameters: COLLECT_DTMF_TOOL.function.parameters.properties as Record<string, unknown>,
+      required: COLLECT_DTMF_TOOL.function.parameters.required,
+      handler: async () => '',
+    });
+    base.register({
+      name: 'send_dtmf',
+      description: SEND_DTMF_TOOL.function.description,
+      parameters: SEND_DTMF_TOOL.function.parameters.properties as Record<string, unknown>,
+      required: SEND_DTMF_TOOL.function.parameters.required,
+      handler: async () => '',
+    });
+    return base;
+  }
+
   private async _respond(): Promise<void> {
     // Run LLM generation (may include tool calls)
     let fullResponse = '';
     const textChunks: string[] = [];
 
+    const effectiveTools = this._buildEffectiveTools();
     const llmStream = this._llm.generate(this._conversation, {
-      tools: this._tools ?? undefined,
+      tools: effectiveTools,
       temperature: this._temperature,
       maxTokens: this._maxTokens,
     });
@@ -196,12 +263,44 @@ export class PipelineSession implements Session {
   }
 
   private async _handleToolCall(chunk: LLMChunk): Promise<void> {
-    if (!chunk.toolCall || !this._tools) return;
+    if (!chunk.toolCall) return;
 
     const { id, name, arguments: argsStr } = chunk.toolCall;
 
     try {
       const args = JSON.parse(argsStr) as Record<string, unknown>;
+
+      // Built-in DTMF tools - intercept before registry lookup
+      if (name === 'collect_dtmf' && this._callSession) {
+        let result: string;
+        try {
+          result = await this._callSession.collectDtmf({
+            maxDigits: (args['max_digits'] as number) ?? 4,
+            finishOnKey: (args['finish_on_key'] as string) ?? '#',
+            timeout: (args['timeout'] as number) ?? 5,
+          });
+        } catch (err) {
+          result = `Error: ${err}`;
+        }
+        this._conversation.push({ role: 'tool', content: result || '(타임아웃 - 입력 없음)', tool_call_id: id, name });
+        await this._respond();
+        return;
+      }
+
+      if (name === 'send_dtmf' && this._callSession) {
+        let result: string;
+        try {
+          await this._callSession.sendDtmfSequence((args['digits'] as string) ?? '');
+          result = 'sent';
+        } catch (err) {
+          result = `Error: ${err}`;
+        }
+        this._conversation.push({ role: 'tool', content: result, tool_call_id: id, name });
+        await this._respond();
+        return;
+      }
+
+      if (!this._tools) return;
       const result = await this._tools.call(name, args);
 
       this._conversation.push({
@@ -217,9 +316,10 @@ export class PipelineSession implements Session {
       });
 
       // Re-generate after tool result
+      const effectiveTools = this._buildEffectiveTools();
       let followUpText = '';
       const followUpStream = this._llm.generate(this._conversation, {
-        tools: this._tools ?? undefined,
+        tools: effectiveTools,
         temperature: this._temperature,
         maxTokens: this._maxTokens,
       });

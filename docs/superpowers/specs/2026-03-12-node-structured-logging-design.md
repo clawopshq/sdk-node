@@ -2,7 +2,7 @@
 
 ## Problem
 
-Node.js SDK uses `console.log`/`console.error` across 11 files (47 calls total). This causes:
+Node.js SDK uses `console.log`/`console.error` across 11 files (~52 calls total). This causes:
 - No log level control (only log/error, no debug/warn differentiation)
 - No structured output (plain text with `[ComponentName]` prefixes)
 - No programmatic log configuration (cannot redirect, filter, or aggregate)
@@ -60,15 +60,26 @@ ClawOpsAgent (agentLogger)
 ├── CallSession (agentLogger)
 │   └── AudioRecorder (agentLogger)
 ├── MCPClient (agentLogger)
+├── OpenAIRealtime (agentLogger)     ← matches Python SDK: uses clawops.agent
+├── GeminiRealtime (agentLogger)     ← matches Python SDK: uses clawops.agent
 └── Pipeline components (pipelineLogger = agentLogger.child({ module: 'pipeline' }))
     ├── PipelineSession
     ├── DeepgramSTT
-    ├── ElevenLabsTTS
-    ├── OpenAIRealtime
-    └── GeminiRealtime
+    └── ElevenLabsTTS
 ```
 
-Each component receives its logger via constructor parameter. No global/singleton state.
+Logger injection follows the existing setter pattern used by `setToolRegistry()` / `setRecorder()`:
+
+```typescript
+// Session interface adds:
+setLogger(logger: Logger): void;
+
+// ClawOpsAgent calls before start():
+session.setLogger(this._log);          // for realtime sessions (agentLogger)
+pipelineSession.setLogger(pipelineLog); // for pipeline sessions (pipelineLogger)
+```
+
+No global/singleton state. Each component stores its logger as an instance field with a sensible default (noop or default pino).
 
 ### Log Level Mapping
 
@@ -97,7 +108,7 @@ Below is the complete mapping. Node.js messages match Python SDK messages where 
 | (missing - add from Python) | `log.info('Call ended (server): %s', callId)` | info |
 | (missing - add from Python) | `log.info('Media stream started: %s', callId)` | info |
 | (missing - add from Python) | `log.info('Media stream stopped: %s', callId)` | info |
-| (missing - add from Python) | `log.warning('Unknown outbound call: %s', callId)` | warn |
+| (missing - add from Python) | `log.warn('Unknown outbound call: %s', callId)` | warn |
 | `console.error('[ClawOpsAgent] Error in call session ...')` | `log.error({ err }, 'Call session error: %s', callId)` | error |
 | `console.error('[ClawOpsAgent] MCP connection error: ...')` | `log.error({ err }, 'MCP connection error')` | error |
 | `console.error('[ClawOpsAgent] feedDtmf error: ...')` | `log.error({ err }, 'DTMF feed error')` | error |
@@ -110,8 +121,9 @@ Below is the complete mapping. Node.js messages match Python SDK messages where 
 | `console.error('[ControlWebSocket] Failed to parse message')` | `log.warn('Control WS parse error')` | warn |
 | `console.error('[ControlWebSocket] Error: ...')` | `log.warn('Control WS error: %s', err.message)` | warn |
 | `console.error('[ControlWebSocket] Error in handler ...')` | `log.error({ err }, 'Control WS handler error: %s', event)` | error |
-| `console.error('[ControlWebSocket] Reconnect failed: ...')` | `log.info('Control WS reconnecting in %.1fs...', delay)` | info |
+| `console.error('[ControlWebSocket] Reconnect failed: ...')` | `log.warn('Control WS reconnect failed')` | warn |
 | (missing - add from Python) | `log.info('Control WS connected: %s', url)` | info |
+| (missing - add from Python) | `log.info('Control WS reconnecting in %.1fs...', delay)` | info |
 
 #### media-ws.ts (agentLogger)
 
@@ -189,7 +201,7 @@ Below is the complete mapping. Node.js messages match Python SDK messages where 
 | (missing - add from Python) | `log.info('ElevenLabs sending text: %s', text)` | info |
 | (missing - add from Python) | `log.info('ElevenLabs sending EOS')` | info |
 
-#### pipeline/openai-realtime.ts (pipelineLogger)
+#### pipeline/openai-realtime.ts (agentLogger)
 
 | Current Node.js | New | Level |
 |----------------|-----|-------|
@@ -201,7 +213,7 @@ Below is the complete mapping. Node.js messages match Python SDK messages where 
 | (missing - add from Python) | `log.info('Tool call: %s(%s)', funcName, args)` | info |
 | (missing - add from Python) | `log.debug('Tool result: %s -> %s', funcName, result)` | debug |
 
-#### pipeline/gemini-realtime.ts (pipelineLogger)
+#### pipeline/gemini-realtime.ts (agentLogger)
 
 | Current Node.js | New | Level |
 |----------------|-----|-------|
@@ -231,7 +243,7 @@ Below is the complete mapping. Node.js messages match Python SDK messages where 
 
 ### Dependency Change
 
-Add `pino` to `dependencies` in `package.json`:
+Add `pino` to `dependencies` in `package.json`. Logging is core SDK infrastructure (analogous to Python's stdlib `logging`), so it belongs in `dependencies` rather than `peerDependencies`:
 
 ```json
 {
@@ -256,8 +268,9 @@ Add `pino` to `dependencies` in `package.json`:
 | `src/agent/pipeline/pipeline-session.ts` | Replace console → pipelineLogger |
 | `src/agent/pipeline/deepgram-stt.ts` | Replace console → pipelineLogger |
 | `src/agent/pipeline/elevenlabs-tts.ts` | Replace console → pipelineLogger |
-| `src/agent/pipeline/openai-realtime.ts` | Replace console → pipelineLogger |
-| `src/agent/pipeline/gemini-realtime.ts` | Replace console → pipelineLogger |
+| `src/agent/pipeline/openai-realtime.ts` | Replace console → agentLogger (matches Python SDK) |
+| `src/agent/pipeline/gemini-realtime.ts` | Replace console → agentLogger (matches Python SDK) |
+| `src/agent/index.ts` | Export `Logger` type for user injection |
 | `package.json` | Add pino dependency |
 
 ### Testing

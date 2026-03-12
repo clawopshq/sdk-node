@@ -48,6 +48,10 @@ export interface ClawOpsAgentOptions {
   mcpServers?: Array<MCPServerStdio | MCPServerHTTP>;
   /** Tracing configuration. */
   tracing?: TracingConfig;
+  /** Enable DTMF tool registration on session handlers. Default: true */
+  dtmfTools?: boolean;
+  /** Debounce time (ms) for passive DTMF accumulation. Default: 500 */
+  passiveDtmfDebounceMs?: number;
 }
 
 export class ClawOpsAgent {
@@ -63,6 +67,12 @@ export class ClawOpsAgent {
   private _recording: boolean;
   private _recordingPath: string;
   private _activeSessions: Map<string, CallSession> = new Map();
+  private _dtmfTools: boolean;
+  private _passiveDtmfDebounceMs: number;
+  private _passiveDtmfBuffer: string[] = [];
+  private _passiveDtmfTimer: ReturnType<typeof setTimeout> | null = null;
+  private _passiveDtmfCallId: string | null = null;
+  private _callSessions = new Map<string, Session>();
 
   constructor(options: ClawOpsAgentOptions) {
     this._apiKey = options.apiKey ?? process.env['CLAWOPS_API_KEY'] ?? '';
@@ -73,6 +83,8 @@ export class ClawOpsAgent {
     this._recording = options.recording ?? false;
     this._recordingPath = options.recordingPath ?? './recordings';
     this._mcpServers = options.mcpServers ?? [];
+    this._dtmfTools = options.dtmfTools ?? true;
+    this._passiveDtmfDebounceMs = options.passiveDtmfDebounceMs ?? 500;
 
     // Configure tracing
     if (options.tracing) {
@@ -332,6 +344,35 @@ export class ClawOpsAgent {
     }
   }
 
+  private _onDtmfEvent(callSession: CallSession, digit: string): void {
+    callSession._emit('dtmf', digit);
+
+    if ((callSession as any)._dtmfCollectorActive) {
+      callSession._routeDtmf(digit);
+      callSession.clearAudio();
+      return;
+    }
+
+    this._passiveDtmfBuffer.push(digit);
+    this._passiveDtmfCallId = callSession.callId;
+    if (this._passiveDtmfTimer) {
+      clearTimeout(this._passiveDtmfTimer);
+    }
+    this._passiveDtmfTimer = setTimeout(() => {
+      const digits = this._passiveDtmfBuffer.join('');
+      this._passiveDtmfBuffer = [];
+      const sessionHandler = this._passiveDtmfCallId
+        ? this._callSessions.get(this._passiveDtmfCallId)
+        : null;
+      this._passiveDtmfCallId = null;
+      if (digits && sessionHandler && sessionHandler.feedDtmf) {
+        sessionHandler.feedDtmf(digits).catch((err: unknown) => {
+          console.error('[ClawOpsAgent] feedDtmf error:', err);
+        });
+      }
+    }, this._passiveDtmfDebounceMs);
+  }
+
   private async _startCallSession(session: CallSession, mediaWsUrl: string): Promise<void> {
     await withSpan(
       'clawops.call_session',
@@ -381,6 +422,8 @@ export class ClawOpsAgent {
           () => {
             mediaWs.close();
           },
+          async (digit: string) => { mediaWs.sendDtmf(digit); },
+          () => mediaWs.isConnected,
         );
 
         const sessionHandler = this._session;
@@ -392,6 +435,12 @@ export class ClawOpsAgent {
         if (recorder && 'setRecorder' in sessionHandler && typeof sessionHandler.setRecorder === 'function') {
           sessionHandler.setRecorder(recorder);
         }
+        if ('setDtmfTools' in sessionHandler && typeof sessionHandler.setDtmfTools === 'function') {
+          (sessionHandler as any).setDtmfTools(this._dtmfTools);
+        }
+
+        // Save session handler for DTMF routing
+        this._callSessions.set(session.callId, sessionHandler);
 
         // Handle inbound audio — feed raw ulaw to session (each session converts as needed)
         mediaWs.onAudio((ulawAudio: Buffer, _timestamp: number) => {
@@ -401,6 +450,11 @@ export class ClawOpsAgent {
           if (recorder) {
             recorder.writeInbound(ulawToPcm16(ulawAudio));
           }
+        });
+
+        // Handle inbound DTMF
+        mediaWs.onDtmf((digit: string) => {
+          this._onDtmfEvent(session, digit);
         });
 
         mediaWs.onClose(() => {
@@ -444,6 +498,7 @@ export class ClawOpsAgent {
           session._emit('call_end');
           session._markEnded();
           this._activeSessions.delete(session.callId);
+          this._callSessions.delete(session.callId);
         }
       },
     );

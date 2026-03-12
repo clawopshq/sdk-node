@@ -96,3 +96,85 @@ describe('CallSession', () => {
     expect(() => session.sendAudio(Buffer.from([1]))).not.toThrow();
   });
 });
+
+describe('CallSession DTMF', () => {
+  function makeSession() {
+    return new CallSession({
+      callId: 'CA_test',
+      fromNumber: '010',
+      toNumber: '070',
+      accountId: 'AC',
+      direction: 'inbound',
+    });
+  }
+
+  describe('sendDtmfSequence', () => {
+    it('sends individual digits', async () => {
+      const session = makeSession();
+      const sent: string[] = [];
+      session._sendDtmfFn = async (d: string) => { sent.push(d); };
+      session._isTransportConnected = () => true;
+
+      await session.sendDtmfSequence('123');
+      expect(sent).toEqual(['1', '2', '3']);
+    });
+
+    it('throws on invalid character', async () => {
+      const session = makeSession();
+      session._sendDtmfFn = async () => {};
+      session._isTransportConnected = () => true;
+
+      await expect(session.sendDtmfSequence('1A')).rejects.toThrow('유효하지 않은 DTMF 문자');
+    });
+  });
+
+  describe('collectDtmf', () => {
+    it('collects up to max_digits', async () => {
+      const session = makeSession();
+
+      setTimeout(() => {
+        session._routeDtmf('1');
+        session._routeDtmf('2');
+        session._routeDtmf('3');
+      }, 50);
+
+      const result = await session.collectDtmf({ maxDigits: 3, timeout: 2 });
+      expect(result).toBe('123');
+    });
+
+    it('stops on finish key', async () => {
+      const session = makeSession();
+
+      setTimeout(() => {
+        session._routeDtmf('1');
+        session._routeDtmf('2');
+        session._routeDtmf('#');
+      }, 50);
+
+      const result = await session.collectDtmf({ maxDigits: 10, finishOnKey: '#', timeout: 2 });
+      expect(result).toBe('12');
+    });
+
+    it('returns empty on timeout', async () => {
+      const session = makeSession();
+      const result = await session.collectDtmf({ maxDigits: 4, timeout: 0.1 });
+      expect(result).toBe('');
+    });
+
+    it('throws on double collect', async () => {
+      const session = makeSession();
+
+      const p = session.collectDtmf({ maxDigits: 4, timeout: 1 });
+
+      await expect(session.collectDtmf({ maxDigits: 4, timeout: 1 }))
+        .rejects.toThrow('이미 DTMF 수집 중');
+
+      // Clean up
+      session._routeDtmf('1');
+      session._routeDtmf('2');
+      session._routeDtmf('3');
+      session._routeDtmf('4');
+      await p;
+    });
+  });
+});

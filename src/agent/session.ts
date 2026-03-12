@@ -25,6 +25,10 @@ export interface HangupFn {
   (): void;
 }
 
+export interface SendDtmfFn {
+  (digit: string): Promise<void>;
+}
+
 export class CallSession {
   readonly callId: string;
   readonly fromNumber: string;
@@ -38,6 +42,11 @@ export class CallSession {
   private _sendAudioFn: SendAudioFn | null = null;
   private _clearAudioFn: ClearAudioFn | null = null;
   private _hangupFn: HangupFn | null = null;
+  /** @internal */ _sendDtmfFn: SendDtmfFn | null = null;
+  /** @internal */ _isTransportConnected: (() => boolean) | null = null;
+  private _dtmfCollectorActive = false;
+  private _dtmfResolvers: ((digit: string) => void)[] = [];
+  private _dtmfBuffer: string[] = [];
   private _handlers: Map<string, SessionEventHandler[]> = new Map();
   private _endedPromise: Promise<void>;
   private _resolveEnded!: () => void;
@@ -73,10 +82,18 @@ export class CallSession {
   }
 
   /** Bind transport functions (called internally by the agent). */
-  _bindTransport(send: SendAudioFn, clear: ClearAudioFn, hangup: HangupFn): void {
+  _bindTransport(
+    send: SendAudioFn,
+    clear: ClearAudioFn,
+    hangup: HangupFn,
+    sendDtmf?: SendDtmfFn,
+    isConnected?: () => boolean,
+  ): void {
     this._sendAudioFn = send;
     this._clearAudioFn = clear;
     this._hangupFn = hangup;
+    if (sendDtmf) this._sendDtmfFn = sendDtmf;
+    if (isConnected) this._isTransportConnected = isConnected;
     this._status = 'active';
   }
 
@@ -98,6 +115,89 @@ export class CallSession {
   hangup(): void {
     if (this._hangupFn) {
       this._hangupFn();
+    }
+  }
+
+  /** @internal Route a received DTMF digit to an active collector. */
+  _routeDtmf(digit: string): void {
+    if (!this._dtmfCollectorActive) return;
+    if (this._dtmfResolvers.length > 0) {
+      const resolve = this._dtmfResolvers.shift()!;
+      resolve(digit);
+    } else {
+      // Buffer the digit for the next await
+      this._dtmfBuffer.push(digit);
+    }
+  }
+
+  /** Collect DTMF digits from the caller. */
+  async collectDtmf(options: {
+    maxDigits: number;
+    finishOnKey?: string;
+    timeout?: number;
+    secure?: boolean;
+  }): Promise<string> {
+    if (this._dtmfCollectorActive) {
+      throw new Error('이미 DTMF 수집 중입니다');
+    }
+
+    const { maxDigits, finishOnKey = '#', timeout = 5 } = options;
+    this._dtmfCollectorActive = true;
+    this._dtmfBuffer = [];
+    const collected: string[] = [];
+
+    try {
+      while (collected.length < maxDigits) {
+        // Drain the buffer first
+        if (this._dtmfBuffer.length > 0) {
+          const digit = this._dtmfBuffer.shift()!;
+          if (digit === finishOnKey) break;
+          collected.push(digit);
+          continue;
+        }
+
+        const digit = await Promise.race([
+          new Promise<string>((resolve) => {
+            this._dtmfResolvers.push(resolve);
+          }),
+          new Promise<null>((resolve) => {
+            setTimeout(() => resolve(null), timeout * 1000);
+          }),
+        ]);
+
+        if (digit === null) break; // timeout
+        if (digit === finishOnKey) break;
+        collected.push(digit);
+      }
+    } finally {
+      this._dtmfCollectorActive = false;
+      this._dtmfResolvers = [];
+      this._dtmfBuffer = [];
+    }
+
+    return collected.join('');
+  }
+
+  /** Send a sequence of DTMF digits. */
+  async sendDtmfSequence(digits: string): Promise<void> {
+    if (!this._sendDtmfFn) {
+      throw new Error('DTMF 전송 함수가 바인딩되지 않았습니다');
+    }
+    for (const ch of digits) {
+      if (this._isTransportConnected && !this._isTransportConnected()) {
+        throw new Error('DTMF 전송 중 연결이 끊어졌습니다');
+      }
+      if (ch === 'w') {
+        await new Promise((r) => setTimeout(r, 500));
+      } else if (ch === 'W') {
+        await new Promise((r) => setTimeout(r, 1000));
+      } else if ('0123456789*#'.includes(ch)) {
+        if (this._sendDtmfFn) {
+          await this._sendDtmfFn(ch);
+        }
+      } else {
+        throw new Error(`유효하지 않은 DTMF 문자: ${ch}`);
+      }
     }
   }
 

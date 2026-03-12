@@ -18,6 +18,32 @@ const HANG_UP_TOOL = {
   parameters: { type: 'object', properties: {} },
 };
 
+const COLLECT_DTMF_TOOL = {
+  name: 'collect_dtmf',
+  description: '사용자로부터 DTMF(전화 키패드) 입력을 수집합니다. 반드시 사용자에게 무엇을 입력해야 하는지 안내한 후 호출하세요.',
+  parameters: {
+    type: 'object' as const,
+    properties: {
+      max_digits: { type: 'integer' as const, description: '수집할 최대 자릿수' },
+      finish_on_key: { type: 'string' as const, description: '입력 종료 키 (기본: #)' },
+      timeout: { type: 'integer' as const, description: '입력 대기 시간(초, 기본: 5)' },
+    },
+    required: ['max_digits'] as string[],
+  },
+};
+
+const SEND_DTMF_TOOL = {
+  name: 'send_dtmf',
+  description: 'DTMF 신호를 전송합니다. ARS 메뉴 탐색이나 내선번호 입력 시 사용합니다.',
+  parameters: {
+    type: 'object' as const,
+    properties: {
+      digits: { type: 'string' as const, description: "전송할 번호 (0-9, *, #). 'w'는 500ms 대기, 'W'는 1000ms 대기." },
+    },
+    required: ['digits'] as string[],
+  },
+};
+
 /**
  * $ref 문자열을 $defs에서 찾아 반환한다.
  */
@@ -162,6 +188,7 @@ export class GeminiRealtime implements Session {
   private _closed = false;
   private _sentAudioChunks = 0;
   private _audioRemainder: Buffer = Buffer.alloc(0);
+  private _dtmfTools = true;
 
   constructor(options: GeminiRealtimeOptions = {}) {
     this._apiKey = options.apiKey ?? process.env['GOOGLE_API_KEY'] ?? '';
@@ -180,6 +207,10 @@ export class GeminiRealtime implements Session {
   /** Inject per-call AudioRecorder. */
   setRecorder(recorder: AudioRecorder): void {
     this._recorder = recorder;
+  }
+
+  setDtmfTools(enabled: boolean): void {
+    this._dtmfTools = enabled;
   }
 
   async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
@@ -269,6 +300,15 @@ export class GeminiRealtime implements Session {
     }
   }
 
+  async feedDtmf(digits: string): Promise<void> {
+    if (this._session) {
+      this._session.sendClientContent({
+        turns: [{ role: 'user', parts: [{ text: `[DTMF 입력: ${digits}]` }] }],
+        turnComplete: true,
+      });
+    }
+  }
+
   async stop(): Promise<void> {
     this._closed = true;
     if (this._session) {
@@ -292,6 +332,9 @@ export class GeminiRealtime implements Session {
         }))
       : [];
     toolDefs.push(HANG_UP_TOOL);
+    if (this._dtmfTools) {
+      toolDefs.push(COLLECT_DTMF_TOOL, SEND_DTMF_TOOL);
+    }
     return toolDefs;
   }
 
@@ -401,6 +444,41 @@ export class GeminiRealtime implements Session {
           this._call.hangup();
         }
         return;
+      }
+
+      if (name === 'collect_dtmf') {
+        if (this._call) {
+          let result: string;
+          try {
+            result = await this._call.collectDtmf({
+              maxDigits: (args['max_digits'] as number) ?? 4,
+              finishOnKey: (args['finish_on_key'] as string) ?? '#',
+              timeout: (args['timeout'] as number) ?? 5,
+            });
+          } catch (err) {
+            result = `Error: ${err}`;
+          }
+          responses.push({
+            id: fcId,
+            name,
+            response: { result: result || '(타임아웃 - 입력 없음)' },
+          });
+        }
+        continue;
+      }
+
+      if (name === 'send_dtmf') {
+        if (this._call) {
+          let result: string;
+          try {
+            await this._call.sendDtmfSequence((args['digits'] as string) ?? '');
+            result = 'sent';
+          } catch (err) {
+            result = `Error: ${err}`;
+          }
+          responses.push({ id: fcId, name, response: { result } });
+        }
+        continue;
       }
 
       if (!this._tools || !this._tools.has(name)) {

@@ -15,6 +15,8 @@ import type {
   STT,
   TTS,
 } from './base.js';
+import type { Logger } from 'pino';
+import { NOOP_LOGGER } from '../logger.js';
 
 const COLLECT_DTMF_TOOL = {
   type: 'function' as const,
@@ -92,6 +94,7 @@ export class PipelineSession implements Session {
   private _running = false;
   private _speaking = false;
   private _builtinTools: Set<BuiltinTool> | null = null;
+  private _log: Logger = NOOP_LOGGER;
 
   constructor(options: PipelineSessionOptions) {
     this._stt = options.stt;
@@ -120,10 +123,21 @@ export class PipelineSession implements Session {
     this._builtinTools = tools;
   }
 
+  setLogger(logger: Logger): void {
+    this._log = logger;
+    if ('setLogger' in this._stt && typeof (this._stt as any).setLogger === 'function') {
+      (this._stt as any).setLogger(logger);
+    }
+    if ('setLogger' in this._tts && typeof (this._tts as any).setLogger === 'function') {
+      (this._tts as any).setLogger(logger);
+    }
+  }
+
   async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
     this._callSession = callSession;
     this._tools = tools ?? null;
     this._running = true;
+    this._log.info('PipelineSession started');
     this._conversation = [];
 
     if (this._systemPrompt) {
@@ -136,13 +150,13 @@ export class PipelineSession implements Session {
     // Generate initial greeting if enabled
     if (this._greeting) {
       this._generateGreeting().catch((err) => {
-        console.error('[PipelineSession] Greeting error:', err);
+        this._log.error({ err }, 'Greeting error');
       });
     }
 
     // Start the STT listening loop
     this._runSttLoop().catch((err) => {
-      console.error('[PipelineSession] STT loop error:', err);
+      this._log.error({ err }, 'STT loop error');
     });
   }
 
@@ -162,6 +176,7 @@ export class PipelineSession implements Session {
 
   async stop(): Promise<void> {
     this._running = false;
+    this._log.info('PipelineSession stopped');
     this._audioBuffer = [];
   }
 
@@ -179,9 +194,11 @@ export class PipelineSession implements Session {
         if (this._callSession) {
           this._callSession.clearAudio();
         }
+        this._log.info('Barge-in: "%s"', event.transcript.substring(0, 30));
       }
 
       if (event.type === 'final' && event.transcript.trim()) {
+        this._log.info('STT: %s', event.transcript);
         await this._handleUserSpeech(event.transcript);
       }
     }
@@ -265,6 +282,7 @@ export class PipelineSession implements Session {
     }
 
     if (fullResponse.trim()) {
+      this._log.info('Assistant: %s', fullResponse.substring(0, 100));
       this._conversation.push({ role: 'assistant', content: fullResponse });
       // Synthesize and send audio
       await this._synthesizeAndSend(fullResponse);
@@ -345,7 +363,7 @@ export class PipelineSession implements Session {
         await this._synthesizeAndSend(followUpText);
       }
     } catch (err) {
-      console.error(`[PipelineSession] Tool call error for ${name}:`, err);
+      this._log.error({ err }, 'Tool call failed: %s', name);
     }
   }
 
@@ -377,7 +395,7 @@ export class PipelineSession implements Session {
         }
       }
     } catch (err) {
-      console.error('[PipelineSession] TTS error:', err);
+      this._log.error({ err }, 'TTS error');
     } finally {
       this._speaking = false;
     }

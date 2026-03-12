@@ -3,6 +3,8 @@ import {
   parseStartEvent,
   parseMediaEvent,
   buildMediaResponse,
+  parseDtmfEvent,
+  buildDtmfMessage,
 } from '../../src/agent/media-ws.js';
 
 describe('parseStartEvent', () => {
@@ -70,5 +72,29 @@ describe('buildMediaResponse', () => {
     expect(parsed.event).toBe('media');
     expect(parsed.media.payload).toBe('dGVzdA==');
     expect(parsed.streamSid).toBeUndefined();
+  });
+});
+
+describe('parseDtmfEvent', () => {
+  it('parses a DTMF event', () => {
+    const data = {
+      event: 'dtmf',
+      sequenceNumber: '5',
+      dtmf: { digit: '1', track: 'inbound_track' },
+    };
+    const result = parseDtmfEvent(data);
+    expect(result.digit).toBe('1');
+    expect(result.track).toBe('inbound_track');
+  });
+});
+
+describe('buildDtmfMessage', () => {
+  it('builds a valid DTMF message', () => {
+    const msg = buildDtmfMessage('5');
+    expect(msg).toBe(JSON.stringify({ event: 'dtmf', dtmf: { digit: '5' } }));
+  });
+
+  it('throws on invalid digit', () => {
+    expect(() => buildDtmfMessage('A')).toThrow('유효하지 않은 DTMF digit');
   });
 });

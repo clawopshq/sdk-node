@@ -19,6 +19,11 @@ export interface MediaEvent {
   timestamp: number;
 }
 
+export interface DtmfEvent {
+  digit: string;
+  track: string;
+}
+
 /**
  * Parse a 'start' event payload from the media WebSocket.
  */
@@ -56,6 +61,23 @@ export function buildMediaResponse(audioBase64: string): string {
   });
 }
 
+const VALID_DTMF_DIGITS = new Set('0123456789*#');
+
+export function parseDtmfEvent(data: Record<string, unknown>): DtmfEvent {
+  const dtmf = data['dtmf'] as Record<string, unknown>;
+  return {
+    digit: (dtmf['digit'] ?? '') as string,
+    track: (dtmf['track'] ?? '') as string,
+  };
+}
+
+export function buildDtmfMessage(digit: string): string {
+  if (!VALID_DTMF_DIGITS.has(digit)) {
+    throw new Error(`유효하지 않은 DTMF digit: ${digit}`);
+  }
+  return JSON.stringify({ event: 'dtmf', dtmf: { digit } });
+}
+
 export class MediaWebSocket {
   private _ws: WsType | null = null;
   private _audioQueue: string[] = [];
@@ -64,6 +86,7 @@ export class MediaWebSocket {
   private _onAudio: ((audio: Buffer, timestamp: number) => void) | null = null;
   private _onStart: ((event: MediaStartEvent) => void) | null = null;
   private _onClose: (() => void) | null = null;
+  private _onDtmf: ((digit: string) => void) | null = null;
 
   /** Set the handler for inbound audio data. */
   onAudio(handler: (audio: Buffer, timestamp: number) => void): void {
@@ -78,6 +101,23 @@ export class MediaWebSocket {
   /** Set the handler for connection close. */
   onClose(handler: () => void): void {
     this._onClose = handler;
+  }
+
+  /** Set the handler for inbound DTMF events. */
+  onDtmf(handler: (digit: string) => void): void {
+    this._onDtmf = handler;
+  }
+
+  /** Send a single DTMF digit to the platform. */
+  sendDtmf(digit: string): void {
+    if (this._ws && this._ws.readyState === 1) {
+      this._ws.send(buildDtmfMessage(digit));
+    }
+  }
+
+  /** Whether the WebSocket is connected. */
+  get isConnected(): boolean {
+    return this._ws !== null && this._ws.readyState === 1 && !this._closed;
   }
 
   /** Connect to a media WebSocket URL with Bearer authentication. */
@@ -173,6 +213,13 @@ export class MediaWebSocket {
         const mediaEvt = parseMediaEvent(msg);
         if (this._onAudio) {
           this._onAudio(mediaEvt.audio, mediaEvt.timestamp);
+        }
+        break;
+      }
+      case 'dtmf': {
+        const dtmfEvt = parseDtmfEvent(msg);
+        if (this._onDtmf) {
+          this._onDtmf(dtmfEvt.digit);
         }
         break;
       }

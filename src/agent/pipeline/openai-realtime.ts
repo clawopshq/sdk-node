@@ -19,6 +19,34 @@ const HANG_UP_TOOL = {
   parameters: { type: 'object' as const, properties: {} as Record<string, unknown>, required: [] as string[] },
 };
 
+const COLLECT_DTMF_TOOL = {
+  type: 'function' as const,
+  name: 'collect_dtmf',
+  description: '사용자로부터 DTMF(전화 키패드) 입력을 수집합니다. 반드시 사용자에게 무엇을 입력해야 하는지 안내한 후 호출하세요.',
+  parameters: {
+    type: 'object' as const,
+    properties: {
+      max_digits: { type: 'integer' as const, description: '수집할 최대 자릿수' },
+      finish_on_key: { type: 'string' as const, description: '입력 종료 키 (기본: #)' },
+      timeout: { type: 'integer' as const, description: '입력 대기 시간(초, 기본: 5)' },
+    },
+    required: ['max_digits'] as string[],
+  },
+};
+
+const SEND_DTMF_TOOL = {
+  type: 'function' as const,
+  name: 'send_dtmf',
+  description: 'DTMF 신호를 전송합니다. ARS 메뉴 탐색이나 내선번호 입력 시 사용합니다.',
+  parameters: {
+    type: 'object' as const,
+    properties: {
+      digits: { type: 'string' as const, description: "전송할 번호 (0-9, *, #). 'w'는 500ms 대기, 'W'는 1000ms 대기." },
+    },
+    required: ['digits'] as string[],
+  },
+};
+
 export interface OpenAIRealtimeOptions {
   /** OpenAI API key. Falls back to OPENAI_API_KEY env var. */
   apiKey?: string;
@@ -44,6 +72,12 @@ export class OpenAIRealtime implements Session {
   private _language: string;
   private _eagerness: string;
   private _greeting: boolean;
+
+  private _dtmfTools = true;
+
+  setDtmfTools(enabled: boolean): void {
+    this._dtmfTools = enabled;
+  }
 
   private _ws: import('ws').WebSocket | null = null;
   private _call: CallSession | null = null;
@@ -136,6 +170,18 @@ export class OpenAIRealtime implements Session {
     });
   }
 
+  async feedDtmf(digits: string): Promise<void> {
+    this._send({
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: `[DTMF 입력: ${digits}]` }],
+      },
+    });
+    this._send({ type: 'response.create' });
+  }
+
   feedAudio(audio: Buffer): void {
     if (this._ws && this._ws.readyState === 1 && !this._closed) {
       // Agent path: audio comes as ulaw directly from platform, no conversion needed
@@ -163,6 +209,9 @@ export class OpenAIRealtime implements Session {
       ? this._tools.toOpenAITools().map((t) => ({ type: 'function' as const, ...t.function }))
       : [];
     toolSchemas.push(HANG_UP_TOOL);
+    if (this._dtmfTools) {
+      toolSchemas.push(COLLECT_DTMF_TOOL, SEND_DTMF_TOOL);
+    }
 
     this._send({
       type: 'session.update',
@@ -306,6 +355,55 @@ export class OpenAIRealtime implements Session {
     if (funcName === 'hang_up') {
       if (this._call) {
         this._call.hangup();
+      }
+      return;
+    }
+
+    if (funcName === 'collect_dtmf') {
+      if (this._call) {
+        let result: string;
+        try {
+          const args = JSON.parse((item['arguments'] as string) ?? '{}') as Record<string, unknown>;
+          result = await this._call.collectDtmf({
+            maxDigits: (args['max_digits'] as number) ?? 4,
+            finishOnKey: (args['finish_on_key'] as string) ?? '#',
+            timeout: (args['timeout'] as number) ?? 5,
+          });
+        } catch (err) {
+          result = `Error: ${err}`;
+        }
+        this._send({
+          type: 'conversation.item.create',
+          item: {
+            type: 'function_call_output',
+            call_id: callId,
+            output: result || '(타임아웃 - 입력 없음)',
+          },
+        });
+        this._send({ type: 'response.create' });
+      }
+      return;
+    }
+
+    if (funcName === 'send_dtmf') {
+      if (this._call) {
+        let result: string;
+        try {
+          const args = JSON.parse((item['arguments'] as string) ?? '{}') as Record<string, unknown>;
+          await this._call.sendDtmfSequence((args['digits'] as string) ?? '');
+          result = 'sent';
+        } catch (err) {
+          result = `Error: ${err}`;
+        }
+        this._send({
+          type: 'conversation.item.create',
+          item: {
+            type: 'function_call_output',
+            call_id: callId,
+            output: result,
+          },
+        });
+        this._send({ type: 'response.create' });
       }
       return;
     }

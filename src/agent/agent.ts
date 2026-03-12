@@ -20,12 +20,7 @@ import type { TracingConfig } from './tracing/config.js';
 import { withSpan } from './tracing/spans.js';
 import { ATTR_CALL_ID, ATTR_CALL_DIRECTION, ATTR_AGENT_ID } from './tracing/attributes.js';
 
-export type AgentEventType =
-  | 'call_start'
-  | 'call_end'
-  | 'call_failed'
-  | 'transcript'
-  | 'dtmf';
+export type AgentEventType = 'call_start' | 'call_end' | 'call_failed' | 'transcript' | 'dtmf';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentEventHandler = (...args: any[]) => void | Promise<void>;
@@ -108,7 +103,9 @@ export class ClawOpsAgent {
   ): this {
     if (typeof nameOrTool === 'string') {
       if (!description || !parameters || !handler) {
-        throw new AgentError('tool(name, description, parameters, handler) requires all arguments.');
+        throw new AgentError(
+          'tool(name, description, parameters, handler) requires all arguments.',
+        );
       }
       this._tools.register({
         name: nameOrTool,
@@ -146,7 +143,9 @@ export class ClawOpsAgent {
       throw new AgentError('API key is required. Set CLAWOPS_API_KEY or pass apiKey option.');
     }
     if (!this._accountId) {
-      throw new AgentError('Account ID is required. Set CLAWOPS_ACCOUNT_ID or pass accountId option.');
+      throw new AgentError(
+        'Account ID is required. Set CLAWOPS_ACCOUNT_ID or pass accountId option.',
+      );
     }
 
     // Connect control WebSocket
@@ -250,7 +249,9 @@ export class ClawOpsAgent {
     }
 
     this._activeSessions.set(callSession.callId, callSession);
-    console.log(`[ClawOpsAgent] Outbound call initiated: ${this._fromNumber} -> ${to} (${callSession.callId})`);
+    console.log(
+      `[ClawOpsAgent] Outbound call initiated: ${this._fromNumber} -> ${to} (${callSession.callId})`,
+    );
     return callSession;
   }
 
@@ -349,8 +350,10 @@ export class ClawOpsAgent {
   private _onDtmfEvent(callSession: CallSession, digit: string): void {
     callSession._emit('dtmf', digit);
 
+    // Always route to session buffer — collector may not be active yet (tool call timing)
+    callSession._routeDtmf(digit);
+
     if ((callSession as any)._dtmfCollectorActive) {
-      callSession._routeDtmf(digit);
       callSession.clearAudio();
       return;
     }
@@ -424,17 +427,26 @@ export class ClawOpsAgent {
           () => {
             mediaWs.close();
           },
-          async (digit: string) => { mediaWs.sendDtmf(digit); },
+          async (digit: string) => {
+            mediaWs.sendDtmf(digit);
+          },
           () => mediaWs.isConnected,
         );
 
         const sessionHandler = this._session;
 
         // Inject tools and recorder into session if supported
-        if ('setToolRegistry' in sessionHandler && typeof sessionHandler.setToolRegistry === 'function') {
+        if (
+          'setToolRegistry' in sessionHandler &&
+          typeof sessionHandler.setToolRegistry === 'function'
+        ) {
           sessionHandler.setToolRegistry(sessionTools);
         }
-        if (recorder && 'setRecorder' in sessionHandler && typeof sessionHandler.setRecorder === 'function') {
+        if (
+          recorder &&
+          'setRecorder' in sessionHandler &&
+          typeof sessionHandler.setRecorder === 'function'
+        ) {
           sessionHandler.setRecorder(recorder);
         }
         if ('setDtmfTools' in sessionHandler && typeof sessionHandler.setDtmfTools === 'function') {

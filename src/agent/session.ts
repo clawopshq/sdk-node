@@ -118,14 +118,13 @@ export class CallSession {
     }
   }
 
-  /** @internal Route a received DTMF digit to an active collector. */
+  /** @internal Route a received DTMF digit to an active collector or buffer. */
   _routeDtmf(digit: string): void {
-    if (!this._dtmfCollectorActive) return;
-    if (this._dtmfResolvers.length > 0) {
+    if (this._dtmfCollectorActive && this._dtmfResolvers.length > 0) {
       const resolve = this._dtmfResolvers.shift()!;
       resolve(digit);
     } else {
-      // Buffer the digit for the next await
+      // Buffer the digit — collector may not be active yet (tool call timing)
       this._dtmfBuffer.push(digit);
     }
   }
@@ -143,7 +142,7 @@ export class CallSession {
 
     const { maxDigits, finishOnKey = '#', timeout = 5 } = options;
     this._dtmfCollectorActive = true;
-    this._dtmfBuffer = [];
+    // Don't clear buffer — digits may have arrived before tool call was processed
     const collected: string[] = [];
 
     try {

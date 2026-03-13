@@ -411,6 +411,16 @@ export class OpenAIRealtime implements Session {
 
       if (!this._tools || !this._tools.has(funcName)) {
         this._log.error('Unknown tool: %s', funcName);
+        await this._waitForResponseDone();
+        this._send({
+          type: 'conversation.item.create',
+          item: {
+            type: 'function_call_output',
+            call_id: callId,
+            output: JSON.stringify({ error: `Unknown tool: ${funcName}` }),
+          },
+        });
+        this._send({ type: 'response.create' });
         return;
       }
 

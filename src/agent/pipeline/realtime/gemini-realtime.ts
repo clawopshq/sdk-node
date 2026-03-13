@@ -5,52 +5,16 @@
  * Matches Python SDK's GeminiRealtime implementation (v0.14.0).
  */
 
-import type { CallSession } from '../session.js';
-import type { ToolRegistry } from '../tool.js';
-import type { AudioRecorder } from '../recorder.js';
-import type { Session } from './base.js';
+import type { CallSession } from '../../session.js';
+import type { ToolRegistry } from '../../tool.js';
+import type { AudioRecorder } from '../../recorder.js';
+import type { Session } from '../base.js';
 import type { LiveServerMessage, LiveServerToolCall } from '@google/genai/node';
-import { pcm16ToUlaw, resamplePcm16, ulawToPcm16 } from '../audio.js';
-import { BuiltinTool } from '../builtin-tool.js';
+import { pcm16ToUlaw, resamplePcm16, ulawToPcm16 } from '../../audio.js';
+import { BuiltinTool } from '../../builtin-tool.js';
 import type { Logger } from 'pino';
-import { NOOP_LOGGER } from '../logger.js';
-
-const HANG_UP_TOOL = {
-  name: 'hang_up',
-  description:
-    'End the phone call. Use when the conversation is finished or the caller says goodbye.',
-  parameters: { type: 'object', properties: {} },
-};
-
-const COLLECT_DTMF_TOOL = {
-  name: 'collect_dtmf',
-  description:
-    '사용자로부터 DTMF(전화 키패드) 입력을 수집합니다. 반드시 사용자에게 무엇을 입력해야 하는지 안내한 후 호출하세요.',
-  parameters: {
-    type: 'object' as const,
-    properties: {
-      max_digits: { type: 'integer' as const, description: '수집할 최대 자릿수' },
-      finish_on_key: { type: 'string' as const, description: '입력 종료 키 (기본: #)' },
-      timeout: { type: 'integer' as const, description: '입력 대기 시간(초, 기본: 5)' },
-    },
-    required: ['max_digits'] as string[],
-  },
-};
-
-const SEND_DTMF_TOOL = {
-  name: 'send_dtmf',
-  description: 'DTMF 신호를 전송합니다. ARS 메뉴 탐색이나 내선번호 입력 시 사용합니다.',
-  parameters: {
-    type: 'object' as const,
-    properties: {
-      digits: {
-        type: 'string' as const,
-        description: "전송할 번호 (0-9, *, #). 'w'는 500ms 대기, 'W'는 1000ms 대기.",
-      },
-    },
-    required: ['digits'] as string[],
-  },
-};
+import { NOOP_LOGGER } from '../../logger.js';
+import { BUILTIN_TOOL_NAMES, executeBuiltinTool, getBuiltinToolSchemas } from '../builtin-tool-schemas.js';
 
 /**
  * $ref 문자열을 $defs에서 찾아 반환한다.
@@ -353,9 +317,7 @@ export class GeminiRealtime implements Session {
           ),
         }))
       : [];
-    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.HANG_UP)) toolDefs.push(HANG_UP_TOOL);
-    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.COLLECT_DTMF)) toolDefs.push(COLLECT_DTMF_TOOL);
-    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.SEND_DTMF)) toolDefs.push(SEND_DTMF_TOOL);
+    toolDefs.push(...getBuiltinToolSchemas(this._builtinTools, 'gemini'));
     return toolDefs;
   }
 
@@ -476,54 +438,18 @@ export class GeminiRealtime implements Session {
       const args = fc.args ?? {};
       this._log.info({ tool: name, args }, 'Tool call: %s', name);
 
-      // Built-in hang_up tool
-      if (name === 'hang_up') {
-        this._log.info('hang_up: ending call');
-        if (this._call) {
-          await this._call.hangup();
-        }
-        return;
-      }
-
-      if (name === 'collect_dtmf') {
-        if (this._call) {
-          let result: string;
-          try {
-            this._log.info({ maxDigits: (args['max_digits'] as number) ?? 4, timeout: (args['timeout'] as number) ?? 5 }, 'collect_dtmf: waiting for digits');
-            result = await this._call.collectDtmf({
-              maxDigits: (args['max_digits'] as number) ?? 4,
-              finishOnKey: (args['finish_on_key'] as string) ?? '#',
-              timeout: (args['timeout'] as number) ?? 5,
-            });
-            this._log.info('DTMF collected: %s', result || '(empty)');
-          } catch (err) {
-            this._log.error({ err }, 'collect_dtmf error');
-            result = `Error: ${err}`;
+      // Built-in tools
+      if (BUILTIN_TOOL_NAMES.has(name) && this._call) {
+        const result = await executeBuiltinTool(name, args as Record<string, unknown>, this._call);
+        if (result !== null) {
+          if (name === 'hang_up') {
+            this._log.info('hang_up: ending call');
+            return;
           }
-          responses.push({
-            id: fcId,
-            name,
-            response: { result: result || '(타임아웃 - 입력 없음)' },
-          });
-        }
-        continue;
-      }
-
-      if (name === 'send_dtmf') {
-        if (this._call) {
-          let result: string;
-          try {
-            this._log.info('send_dtmf: digits="%s"', (args['digits'] as string) ?? '');
-            await this._call.sendDtmfSequence((args['digits'] as string) ?? '');
-            result = 'sent';
-            this._log.info('send_dtmf: sent');
-          } catch (err) {
-            this._log.error({ err }, 'send_dtmf error');
-            result = `Error: ${err}`;
-          }
+          this._log.info('Builtin tool result: %s -> %s', name, result);
           responses.push({ id: fcId, name, response: { result } });
+          continue;
         }
-        continue;
       }
 
       if (!this._tools || !this._tools.has(name)) {

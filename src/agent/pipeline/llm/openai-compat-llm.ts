@@ -1,31 +1,30 @@
 /**
- * OpenAI LLM provider for pipeline-based voice agents.
+ * OpenAI-compatible LLM provider (works with any OpenAI-compatible API).
  */
 
-import type { ConversationMessage, LLM, LLMChunk } from './base.js';
-import type { ToolRegistry } from '../tool.js';
+import type { ConversationMessage, LLM, LLMChunk } from '../base.js';
+import type { ToolRegistry } from '../../tool.js';
 
-export interface OpenAILLMOptions {
-  /** OpenAI API key. Falls back to OPENAI_API_KEY env var. */
+export interface OpenAICompatLLMOptions {
+  /** API key. */
   apiKey?: string;
-  /** Model to use. Default: 'gpt-4o-mini' */
-  model?: string;
-  /** Default temperature. Default: 0.8 */
+  /** Base URL for the OpenAI-compatible API. */
+  baseUrl: string;
+  /** Model to use. */
+  model: string;
+  /** Default temperature. */
   temperature?: number;
-  /** Default max tokens. Default: 4096 */
+  /** Default max tokens. */
   maxTokens?: number;
+  /** Additional default headers. */
+  defaultHeaders?: Record<string, string>;
 }
 
-export class OpenAILLM implements LLM {
-  private _options: OpenAILLMOptions;
+export class OpenAICompatLLM implements LLM {
+  private _options: OpenAICompatLLMOptions;
 
-  constructor(options: OpenAILLMOptions = {}) {
-    this._options = {
-      model: 'gpt-4o-mini',
-      temperature: 0.8,
-      maxTokens: 4096,
-      ...options,
-    };
+  constructor(options: OpenAICompatLLMOptions) {
+    this._options = options;
   }
 
   async *generate(
@@ -39,7 +38,9 @@ export class OpenAILLM implements LLM {
     const OpenAI = (await import('openai')).default;
 
     const client = new OpenAI({
-      apiKey: this._options.apiKey ?? process.env['OPENAI_API_KEY'],
+      apiKey: this._options.apiKey ?? 'not-needed',
+      baseURL: this._options.baseUrl,
+      defaultHeaders: this._options.defaultHeaders,
     });
 
     const requestParams: Record<string, unknown> = {
@@ -72,20 +73,17 @@ export class OpenAILLM implements LLM {
       const delta = choices[0]!['delta'] as Record<string, unknown> | undefined;
       if (!delta) continue;
 
-      // Text content
       const content = delta['content'] as string | undefined;
       if (content) {
         yield { type: 'text', text: content };
       }
 
-      // Tool calls
       const toolCalls = delta['tool_calls'] as Array<Record<string, unknown>> | undefined;
       if (toolCalls) {
         for (const tc of toolCalls) {
           const fn = tc['function'] as Record<string, unknown> | undefined;
           if (fn) {
             if (fn['name']) {
-              // Start of a new tool call
               if (currentToolCall) {
                 yield {
                   type: 'tool_call',
@@ -109,7 +107,6 @@ export class OpenAILLM implements LLM {
       }
     }
 
-    // Emit final tool call if pending
     if (currentToolCall) {
       yield {
         type: 'tool_call',

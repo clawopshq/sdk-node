@@ -1,22 +1,22 @@
-import type { ConversationMessage, LLM, LLMChunk } from './base.js';
-import type { ToolRegistry } from '../tool.js';
+import type { ConversationMessage, LLM, LLMChunk } from '../base.js';
+import type { ToolRegistry } from '../../tool.js';
 import { OpenAICompatLLM } from './openai-compat-llm.js';
 
-export interface FireworksLLMOptions {
+export interface GroqLLMOptions {
   apiKey?: string;
   model?: string;
   temperature?: number;
   maxTokens?: number;
 }
 
-export class FireworksLLM implements LLM {
+export class GroqLLM implements LLM {
   private _inner: OpenAICompatLLM;
 
-  constructor(options: FireworksLLMOptions = {}) {
+  constructor(options: GroqLLMOptions = {}) {
     this._inner = new OpenAICompatLLM({
-      apiKey: options.apiKey ?? process.env['FIREWORKS_API_KEY'],
-      baseUrl: 'https://api.fireworks.ai/inference/v1',
-      model: options.model ?? 'accounts/fireworks/models/llama4-scout-instruct-basic',
+      apiKey: options.apiKey ?? process.env['GROQ_API_KEY'],
+      baseUrl: 'https://api.groq.com/openai/v1',
+      model: options.model ?? 'meta-llama/llama-4-scout-17b-16e-instruct',
       temperature: options.temperature,
       maxTokens: options.maxTokens,
     });

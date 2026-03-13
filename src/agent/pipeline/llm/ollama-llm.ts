@@ -3,8 +3,8 @@
  * Uses the OpenAI-compatible API that Ollama exposes.
  */
 
-import type { ConversationMessage, LLM, LLMChunk } from './base.js';
-import type { ToolRegistry } from '../tool.js';
+import type { ConversationMessage, LLM, LLMChunk } from '../base.js';
+import type { ToolRegistry } from '../../tool.js';
 import { OpenAICompatLLM } from './openai-compat-llm.js';
 
 export interface OllamaLLMOptions {

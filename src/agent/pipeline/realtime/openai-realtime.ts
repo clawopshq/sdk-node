@@ -4,60 +4,17 @@
  * Matches Python SDK's OpenAIRealtime implementation.
  */
 
-import type { CallSession } from '../session.js';
-import type { ToolRegistry } from '../tool.js';
-import type { AudioRecorder } from '../recorder.js';
-import type { Session } from './base.js';
-import { ulawToPcm16 } from '../audio.js';
-import { BuiltinTool } from '../builtin-tool.js';
+import type { CallSession } from '../../session.js';
+import type { ToolRegistry } from '../../tool.js';
+import type { AudioRecorder } from '../../recorder.js';
+import type { Session } from '../base.js';
+import { ulawToPcm16 } from '../../audio.js';
+import { BuiltinTool } from '../../builtin-tool.js';
 import type { Logger } from 'pino';
-import { NOOP_LOGGER } from '../logger.js';
+import { NOOP_LOGGER } from '../../logger.js';
+import { BUILTIN_TOOL_NAMES, executeBuiltinTool, getBuiltinToolSchemas } from '../builtin-tool-schemas.js';
 
 const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime?model=';
-
-const HANG_UP_TOOL = {
-  type: 'function' as const,
-  name: 'hang_up',
-  description:
-    'End the phone call. Use when the conversation is finished or the caller says goodbye.',
-  parameters: {
-    type: 'object' as const,
-    properties: {} as Record<string, unknown>,
-    required: [] as string[],
-  },
-};
-
-const COLLECT_DTMF_TOOL = {
-  type: 'function' as const,
-  name: 'collect_dtmf',
-  description:
-    '사용자로부터 DTMF(전화 키패드) 입력을 수집합니다. 반드시 사용자에게 무엇을 입력해야 하는지 안내한 후 호출하세요.',
-  parameters: {
-    type: 'object' as const,
-    properties: {
-      max_digits: { type: 'integer' as const, description: '수집할 최대 자릿수' },
-      finish_on_key: { type: 'string' as const, description: '입력 종료 키 (기본: #)' },
-      timeout: { type: 'integer' as const, description: '입력 대기 시간(초, 기본: 5)' },
-    },
-    required: ['max_digits'] as string[],
-  },
-};
-
-const SEND_DTMF_TOOL = {
-  type: 'function' as const,
-  name: 'send_dtmf',
-  description: 'DTMF 신호를 전송합니다. ARS 메뉴 탐색이나 내선번호 입력 시 사용합니다.',
-  parameters: {
-    type: 'object' as const,
-    properties: {
-      digits: {
-        type: 'string' as const,
-        description: "전송할 번호 (0-9, *, #). 'w'는 500ms 대기, 'W'는 1000ms 대기.",
-      },
-    },
-    required: ['digits'] as string[],
-  },
-};
 
 export interface OpenAIRealtimeOptions {
   /** OpenAI API key. Falls back to OPENAI_API_KEY env var. */
@@ -226,17 +183,12 @@ export class OpenAIRealtime implements Session {
   private _sendSessionUpdate(): void {
     if (!this._ws || this._ws.readyState !== 1) return;
 
-    // Build tool schemas: user tools + hang_up
+    // Build tool schemas: user tools + builtin tools
     // OpenAI Realtime API uses flat tool format: { type, name, description, parameters }
-    const toolSchemas = this._tools
+    const toolSchemas: Array<Record<string, unknown>> = this._tools
       ? this._tools.toOpenAITools().map((t) => ({ type: 'function' as const, ...t.function }))
       : [];
-    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.HANG_UP))
-      toolSchemas.push(HANG_UP_TOOL);
-    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.COLLECT_DTMF))
-      toolSchemas.push(COLLECT_DTMF_TOOL);
-    if (!this._builtinTools || this._builtinTools.has(BuiltinTool.SEND_DTMF))
-      toolSchemas.push(SEND_DTMF_TOOL);
+    toolSchemas.push(...getBuiltinToolSchemas(this._builtinTools, 'realtime'));
 
     this._send({
       type: 'session.update',
@@ -390,51 +342,12 @@ export class OpenAIRealtime implements Session {
     const callId = item['call_id'] as string;
     this._log.info('Tool call: %s', funcName);
 
-    // Built-in hang_up tool
-    if (funcName === 'hang_up') {
-      if (this._call) {
-        await this._call.hangup();
-      }
-      return;
-    }
-
-    if (funcName === 'collect_dtmf') {
-      if (this._call) {
-        let result: string;
-        try {
-          const args = JSON.parse((item['arguments'] as string) ?? '{}') as Record<string, unknown>;
-          result = await this._call.collectDtmf({
-            maxDigits: (args['max_digits'] as number) ?? 4,
-            finishOnKey: (args['finish_on_key'] as string) ?? '#',
-            timeout: (args['timeout'] as number) ?? 5,
-          });
-        } catch (err) {
-          result = `Error: ${err}`;
-        }
-        await this._waitForResponseDone();
-        this._send({
-          type: 'conversation.item.create',
-          item: {
-            type: 'function_call_output',
-            call_id: callId,
-            output: result || '(타임아웃 - 입력 없음)',
-          },
-        });
-        this._send({ type: 'response.create' });
-      }
-      return;
-    }
-
-    if (funcName === 'send_dtmf') {
-      if (this._call) {
-        let result: string;
-        try {
-          const args = JSON.parse((item['arguments'] as string) ?? '{}') as Record<string, unknown>;
-          await this._call.sendDtmfSequence((args['digits'] as string) ?? '');
-          result = 'sent';
-        } catch (err) {
-          result = `Error: ${err}`;
-        }
+    // Built-in tools
+    if (BUILTIN_TOOL_NAMES.has(funcName) && this._call) {
+      const args = JSON.parse((item['arguments'] as string) ?? '{}') as Record<string, unknown>;
+      const result = await executeBuiltinTool(funcName, args, this._call);
+      if (result !== null) {
+        if (funcName === 'hang_up') return;
         await this._waitForResponseDone();
         this._send({
           type: 'conversation.item.create',
@@ -445,8 +358,8 @@ export class OpenAIRealtime implements Session {
           },
         });
         this._send({ type: 'response.create' });
+        return;
       }
-      return;
     }
 
     if (!this._tools || !this._tools.has(funcName)) {

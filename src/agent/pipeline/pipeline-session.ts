@@ -17,38 +17,7 @@ import type {
 } from './base.js';
 import type { Logger } from 'pino';
 import { NOOP_LOGGER } from '../logger.js';
-
-const COLLECT_DTMF_TOOL = {
-  type: 'function' as const,
-  function: {
-    name: 'collect_dtmf',
-    description: '사용자로부터 DTMF(전화 키패드) 입력을 수집합니다.',
-    parameters: {
-      type: 'object' as const,
-      properties: {
-        max_digits: { type: 'integer' as const, description: '수집할 최대 자릿수' },
-        finish_on_key: { type: 'string' as const, description: '입력 종료 키 (기본: #)' },
-        timeout: { type: 'integer' as const, description: '입력 대기 시간(초, 기본: 5)' },
-      },
-      required: ['max_digits'] as string[],
-    },
-  },
-};
-
-const SEND_DTMF_TOOL = {
-  type: 'function' as const,
-  function: {
-    name: 'send_dtmf',
-    description: 'DTMF 신호를 전송합니다. ARS 메뉴 탐색이나 내선번호 입력 시 사용합니다.',
-    parameters: {
-      type: 'object' as const,
-      properties: {
-        digits: { type: 'string' as const, description: "전송할 번호 (0-9, *, #). 'w'는 500ms 대기, 'W'는 1000ms 대기." },
-      },
-      required: ['digits'] as string[],
-    },
-  },
-};
+import { BUILTIN_TOOL_NAMES, executeBuiltinTool, getBuiltinToolSchemas } from './builtin-tool-schemas.js';
 
 export interface PipelineSessionOptions {
   stt: STT;
@@ -230,28 +199,25 @@ export class PipelineSession implements Session {
   }
 
   private _buildEffectiveTools(): ToolRegistry | undefined {
-    const includeCollectDtmf = !this._builtinTools || this._builtinTools.has(BuiltinTool.COLLECT_DTMF);
-    const includeSendDtmf = !this._builtinTools || this._builtinTools.has(BuiltinTool.SEND_DTMF);
+    const builtinSchemas = getBuiltinToolSchemas(this._builtinTools, 'chat');
+    // Filter to only DTMF tools (hang_up is handled at session level, not LLM tool)
+    const dtmfSchemas = builtinSchemas.filter((s) => {
+      const name = (s['function'] as Record<string, unknown>)?.['name'] as string;
+      return name === 'collect_dtmf' || name === 'send_dtmf';
+    });
 
-    if (!includeCollectDtmf && !includeSendDtmf) return this._tools ?? undefined;
+    if (dtmfSchemas.length === 0) return this._tools ?? undefined;
 
     // Inject DTMF tool stubs into a forked registry so the LLM sees them
     const base = this._tools ? this._tools.fork() : new ToolRegistry();
-    if (includeCollectDtmf) {
+    for (const schema of dtmfSchemas) {
+      const fn = schema['function'] as Record<string, unknown>;
+      const params = fn['parameters'] as Record<string, unknown>;
       base.register({
-        name: 'collect_dtmf',
-        description: COLLECT_DTMF_TOOL.function.description,
-        parameters: COLLECT_DTMF_TOOL.function.parameters.properties as Record<string, unknown>,
-        required: COLLECT_DTMF_TOOL.function.parameters.required,
-        handler: async () => '',
-      });
-    }
-    if (includeSendDtmf) {
-      base.register({
-        name: 'send_dtmf',
-        description: SEND_DTMF_TOOL.function.description,
-        parameters: SEND_DTMF_TOOL.function.parameters.properties as Record<string, unknown>,
-        required: SEND_DTMF_TOOL.function.parameters.required,
+        name: fn['name'] as string,
+        description: fn['description'] as string,
+        parameters: (params['properties'] ?? {}) as Record<string, unknown>,
+        required: (params['required'] ?? []) as string[],
         handler: async () => '',
       });
     }
@@ -297,34 +263,15 @@ export class PipelineSession implements Session {
     try {
       const args = JSON.parse(argsStr) as Record<string, unknown>;
 
-      // Built-in DTMF tools - intercept before registry lookup
-      if (name === 'collect_dtmf' && this._callSession) {
-        let result: string;
-        try {
-          result = await this._callSession.collectDtmf({
-            maxDigits: (args['max_digits'] as number) ?? 4,
-            finishOnKey: (args['finish_on_key'] as string) ?? '#',
-            timeout: (args['timeout'] as number) ?? 5,
-          });
-        } catch (err) {
-          result = `Error: ${err}`;
+      // Built-in tools - intercept before registry lookup
+      if (BUILTIN_TOOL_NAMES.has(name) && this._callSession) {
+        const result = await executeBuiltinTool(name, args, this._callSession);
+        if (result !== null) {
+          if (name === 'hang_up') return;
+          this._conversation.push({ role: 'tool', content: result, tool_call_id: id, name });
+          await this._respond();
+          return;
         }
-        this._conversation.push({ role: 'tool', content: result || '(타임아웃 - 입력 없음)', tool_call_id: id, name });
-        await this._respond();
-        return;
-      }
-
-      if (name === 'send_dtmf' && this._callSession) {
-        let result: string;
-        try {
-          await this._callSession.sendDtmfSequence((args['digits'] as string) ?? '');
-          result = 'sent';
-        } catch (err) {
-          result = `Error: ${err}`;
-        }
-        this._conversation.push({ role: 'tool', content: result, tool_call_id: id, name });
-        await this._respond();
-        return;
       }
 
       if (!this._tools) return;

@@ -4,8 +4,8 @@
 
 import type { Logger } from 'pino';
 
-import type { SpeechEvent, STT } from './base.js';
-import { NOOP_LOGGER } from '../logger.js';
+import type { SpeechEvent, STT } from '../base.js';
+import { NOOP_LOGGER } from '../../logger.js';
 
 export interface DeepgramSTTOptions {
   /** Deepgram API key. Falls back to DEEPGRAM_API_KEY env var. */

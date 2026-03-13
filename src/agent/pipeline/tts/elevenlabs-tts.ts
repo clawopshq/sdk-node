@@ -4,8 +4,8 @@
 
 import type { Logger } from 'pino';
 
-import type { TTS } from './base.js';
-import { NOOP_LOGGER } from '../logger.js';
+import type { TTS } from '../base.js';
+import { NOOP_LOGGER } from '../../logger.js';
 
 export interface ElevenLabsTTSOptions {
   /** ElevenLabs API key. Falls back to ELEVENLABS_API_KEY env var. */

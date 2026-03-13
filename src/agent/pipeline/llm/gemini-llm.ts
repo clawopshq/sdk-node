@@ -2,8 +2,8 @@
  * Google Gemini LLM provider for pipeline-based voice agents.
  */
 
-import type { ConversationMessage, LLM, LLMChunk } from './base.js';
-import type { ToolRegistry } from '../tool.js';
+import type { ConversationMessage, LLM, LLMChunk } from '../base.js';
+import type { ToolRegistry } from '../../tool.js';
 
 export interface GeminiLLMOptions {
   /** Google API key. Falls back to GOOGLE_API_KEY env var. */

@@ -1,22 +1,22 @@
-import type { ConversationMessage, LLM, LLMChunk } from './base.js';
-import type { ToolRegistry } from '../tool.js';
+import type { ConversationMessage, LLM, LLMChunk } from '../base.js';
+import type { ToolRegistry } from '../../tool.js';
 import { OpenAICompatLLM } from './openai-compat-llm.js';
 
-export interface MistralLLMOptions {
+export interface FireworksLLMOptions {
   apiKey?: string;
   model?: string;
   temperature?: number;
   maxTokens?: number;
 }
 
-export class MistralLLM implements LLM {
+export class FireworksLLM implements LLM {
   private _inner: OpenAICompatLLM;
 
-  constructor(options: MistralLLMOptions = {}) {
+  constructor(options: FireworksLLMOptions = {}) {
     this._inner = new OpenAICompatLLM({
-      apiKey: options.apiKey ?? process.env['MISTRAL_API_KEY'],
-      baseUrl: 'https://api.mistral.ai/v1',
-      model: options.model ?? 'mistral-small-latest',
+      apiKey: options.apiKey ?? process.env['FIREWORKS_API_KEY'],
+      baseUrl: 'https://api.fireworks.ai/inference/v1',
+      model: options.model ?? 'accounts/fireworks/models/llama4-scout-instruct-basic',
       temperature: options.temperature,
       maxTokens: options.maxTokens,
     });

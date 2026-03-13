@@ -1,22 +1,22 @@
-import type { ConversationMessage, LLM, LLMChunk } from './base.js';
-import type { ToolRegistry } from '../tool.js';
+import type { ConversationMessage, LLM, LLMChunk } from '../base.js';
+import type { ToolRegistry } from '../../tool.js';
 import { OpenAICompatLLM } from './openai-compat-llm.js';
 
-export interface DeepSeekLLMOptions {
+export interface TogetherLLMOptions {
   apiKey?: string;
   model?: string;
   temperature?: number;
   maxTokens?: number;
 }
 
-export class DeepSeekLLM implements LLM {
+export class TogetherLLM implements LLM {
   private _inner: OpenAICompatLLM;
 
-  constructor(options: DeepSeekLLMOptions = {}) {
+  constructor(options: TogetherLLMOptions = {}) {
     this._inner = new OpenAICompatLLM({
-      apiKey: options.apiKey ?? process.env['DEEPSEEK_API_KEY'],
-      baseUrl: 'https://api.deepseek.com',
-      model: options.model ?? 'deepseek-chat',
+      apiKey: options.apiKey ?? process.env['TOGETHER_API_KEY'],
+      baseUrl: 'https://api.together.xyz/v1',
+      model: options.model ?? 'meta-llama/Llama-4-Scout-17B-16E-Instruct',
       temperature: options.temperature,
       maxTokens: options.maxTokens,
     });

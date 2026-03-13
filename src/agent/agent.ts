@@ -152,6 +152,8 @@ export class ClawOpsAgent {
 
   /** Connect to the ClawOps platform and start listening for calls. */
   async connect(): Promise<void> {
+    if (this._controlWs) return;
+
     if (!this._apiKey) {
       throw new AgentError('API key is required. Set CLAWOPS_API_KEY or pass apiKey option.');
     }

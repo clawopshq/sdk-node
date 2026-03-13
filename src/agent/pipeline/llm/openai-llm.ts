@@ -1,30 +1,31 @@
 /**
- * OpenAI-compatible LLM provider (works with any OpenAI-compatible API).
+ * OpenAI LLM provider for pipeline-based voice agents.
  */
 
-import type { ConversationMessage, LLM, LLMChunk } from './base.js';
-import type { ToolRegistry } from '../tool.js';
+import type { ConversationMessage, LLM, LLMChunk } from '../base.js';
+import type { ToolRegistry } from '../../tool.js';
 
-export interface OpenAICompatLLMOptions {
-  /** API key. */
+export interface OpenAILLMOptions {
+  /** OpenAI API key. Falls back to OPENAI_API_KEY env var. */
   apiKey?: string;
-  /** Base URL for the OpenAI-compatible API. */
-  baseUrl: string;
-  /** Model to use. */
-  model: string;
-  /** Default temperature. */
+  /** Model to use. Default: 'gpt-4o-mini' */
+  model?: string;
+  /** Default temperature. Default: 0.8 */
   temperature?: number;
-  /** Default max tokens. */
+  /** Default max tokens. Default: 4096 */
   maxTokens?: number;
-  /** Additional default headers. */
-  defaultHeaders?: Record<string, string>;
 }
 
-export class OpenAICompatLLM implements LLM {
-  private _options: OpenAICompatLLMOptions;
+export class OpenAILLM implements LLM {
+  private _options: OpenAILLMOptions;
 
-  constructor(options: OpenAICompatLLMOptions) {
-    this._options = options;
+  constructor(options: OpenAILLMOptions = {}) {
+    this._options = {
+      model: 'gpt-4o-mini',
+      temperature: 0.8,
+      maxTokens: 4096,
+      ...options,
+    };
   }
 
   async *generate(
@@ -38,9 +39,7 @@ export class OpenAICompatLLM implements LLM {
     const OpenAI = (await import('openai')).default;
 
     const client = new OpenAI({
-      apiKey: this._options.apiKey ?? 'not-needed',
-      baseURL: this._options.baseUrl,
-      defaultHeaders: this._options.defaultHeaders,
+      apiKey: this._options.apiKey ?? process.env['OPENAI_API_KEY'],
     });
 
     const requestParams: Record<string, unknown> = {
@@ -73,17 +72,20 @@ export class OpenAICompatLLM implements LLM {
       const delta = choices[0]!['delta'] as Record<string, unknown> | undefined;
       if (!delta) continue;
 
+      // Text content
       const content = delta['content'] as string | undefined;
       if (content) {
         yield { type: 'text', text: content };
       }
 
+      // Tool calls
       const toolCalls = delta['tool_calls'] as Array<Record<string, unknown>> | undefined;
       if (toolCalls) {
         for (const tc of toolCalls) {
           const fn = tc['function'] as Record<string, unknown> | undefined;
           if (fn) {
             if (fn['name']) {
+              // Start of a new tool call
               if (currentToolCall) {
                 yield {
                   type: 'tool_call',
@@ -107,6 +109,7 @@ export class OpenAICompatLLM implements LLM {
       }
     }
 
+    // Emit final tool call if pending
     if (currentToolCall) {
       yield {
         type: 'tool_call',

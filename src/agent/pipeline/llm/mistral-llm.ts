@@ -1,22 +1,22 @@
-import type { ConversationMessage, LLM, LLMChunk } from './base.js';
-import type { ToolRegistry } from '../tool.js';
+import type { ConversationMessage, LLM, LLMChunk } from '../base.js';
+import type { ToolRegistry } from '../../tool.js';
 import { OpenAICompatLLM } from './openai-compat-llm.js';
 
-export interface XaiLLMOptions {
+export interface MistralLLMOptions {
   apiKey?: string;
   model?: string;
   temperature?: number;
   maxTokens?: number;
 }
 
-export class XaiLLM implements LLM {
+export class MistralLLM implements LLM {
   private _inner: OpenAICompatLLM;
 
-  constructor(options: XaiLLMOptions = {}) {
+  constructor(options: MistralLLMOptions = {}) {
     this._inner = new OpenAICompatLLM({
-      apiKey: options.apiKey ?? process.env['XAI_API_KEY'],
-      baseUrl: 'https://api.x.ai/v1',
-      model: options.model ?? 'grok-4-1-fast',
+      apiKey: options.apiKey ?? process.env['MISTRAL_API_KEY'],
+      baseUrl: 'https://api.mistral.ai/v1',
+      model: options.model ?? 'mistral-small-latest',
       temperature: options.temperature,
       maxTokens: options.maxTokens,
     });

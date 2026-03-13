@@ -27,8 +27,13 @@ export interface OpenAIRealtimeOptions {
   voice?: string;
   /** Language code (BCP 47). Default: 'ko' */
   language?: string;
-  /** VAD eagerness: 'low', 'medium', 'high'. Default: 'high' */
-  eagerness?: string;
+  /**
+   * Turn detection configuration. Default: semantic_vad with eagerness 'medium'.
+   * - `{ type: 'semantic_vad', eagerness?: 'low'|'medium'|'high'|'auto', interrupt_response?: boolean }`
+   * - `{ type: 'server_vad', threshold?: number, silence_duration_ms?: number, prefix_padding_ms?: number }`
+   * - `null` to disable turn detection
+   */
+  turnDetection?: Record<string, unknown> | null;
   /** Send initial greeting. Default: true */
   greeting?: boolean;
 }
@@ -39,7 +44,7 @@ export class OpenAIRealtime implements Session {
   private _model: string;
   private _voice: string;
   private _language: string;
-  private _eagerness: string;
+  private _turnDetection!: Record<string, unknown> | null;
   private _greeting: boolean;
 
   private _log: Logger = NOOP_LOGGER;
@@ -75,7 +80,9 @@ export class OpenAIRealtime implements Session {
     this._model = options.model ?? 'gpt-realtime-1.5';
     this._voice = options.voice ?? 'marin';
     this._language = options.language ?? 'ko';
-    this._eagerness = options.eagerness ?? 'high';
+    this._turnDetection = options.turnDetection !== undefined
+      ? options.turnDetection
+      : { type: 'semantic_vad', eagerness: 'medium', interrupt_response: true };
     this._greeting = options.greeting ?? true;
   }
 
@@ -203,11 +210,7 @@ export class OpenAIRealtime implements Session {
           language: this._language,
         },
         input_audio_noise_reduction: { type: 'far_field' },
-        turn_detection: {
-          type: 'semantic_vad',
-          interrupt_response: true,
-          eagerness: this._eagerness,
-        },
+        turn_detection: this._turnDetection,
         tools: toolSchemas,
       },
     });

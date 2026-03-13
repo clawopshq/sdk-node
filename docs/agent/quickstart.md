@@ -67,7 +67,7 @@ const agent = new ClawOpsAgent({
     voice: 'marin',                    // marin, ash, ballad, coral, sage, verse
     model: 'gpt-realtime-1.5',
     language: 'ko',
-    eagerness: 'high',                 // low, medium, high, auto
+    turnDetection: { type: 'semantic_vad', eagerness: 'medium' },
     greeting: true,
   }),
 

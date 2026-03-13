@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { OpenAIRealtime } from '../../src/agent/pipeline/openai-realtime.js';
+import { OpenAIRealtime } from '../../src/agent/pipeline/realtime/openai-realtime.js';
 import type { Session } from '../../src/agent/pipeline/base.js';
 
 describe('OpenAIRealtime', () => {
@@ -72,6 +72,25 @@ describe('OpenAIRealtime', () => {
 
   it('turnDetection can be set to null to disable', () => {
     const session = new OpenAIRealtime({ turnDetection: null });
+    expect(session).toBeDefined();
+  });
+
+  it('turnDetection defaults to semantic_vad with medium eagerness', () => {
+    const session = new OpenAIRealtime();
+    expect(session).toBeDefined();
+  });
+
+  it('turnDetection accepts semantic_vad with custom eagerness', () => {
+    const session = new OpenAIRealtime({
+      turnDetection: { type: 'semantic_vad', eagerness: 'low', interrupt_response: true },
+    });
+    expect(session).toBeDefined();
+  });
+
+  it('turnDetection accepts server_vad with threshold', () => {
+    const session = new OpenAIRealtime({
+      turnDetection: { type: 'server_vad', threshold: 0.5, silence_duration_ms: 500 },
+    });
     expect(session).toBeDefined();
   });
 });

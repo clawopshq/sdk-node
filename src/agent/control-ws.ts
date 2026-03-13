@@ -27,6 +27,8 @@ type ControlEventHandler = (event: ControlEvent) => void | Promise<void>;
 
 const INITIAL_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30000;
+/** Server sends ping every 30s; if no ping arrives within this window, assume dead. */
+const PING_TIMEOUT = 60000;
 
 /**
  * Build the full control WebSocket URL from options.
@@ -51,6 +53,7 @@ export class ControlWebSocket {
   private _connectedResolve: (() => void) | null = null;
   private _connectedPromise: Promise<void>;
   private _log: Logger = NOOP_LOGGER;
+  private _pingTimer: ReturnType<typeof setTimeout> | null = null;
 
   setLogger(logger: Logger): void {
     this._log = logger;
@@ -94,6 +97,7 @@ export class ControlWebSocket {
   /** Close the WebSocket and stop reconnecting. */
   close(): void {
     this._closed = true;
+    this._clearPingTimer();
     if (this._ws) {
       this._ws.close();
       this._ws = null;
@@ -113,11 +117,16 @@ export class ControlWebSocket {
 
     ws.on('open', () => {
       this._reconnectDelay = INITIAL_RECONNECT_DELAY;
+      this._resetPingTimer();
       if (this._connectedResolve) {
         this._connectedResolve();
         this._connectedResolve = null;
       }
       this._log.info('Control WS connected: %s', this._url);
+    });
+
+    ws.on('ping', () => {
+      this._resetPingTimer();
     });
 
     ws.on('message', (data: Buffer | string) => {
@@ -130,6 +139,7 @@ export class ControlWebSocket {
     });
 
     ws.on('close', () => {
+      this._clearPingTimer();
       if (!this._closed) {
         this._scheduleReconnect();
       }
@@ -155,6 +165,23 @@ export class ControlWebSocket {
           this._log.error({ err }, 'Control WS handler error: %s', event.event);
         }
       }
+    }
+  }
+
+  private _resetPingTimer(): void {
+    this._clearPingTimer();
+    this._pingTimer = setTimeout(() => {
+      this._log.warn('Control WS ping timeout, closing connection');
+      if (this._ws) {
+        this._ws.terminate();
+      }
+    }, PING_TIMEOUT);
+  }
+
+  private _clearPingTimer(): void {
+    if (this._pingTimer) {
+      clearTimeout(this._pingTimer);
+      this._pingTimer = null;
     }
   }
 

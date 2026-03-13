@@ -12,9 +12,24 @@ import { ulawToPcm16 } from '../../audio.js';
 import { BuiltinTool } from '../../builtin-tool.js';
 import type { Logger } from 'pino';
 import { NOOP_LOGGER } from '../../logger.js';
-import { BUILTIN_TOOL_NAMES, executeBuiltinTool, getBuiltinToolSchemas } from '../builtin-tool-schemas.js';
+import {
+  BUILTIN_TOOL_NAMES,
+  executeBuiltinTool,
+  getBuiltinToolSchemas,
+} from '../builtin-tool-schemas.js';
 
 const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime?model=';
+
+/**
+ * 현재 재생 중인 응답의 상태. 하나의 assistant 응답에 대한 모든 정보를 담는다.
+ */
+interface PlaybackState {
+  itemId: string; // OpenAI conversation item ID
+  startTs: number; // 첫 delta 수신 시점의 timestamp (Date.now)
+  sentChunks: number; // 플랫폼으로 전송된 오디오 청크 수 (각 20ms)
+  generating: boolean; // OpenAI가 아직 오디오를 생성 중인지
+  audioRemainder: Buffer; // 160B 미만 잔여 오디오 버퍼
+}
 
 export interface OpenAIRealtimeOptions {
   /** OpenAI API key. Falls back to OPENAI_API_KEY env var. */
@@ -64,11 +79,12 @@ export class OpenAIRealtime implements Session {
   private _recorder: AudioRecorder | null = null;
   private _closed = false;
 
-  // Truncation / barge-in tracking (matching Python SDK)
-  private _lastAssistantItem: string | null = null;
-  private _responseStartTs: number | null = null;
-  private _sentAudioChunks = 0;
-  private _audioRemainder: Buffer = Buffer.alloc(0);
+  // PlaybackState — 현재 재생 중인 응답 상태
+  private _playback: PlaybackState | null = null;
+  private _latestMediaTs = 0;
+
+  // Pending tool call tracking — 인터럽트 시 취소용
+  private _pendingToolCalls = new Map<string, AbortController>();
 
   // Response state tracking — prevent sending response.create while one is active
   private _responseInProgress = false;
@@ -80,9 +96,10 @@ export class OpenAIRealtime implements Session {
     this._model = options.model ?? 'gpt-realtime-1.5';
     this._voice = options.voice ?? 'marin';
     this._language = options.language ?? 'ko';
-    this._turnDetection = options.turnDetection !== undefined
-      ? options.turnDetection
-      : { type: 'semantic_vad', eagerness: 'medium', interrupt_response: true };
+    this._turnDetection =
+      options.turnDetection !== undefined
+        ? options.turnDetection
+        : { type: 'semantic_vad', eagerness: 'medium', interrupt_response: true };
     this._greeting = options.greeting ?? true;
   }
 
@@ -100,10 +117,8 @@ export class OpenAIRealtime implements Session {
     this._call = callSession;
     if (tools) this._tools = tools;
     this._closed = false;
-    this._lastAssistantItem = null;
-    this._responseStartTs = null;
-    this._sentAudioChunks = 0;
-    this._audioRemainder = Buffer.alloc(0);
+    this._playback = null;
+    this._latestMediaTs = 0;
 
     if (!this._apiKey) {
       throw new Error('OpenAI API key is required. Set OPENAI_API_KEY or pass apiKey option.');
@@ -170,6 +185,7 @@ export class OpenAIRealtime implements Session {
   }
 
   feedAudio(audio: Buffer): void {
+    this._latestMediaTs = Date.now();
     if (this._ws && this._ws.readyState === 1 && !this._closed) {
       // Agent path: audio comes as ulaw directly from platform, no conversion needed
       this._send({
@@ -181,6 +197,11 @@ export class OpenAIRealtime implements Session {
 
   async stop(): Promise<void> {
     this._closed = true;
+    // Pending tool call 정리
+    for (const [, controller] of this._pendingToolCalls) {
+      controller.abort();
+    }
+    this._pendingToolCalls.clear();
     if (this._ws) {
       this._ws.close();
       this._ws = null;
@@ -225,17 +246,19 @@ export class OpenAIRealtime implements Session {
         break;
       }
       case 'response.audio.done': {
-        // Flush remaining audio with silence padding
-        if (this._audioRemainder.length > 0) {
-          const padded = Buffer.concat([
-            this._audioRemainder,
-            Buffer.alloc(160 - this._audioRemainder.length, 0xff),
-          ]);
-          if (this._call) {
-            this._call.sendAudio(padded);
+        if (this._playback) {
+          this._playback.generating = false;
+          if (this._playback.audioRemainder.length > 0) {
+            const padded = Buffer.concat([
+              this._playback.audioRemainder,
+              Buffer.alloc(160 - this._playback.audioRemainder.length, 0xff),
+            ]);
+            if (this._call) {
+              this._call.sendAudio(padded);
+            }
+            this._playback.sentChunks++;
+            this._playback.audioRemainder = Buffer.alloc(0);
           }
-          this._sentAudioChunks++;
-          this._audioRemainder = Buffer.alloc(0);
         }
         break;
       }
@@ -244,10 +267,13 @@ export class OpenAIRealtime implements Session {
         break;
       }
       case 'response.output_item.done': {
-        // Handle tool calls (matching Python SDK: response.output_item.done)
+        // Handle tool calls — fire-and-forget (matching Python SDK)
         const item = msg['item'] as Record<string, unknown> | undefined;
         if (item && item['type'] === 'function_call') {
           this._handleToolCall(item);
+          // _playback은 여기서 리셋하지 않는다.
+          // 큐에 재생 대기 중인 오디오가 있을 수 있고,
+          // 인터럽트 시 truncate하려면 item_id가 필요하다.
         }
         break;
       }
@@ -286,14 +312,19 @@ export class OpenAIRealtime implements Session {
   }
 
   private _handleAudioDelta(msg: Record<string, unknown>): void {
-    if (this._responseStartTs === null) {
-      this._responseStartTs = Date.now();
-      this._sentAudioChunks = 0;
-    }
-    if (msg['item_id']) {
-      this._lastAssistantItem = msg['item_id'] as string;
+    if (this._playback === null) {
+      this._playback = {
+        itemId: (msg['item_id'] as string) || '',
+        startTs: this._latestMediaTs || Date.now(),
+        sentChunks: 0,
+        generating: true,
+        audioRemainder: Buffer.alloc(0),
+      };
+    } else if (msg['item_id']) {
+      this._playback.itemId = msg['item_id'] as string;
     }
 
+    const pb = this._playback;
     const ulaw = Buffer.from(msg['delta'] as string, 'base64');
 
     if (this._recorder) {
@@ -301,7 +332,7 @@ export class OpenAIRealtime implements Session {
     }
 
     // Align to 160B (20ms at 8kHz ulaw) frames, matching Python SDK
-    const combined = Buffer.concat([this._audioRemainder, ulaw]);
+    const combined = Buffer.concat([pb.audioRemainder, ulaw]);
     const chunkSize = 160;
     const fullEnd = Math.floor(combined.length / chunkSize) * chunkSize;
 
@@ -309,35 +340,43 @@ export class OpenAIRealtime implements Session {
       if (this._call) {
         this._call.sendAudio(combined.subarray(off, off + chunkSize));
       }
-      this._sentAudioChunks++;
+      pb.sentChunks++;
     }
 
-    this._audioRemainder = combined.subarray(fullEnd);
+    pb.audioRemainder = combined.subarray(fullEnd);
   }
 
   private _handleTruncation(): void {
-    if (!this._lastAssistantItem || this._responseStartTs === null) {
-      return;
+    // 진행 중인 tool call 취소
+    for (const [, controller] of this._pendingToolCalls) {
+      controller.abort();
     }
+    this._pendingToolCalls.clear();
 
-    // Calculate audio end based on sent chunks (160B = 20ms per ulaw chunk)
-    const audioEndMs = Math.max(0, this._sentAudioChunks * 20);
-
-    this._send({
-      type: 'conversation.item.truncate',
-      item_id: this._lastAssistantItem,
-      content_index: 0,
-      audio_end_ms: audioEndMs,
-    });
-
+    // 큐에 남아있는 오디오를 항상 비운다
     if (this._call) {
       this._call.clearAudio();
     }
 
-    this._lastAssistantItem = null;
-    this._responseStartTs = null;
-    this._sentAudioChunks = 0;
-    this._audioRemainder = Buffer.alloc(0);
+    const pb = this._playback;
+    if (pb === null) {
+      return;
+    }
+
+    // interrupt_response=true이므로 서버가 자동으로 응답을 취소한다.
+    // response.cancel을 중복 호출하면 서버 상태가 꼬일 수 있으므로 생략.
+    // conversation.item.truncate는 오디오와 transcript를 모두 잘라내어
+    // 대화 맥락을 손실시키므로 호출하지 않는다.
+    const playedMs = Math.max(0, (this._latestMediaTs || Date.now()) - pb.startTs);
+
+    this._log.info(
+      '[Interrupt] item=%s played=%dms total=%dms',
+      pb.itemId,
+      playedMs,
+      pb.sentChunks * 20,
+    );
+
+    this._playback = null;
   }
 
   private async _handleToolCall(item: Record<string, unknown>): Promise<void> {
@@ -345,51 +384,65 @@ export class OpenAIRealtime implements Session {
     const callId = item['call_id'] as string;
     this._log.info('Tool call: %s', funcName);
 
-    // Built-in tools
-    if (BUILTIN_TOOL_NAMES.has(funcName) && this._call) {
-      const args = JSON.parse((item['arguments'] as string) ?? '{}') as Record<string, unknown>;
-      const result = await executeBuiltinTool(funcName, args, this._call);
-      if (result !== null) {
-        if (funcName === 'hang_up') return;
-        await this._waitForResponseDone();
-        this._send({
-          type: 'conversation.item.create',
-          item: {
-            type: 'function_call_output',
-            call_id: callId,
-            output: result,
-          },
-        });
-        this._send({ type: 'response.create' });
+    const controller = new AbortController();
+    this._pendingToolCalls.set(callId, controller);
+
+    try {
+      // Built-in tools
+      if (BUILTIN_TOOL_NAMES.has(funcName) && this._call) {
+        const args = JSON.parse((item['arguments'] as string) ?? '{}') as Record<string, unknown>;
+        const result = await executeBuiltinTool(funcName, args, this._call);
+        if (result !== null) {
+          if (funcName === 'hang_up') return;
+          if (controller.signal.aborted) return;
+          await this._waitForResponseDone();
+          this._send({
+            type: 'conversation.item.create',
+            item: {
+              type: 'function_call_output',
+              call_id: callId,
+              output: result,
+            },
+          });
+          this._send({ type: 'response.create' });
+          return;
+        }
+      }
+
+      if (!this._tools || !this._tools.has(funcName)) {
+        this._log.error('Unknown tool: %s', funcName);
         return;
       }
+
+      let result: unknown;
+      try {
+        const args = JSON.parse((item['arguments'] as string) ?? '{}') as Record<string, unknown>;
+        result = await this._tools.call(funcName, args);
+      } catch (err) {
+        this._log.error({ err }, 'Tool call failed: %s', funcName);
+        result = `Error: ${err}`;
+      }
+
+      if (controller.signal.aborted) {
+        this._log.info('Tool call cancelled (user interrupted): %s', funcName);
+        return;
+      }
+
+      const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+      await this._waitForResponseDone();
+      this._send({
+        type: 'conversation.item.create',
+        item: {
+          type: 'function_call_output',
+          call_id: callId,
+          output: resultStr,
+        },
+      });
+      this._log.info('[ToolResult] %s call_id=%s len=%d', funcName, callId, resultStr.length);
+      this._send({ type: 'response.create' });
+    } finally {
+      this._pendingToolCalls.delete(callId);
     }
-
-    if (!this._tools || !this._tools.has(funcName)) {
-      this._log.error('Unknown tool: %s', funcName);
-      return;
-    }
-
-    let result: unknown;
-    try {
-      const args = JSON.parse((item['arguments'] as string) ?? '{}') as Record<string, unknown>;
-      result = await this._tools.call(funcName, args);
-    } catch (err) {
-      this._log.error({ err }, 'Tool call failed: %s', funcName);
-      result = `Error: ${err}`;
-    }
-
-    await this._waitForResponseDone();
-    this._send({
-      type: 'conversation.item.create',
-      item: {
-        type: 'function_call_output',
-        call_id: callId,
-        output: typeof result === 'string' ? result : JSON.stringify(result),
-      },
-    });
-
-    this._send({ type: 'response.create' });
   }
 
   private _waitForResponseDone(): Promise<void> {

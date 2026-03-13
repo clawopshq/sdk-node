@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ElevenLabsTTS } from '../../src/agent/pipeline/elevenlabs-tts.js';
+import { ElevenLabsTTS } from '../../src/agent/pipeline/tts/elevenlabs-tts.js';
 import type { TTS } from '../../src/agent/pipeline/base.js';
 
 describe('ElevenLabsTTS', () => {

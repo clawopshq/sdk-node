@@ -15,7 +15,7 @@ vi.mock('openai', () => {
   };
 });
 
-import { OpenAILLM } from '../../src/agent/pipeline/openai-llm.js';
+import { OpenAILLM } from '../../src/agent/pipeline/llm/openai-llm.js';
 
 describe('OpenAILLM', () => {
   beforeEach(() => {

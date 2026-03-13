@@ -13,7 +13,7 @@ vi.mock('@anthropic-ai/sdk', () => {
   };
 });
 
-import { AnthropicLLM } from '../../src/agent/pipeline/anthropic-llm.js';
+import { AnthropicLLM } from '../../src/agent/pipeline/llm/anthropic-llm.js';
 
 describe('AnthropicLLM', () => {
   beforeEach(() => {

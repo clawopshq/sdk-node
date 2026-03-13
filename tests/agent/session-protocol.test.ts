@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Session, STT, LLM, TTS, SpeechEvent, LLMChunk } from '../../src/agent/pipeline/base.js';
-import { OpenAIRealtime } from '../../src/agent/pipeline/openai-realtime.js';
-import { GeminiRealtime } from '../../src/agent/pipeline/gemini-realtime.js';
+import { OpenAIRealtime } from '../../src/agent/pipeline/realtime/openai-realtime.js';
+import { GeminiRealtime } from '../../src/agent/pipeline/realtime/gemini-realtime.js';
 import { PipelineSession } from '../../src/agent/pipeline/pipeline-session.js';
 
 function createMockSTT(): STT {

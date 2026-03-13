@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { GeminiRealtime } from '../../src/agent/pipeline/gemini-realtime.js';
+import { GeminiRealtime } from '../../src/agent/pipeline/realtime/gemini-realtime.js';
 import type { Session } from '../../src/agent/pipeline/base.js';
 
 // Mock @google/genai

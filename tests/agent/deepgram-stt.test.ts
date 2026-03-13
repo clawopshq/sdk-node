@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DeepgramSTT } from '../../src/agent/pipeline/deepgram-stt.js';
+import { DeepgramSTT } from '../../src/agent/pipeline/stt/deepgram-stt.js';
 import type { STT } from '../../src/agent/pipeline/base.js';
 
 describe('DeepgramSTT', () => {

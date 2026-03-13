@@ -19,14 +19,14 @@ vi.mock('openai', () => {
   };
 });
 
-import { OllamaLLM } from '../../src/agent/pipeline/ollama-llm.js';
-import { MistralLLM } from '../../src/agent/pipeline/mistral-llm.js';
-import { GroqLLM } from '../../src/agent/pipeline/groq-llm.js';
-import { PerplexityLLM } from '../../src/agent/pipeline/perplexity-llm.js';
-import { TogetherLLM } from '../../src/agent/pipeline/together-llm.js';
-import { FireworksLLM } from '../../src/agent/pipeline/fireworks-llm.js';
-import { DeepSeekLLM } from '../../src/agent/pipeline/deepseek-llm.js';
-import { XaiLLM } from '../../src/agent/pipeline/xai-llm.js';
+import { OllamaLLM } from '../../src/agent/pipeline/llm/ollama-llm.js';
+import { MistralLLM } from '../../src/agent/pipeline/llm/mistral-llm.js';
+import { GroqLLM } from '../../src/agent/pipeline/llm/groq-llm.js';
+import { PerplexityLLM } from '../../src/agent/pipeline/llm/perplexity-llm.js';
+import { TogetherLLM } from '../../src/agent/pipeline/llm/together-llm.js';
+import { FireworksLLM } from '../../src/agent/pipeline/llm/fireworks-llm.js';
+import { DeepSeekLLM } from '../../src/agent/pipeline/llm/deepseek-llm.js';
+import { XaiLLM } from '../../src/agent/pipeline/llm/xai-llm.js';
 
 interface ProviderDef {
   name: string;

@@ -13,7 +13,7 @@ vi.mock('@google/genai', () => {
   };
 });
 
-import { GeminiLLM } from '../../src/agent/pipeline/gemini-llm.js';
+import { GeminiLLM } from '../../src/agent/pipeline/llm/gemini-llm.js';
 
 describe('GeminiLLM', () => {
   beforeEach(() => {

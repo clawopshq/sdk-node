@@ -546,6 +546,7 @@ export class ClawOpsAgent {
           await sessionHandler.stop();
         } catch (err) {
           this._log.error({ err }, 'Call session error: %s', session.callId);
+          session.recordEndReason('error');
         } finally {
           // Clean up MCP clients
           if (mcpClients.length > 0) {
@@ -562,7 +563,7 @@ export class ClawOpsAgent {
 
           // Determine end reason and send metrics
           if (!session.metrics.endReason) {
-            session.recordEndReason(session.status === 'ended' ? 'completed' : 'unknown');
+            session.recordEndReason(session.status === 'ended' ? 'user_hangup' : 'agent_hangup');
           }
           try {
             this._controlWs?.send({ event: 'call.metrics', callId: session.callId, metrics: session.metrics });

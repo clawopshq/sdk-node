@@ -12,6 +12,9 @@ export interface PerplexityLLMOptions {
 export class PerplexityLLM implements LLM {
   private _inner: OpenAICompatLLM;
 
+  get provider(): string { return 'perplexity'; }
+  get model(): string { return this._inner.model; }
+
   constructor(options: PerplexityLLMOptions = {}) {
     this._inner = new OpenAICompatLLM({
       apiKey: options.apiKey ?? process.env['PERPLEXITY_API_KEY'],

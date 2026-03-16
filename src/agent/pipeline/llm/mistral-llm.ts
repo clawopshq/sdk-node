@@ -12,6 +12,9 @@ export interface MistralLLMOptions {
 export class MistralLLM implements LLM {
   private _inner: OpenAICompatLLM;
 
+  get provider(): string { return 'mistral'; }
+  get model(): string { return this._inner.model; }
+
   constructor(options: MistralLLMOptions = {}) {
     this._inner = new OpenAICompatLLM({
       apiKey: options.apiKey ?? process.env['MISTRAL_API_KEY'],

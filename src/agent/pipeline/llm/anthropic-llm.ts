@@ -19,6 +19,9 @@ export interface AnthropicLLMOptions {
 export class AnthropicLLM implements LLM {
   private _options: AnthropicLLMOptions;
 
+  get provider(): string { return 'anthropic'; }
+  get model(): string { return this._options.model!; }
+
   constructor(options: AnthropicLLMOptions = {}) {
     this._options = {
       model: 'claude-sonnet-4-6',

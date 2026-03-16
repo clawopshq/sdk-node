@@ -6,6 +6,7 @@ import type { Logger } from 'pino';
 
 import type { CallSession } from '../session.js';
 import type { ToolRegistry } from '../tool.js';
+import type { SessionTelemetry } from '../telemetry.js';
 
 /** Speech recognition event. */
 export interface SpeechEvent {
@@ -50,6 +51,8 @@ export interface Session {
   stop(): Promise<void>;
   /** Set the logger instance for this session. */
   setLogger?(logger: Logger): void;
+  /** Return session telemetry for reporting. */
+  getTelemetry?(): SessionTelemetry | null;
 }
 
 /**

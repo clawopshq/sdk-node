@@ -9,6 +9,7 @@ import type { CallSession } from '../../session.js';
 import type { ToolRegistry } from '../../tool.js';
 import type { AudioRecorder } from '../../recorder.js';
 import type { Session } from '../base.js';
+import type { SessionTelemetry } from '../../telemetry.js';
 import type { LiveServerMessage, LiveServerToolCall } from '@google/genai/node';
 import { pcm16ToUlaw, resamplePcm16, ulawToPcm16 } from '../../audio.js';
 import { BuiltinTool } from '../../builtin-tool.js';
@@ -193,6 +194,22 @@ export class GeminiRealtime implements Session {
 
   setLogger(logger: Logger): void {
     this._log = logger;
+  }
+
+  getTelemetry(): SessionTelemetry {
+    return {
+      sessionType: 'gemini_realtime',
+      llm: { provider: 'gemini', model: this._model },
+      stt: null,
+      tts: null,
+      voice: this._voice,
+      language: this._language,
+      greetingEnabled: this._greeting,
+      recordingEnabled: !!this._recorder,
+      toolCount: this._tools?.size ?? 0,
+      mcpServerCount: 0,
+      builtinTools: [],
+    };
   }
 
   async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
@@ -459,6 +476,7 @@ export class GeminiRealtime implements Session {
       }
 
       try {
+        this._call?.recordToolCall();
         const result = await this._tools.call(name, args);
         const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
         this._log.info('Tool result: %s -> %s', name, resultStr.substring(0, 200));
@@ -469,6 +487,9 @@ export class GeminiRealtime implements Session {
         });
       } catch (err) {
         this._log.error({ err }, 'Tool call failed: %s', name);
+        if (err instanceof Error) {
+          this._call?.recordToolError(err);
+        }
         responses.push({
           id: fcId,
           name,

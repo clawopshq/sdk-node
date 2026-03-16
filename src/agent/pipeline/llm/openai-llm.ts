@@ -19,6 +19,9 @@ export interface OpenAILLMOptions {
 export class OpenAILLM implements LLM {
   private _options: OpenAILLMOptions;
 
+  get provider(): string { return 'openai'; }
+  get model(): string { return this._options.model!; }
+
   constructor(options: OpenAILLMOptions = {}) {
     this._options = {
       model: 'gpt-4o-mini',

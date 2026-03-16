@@ -23,6 +23,9 @@ export interface OpenAICompatLLMOptions {
 export class OpenAICompatLLM implements LLM {
   private _options: OpenAICompatLLMOptions;
 
+  get provider(): string { return 'openai_compatible'; }
+  get model(): string { return this._options.model; }
+
   constructor(options: OpenAICompatLLMOptions) {
     this._options = options;
   }

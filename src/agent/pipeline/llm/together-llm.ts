@@ -12,6 +12,9 @@ export interface TogetherLLMOptions {
 export class TogetherLLM implements LLM {
   private _inner: OpenAICompatLLM;
 
+  get provider(): string { return 'together'; }
+  get model(): string { return this._inner.model; }
+
   constructor(options: TogetherLLMOptions = {}) {
     this._inner = new OpenAICompatLLM({
       apiKey: options.apiKey ?? process.env['TOGETHER_API_KEY'],

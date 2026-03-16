@@ -32,6 +32,9 @@ export class DeepgramSTT implements STT {
   private _options: DeepgramSTTOptions;
   private _log: Logger = NOOP_LOGGER;
 
+  get provider(): string { return 'deepgram'; }
+  get model(): string { return this._options.model ?? 'nova-3'; }
+
   setLogger(logger: Logger): void {
     this._log = logger;
   }

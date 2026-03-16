@@ -16,6 +16,7 @@ import { BuiltinTool, resolveBuiltinTools } from './builtin-tool.js';
 import { ToolRegistry } from './tool.js';
 import type { FunctionTool } from './tool.js';
 import type { Session } from './pipeline/base.js';
+import { getSdkInfo } from './telemetry.js';
 import { setTracingConfig } from './tracing/config.js';
 import type { TracingConfig } from './tracing/config.js';
 import { withSpan } from './tracing/spans.js';
@@ -182,6 +183,9 @@ export class ClawOpsAgent {
     try {
       await this._controlWs.connect();
       await this._controlWs.waitConnected();
+      try {
+        this._controlWs.send({ event: 'agent.hello', sdk: getSdkInfo() });
+      } catch { /* best-effort */ }
     } catch (err) {
       throw new AgentConnectionError(
         `Failed to connect to ClawOps: ${err instanceof Error ? err.message : String(err)}`,
@@ -445,9 +449,11 @@ export class ClawOpsAgent {
         session._bindTransport(
           (audio: Buffer) => {
             mediaWs.sendAudio(audio.toString('base64'));
+            session.recordFirstResponse();
           },
           () => {
             mediaWs.sendClear();
+            session.recordBargeIn();
           },
           async () => {
             await mediaWs.flush();
@@ -521,6 +527,18 @@ export class ClawOpsAgent {
           // Start the session handler
           await sessionHandler.start(session, sessionTools);
 
+          // Send session telemetry
+          const telemetry = sessionHandler.getTelemetry?.() ?? null;
+          if (telemetry) {
+            telemetry.toolCount = sessionTools?.size ?? 0;
+            telemetry.mcpServerCount = this._mcpServers?.length ?? 0;
+            telemetry.builtinTools = this._builtinTools ? [...this._builtinTools].map(t => t.toString()) : [];
+            telemetry.recordingEnabled = this._recording;
+            try {
+              this._controlWs!.send({ event: 'call.telemetry', callId: session.callId, telemetry });
+            } catch { /* best-effort */ }
+          }
+
           // Wait for the call to end
           await session.wait();
 
@@ -541,6 +559,14 @@ export class ClawOpsAgent {
           if (recorder) {
             recorder.stop();
           }
+
+          // Determine end reason and send metrics
+          if (!session.metrics.endReason) {
+            session.recordEndReason(session.status === 'ended' ? 'completed' : 'unknown');
+          }
+          try {
+            this._controlWs?.send({ event: 'call.metrics', callId: session.callId, metrics: session.metrics });
+          } catch { /* best-effort */ }
 
           // Emit call_end
           session._emit('call_end');

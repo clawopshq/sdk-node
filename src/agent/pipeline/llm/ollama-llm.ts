@@ -21,6 +21,9 @@ export interface OllamaLLMOptions {
 export class OllamaLLM implements LLM {
   private _inner: OpenAICompatLLM;
 
+  get provider(): string { return 'ollama'; }
+  get model(): string { return this._inner.model; }
+
   constructor(options: OllamaLLMOptions = {}) {
     const baseUrl = options.baseUrl ?? process.env['OLLAMA_BASE_URL'] ?? 'http://localhost:11434/v1';
     this._inner = new OpenAICompatLLM({

@@ -15,6 +15,7 @@ import type {
   STT,
   TTS,
 } from './base.js';
+import type { SessionTelemetry } from '../telemetry.js';
 import type { Logger } from 'pino';
 import { NOOP_LOGGER } from '../logger.js';
 import { BUILTIN_TOOL_NAMES, executeBuiltinTool, getBuiltinToolSchemas } from './builtin-tool-schemas.js';
@@ -90,6 +91,25 @@ export class PipelineSession implements Session {
 
   setBuiltinTools(tools: Set<BuiltinTool>): void {
     this._builtinTools = tools;
+  }
+
+  getTelemetry(): SessionTelemetry {
+    const llm = this._llm as any;
+    const stt = this._stt as any;
+    const tts = this._tts as any;
+    return {
+      sessionType: 'pipeline',
+      llm: llm.provider && llm.model ? { provider: llm.provider, model: llm.model } : null,
+      stt: stt.provider && stt.model ? { provider: stt.provider, model: stt.model } : null,
+      tts: tts.provider && tts.model ? { provider: tts.provider, model: tts.model } : null,
+      voice: (tts as any).voiceId ?? null,
+      language: this._language,
+      greetingEnabled: this._greeting,
+      recordingEnabled: !!this._recorder,
+      toolCount: this._tools?.size ?? 0,
+      mcpServerCount: 0,
+      builtinTools: [],
+    };
   }
 
   setLogger(logger: Logger): void {
@@ -275,6 +295,7 @@ export class PipelineSession implements Session {
       }
 
       if (!this._tools) return;
+      this._callSession?.recordToolCall();
       const result = await this._tools.call(name, args);
 
       this._conversation.push({
@@ -311,6 +332,9 @@ export class PipelineSession implements Session {
       }
     } catch (err) {
       this._log.error({ err }, 'Tool call failed: %s', name);
+      if (err instanceof Error) {
+        this._callSession?.recordToolError(err);
+      }
     }
   }
 

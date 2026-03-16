@@ -12,6 +12,9 @@ export interface XaiLLMOptions {
 export class XaiLLM implements LLM {
   private _inner: OpenAICompatLLM;
 
+  get provider(): string { return 'xai'; }
+  get model(): string { return this._inner.model; }
+
   constructor(options: XaiLLMOptions = {}) {
     this._inner = new OpenAICompatLLM({
       apiKey: options.apiKey ?? process.env['XAI_API_KEY'],

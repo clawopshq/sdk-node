@@ -12,6 +12,9 @@ export interface FireworksLLMOptions {
 export class FireworksLLM implements LLM {
   private _inner: OpenAICompatLLM;
 
+  get provider(): string { return 'fireworks'; }
+  get model(): string { return this._inner.model; }
+
   constructor(options: FireworksLLMOptions = {}) {
     this._inner = new OpenAICompatLLM({
       apiKey: options.apiKey ?? process.env['FIREWORKS_API_KEY'],

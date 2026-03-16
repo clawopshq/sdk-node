@@ -5,6 +5,7 @@
 
 import type { Logger } from 'pino';
 import { NOOP_LOGGER } from './logger.js';
+import { type CallMetrics, createCallMetrics, addMetricError } from './telemetry.js';
 
 export type CallDirection = 'inbound' | 'outbound';
 export type CallStatus = 'ringing' | 'active' | 'ended';
@@ -54,6 +55,8 @@ export class CallSession {
   private _handlers: Map<string, SessionEventHandler[]> = new Map();
   private _endedPromise: Promise<void>;
   private _resolveEnded!: () => void;
+  private _metrics: CallMetrics = createCallMetrics();
+  private _firstResponseSent = false;
 
   constructor(options: {
     callId: string;
@@ -88,6 +91,20 @@ export class CallSession {
   get duration(): number {
     return (Date.now() - this.startTime.getTime()) / 1000;
   }
+
+  get metrics(): Readonly<CallMetrics> { return this._metrics; }
+
+  recordFirstResponse(): void {
+    if (!this._firstResponseSent) {
+      this._firstResponseSent = true;
+      this._metrics.firstResponseMs = Date.now() - this.startTime.getTime();
+    }
+  }
+  recordTurn(): void { this._metrics.turnCount++; }
+  recordToolCall(): void { this._metrics.toolCallCount++; }
+  recordToolError(err: Error): void { addMetricError(this._metrics, err); }
+  recordBargeIn(): void { this._metrics.bargeInCount++; }
+  recordEndReason(reason: string): void { this._metrics.endReason = reason; }
 
   /** Bind transport functions (called internally by the agent). */
   _bindTransport(

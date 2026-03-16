@@ -28,6 +28,10 @@ export class ElevenLabsTTS implements TTS {
   private _options: ElevenLabsTTSOptions;
   private _log: Logger = NOOP_LOGGER;
 
+  get provider(): string { return 'elevenlabs'; }
+  get model(): string { return this._options.model ?? 'eleven_flash_v2_5'; }
+  get voiceId(): string { return this._options.voiceId ?? 'EXAVITQu4vr4xnSDxMaL'; }
+
   setLogger(logger: Logger): void {
     this._log = logger;
   }

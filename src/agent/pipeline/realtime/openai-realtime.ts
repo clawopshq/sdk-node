@@ -8,6 +8,7 @@ import type { CallSession } from '../../session.js';
 import type { ToolRegistry } from '../../tool.js';
 import type { AudioRecorder } from '../../recorder.js';
 import type { Session } from '../base.js';
+import type { SessionTelemetry } from '../../telemetry.js';
 import { ulawToPcm16 } from '../../audio.js';
 import { BuiltinTool } from '../../builtin-tool.js';
 import type { Logger } from 'pino';
@@ -71,6 +72,22 @@ export class OpenAIRealtime implements Session {
 
   setBuiltinTools(tools: Set<BuiltinTool>): void {
     this._builtinTools = tools;
+  }
+
+  getTelemetry(): SessionTelemetry {
+    return {
+      sessionType: 'openai_realtime',
+      llm: { provider: 'openai', model: this._model },
+      stt: null,
+      tts: null,
+      voice: this._voice,
+      language: this._language,
+      greetingEnabled: this._greeting,
+      recordingEnabled: !!this._recorder,
+      toolCount: this._tools?.size ?? 0,
+      mcpServerCount: 0,
+      builtinTools: [],
+    };
   }
 
   private _ws: import('ws').WebSocket | null = null;
@@ -427,9 +444,13 @@ export class OpenAIRealtime implements Session {
       let result: unknown;
       try {
         const args = JSON.parse((item['arguments'] as string) ?? '{}') as Record<string, unknown>;
+        this._call?.recordToolCall();
         result = await this._tools.call(funcName, args);
       } catch (err) {
         this._log.error({ err }, 'Tool call failed: %s', funcName);
+        if (err instanceof Error) {
+          this._call?.recordToolError(err);
+        }
         result = `Error: ${err}`;
       }
 

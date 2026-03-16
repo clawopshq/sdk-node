@@ -12,6 +12,9 @@ export interface GroqLLMOptions {
 export class GroqLLM implements LLM {
   private _inner: OpenAICompatLLM;
 
+  get provider(): string { return 'groq'; }
+  get model(): string { return this._inner.model; }
+
   constructor(options: GroqLLMOptions = {}) {
     this._inner = new OpenAICompatLLM({
       apiKey: options.apiKey ?? process.env['GROQ_API_KEY'],

@@ -19,6 +19,9 @@ export interface GeminiLLMOptions {
 export class GeminiLLM implements LLM {
   private _options: GeminiLLMOptions;
 
+  get provider(): string { return 'gemini'; }
+  get model(): string { return this._options.model!; }
+
   constructor(options: GeminiLLMOptions = {}) {
     this._options = {
       model: 'gemini-2.5-flash',

@@ -12,6 +12,9 @@ export interface DeepSeekLLMOptions {
 export class DeepSeekLLM implements LLM {
   private _inner: OpenAICompatLLM;
 
+  get provider(): string { return 'deepseek'; }
+  get model(): string { return this._inner.model; }
+
   constructor(options: DeepSeekLLMOptions = {}) {
     this._inner = new OpenAICompatLLM({
       apiKey: options.apiKey ?? process.env['DEEPSEEK_API_KEY'],

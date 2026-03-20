@@ -128,6 +128,19 @@ const call = await client.calls.create({
 });
 console.log(call.callId);
 
+// AI Completion 모드 — AI가 직접 통화를 처리
+const aiCall = await client.calls.create({
+  to: '01012345678',
+  from: '07052358010',
+  ai: {
+    provider: 'openai',
+    model: 'gpt-realtime-1.5',
+    apiKey: process.env.OPENAI_API_KEY!,
+    voice: 'marin',
+    messages: [{ role: 'system', content: '당신은 예약 확인 AI입니다.' }],
+  },
+});
+
 // 통화 목록 조회 (페이지네이션)
 const page = await client.calls.list({ status: 'completed', page: 0, pageSize: 20 });
 for (const call of page) {

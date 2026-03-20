@@ -2,7 +2,7 @@
 
 /** OpenAI Realtime 모델. 자유 입력도 허용. */
 export type OpenAIRealtimeModel =
-  | 'gpt-realtime-1.5'
+  | 'gpt-realtime'
   | (string & {});
 
 /** OpenAI 음성 ID. 자유 입력도 허용. */

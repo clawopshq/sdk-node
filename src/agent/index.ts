@@ -10,6 +10,10 @@ export type { ClawOpsAgentOptions, AgentEventType } from './agent.js';
 export { CallSession } from './session.js';
 export type { CallDirection, CallStatus } from './session.js';
 
+// Media WebSocket
+export { MediaWebSocket } from './media-ws.js';
+export type { MediaStartEvent, MediaEvent, DtmfEvent } from './media-ws.js';
+
 // Tools
 export { ToolRegistry, functionTool, zodToToolParams } from './tool.js';
 export type { FunctionTool, OpenAIToolDefinition } from './tool.js';

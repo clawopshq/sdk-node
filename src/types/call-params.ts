@@ -3,7 +3,6 @@
 /** OpenAI Realtime 모델. 자유 입력도 허용. */
 export type OpenAIRealtimeModel =
   | 'gpt-realtime-1.5'
-  | 'gpt-4o-mini-realtime'
   | (string & {});
 
 /** OpenAI 음성 ID. 자유 입력도 허용. */
@@ -22,7 +21,7 @@ export type OpenAIVoice =
 
 /** Gemini Realtime 모델. 자유 입력도 허용. */
 export type GeminiRealtimeModel =
-  | 'gemini-2.5-flash-native-audio-preview'
+  | 'gemini-2.5-flash-native-audio-preview-12-2025'
   | (string & {});
 
 /** Gemini 음성 ID. 자유 입력도 허용. */

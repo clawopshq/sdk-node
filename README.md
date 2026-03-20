@@ -134,7 +134,7 @@ const aiCall = await client.calls.create({
   from: '07052358010',
   ai: {
     provider: 'openai',
-    model: 'gpt-realtime-1.5',
+    model: 'gpt-realtime',
     apiKey: process.env.OPENAI_API_KEY!,
     voice: 'marin',
     messages: [{ role: 'system', content: '당신은 예약 확인 AI입니다.' }],

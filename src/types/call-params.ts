@@ -1,21 +1,13 @@
 // ── AI Completion 타입 ───────────────────────────────────────────────────────
 
-/** 지원 AI 제공자. 자유 입력도 허용. */
-export type AIProvider = 'openai' | 'gemini' | (string & {});
-
 /** OpenAI Realtime 모델. 자유 입력도 허용. */
 export type OpenAIRealtimeModel =
   | 'gpt-realtime-1.5'
   | 'gpt-4o-mini-realtime'
   | (string & {});
 
-/** Gemini Realtime 모델. 자유 입력도 허용. */
-export type GeminiRealtimeModel =
-  | 'gemini-2.5-flash-native-audio-preview'
-  | (string & {});
-
-/** AI 음성 ID. 자유 입력도 허용. */
-export type AIVoice =
+/** OpenAI 음성 ID. 자유 입력도 허용. */
+export type OpenAIVoice =
   | 'alloy'
   | 'ash'
   | 'ballad'
@@ -28,15 +20,27 @@ export type AIVoice =
   | 'verse'
   | (string & {});
 
-export interface AIConfig {
-  /** AI 제공자. */
-  provider: AIProvider;
-  /** 사용할 AI 모델명. */
-  model: OpenAIRealtimeModel | GeminiRealtimeModel;
+/** Gemini Realtime 모델. 자유 입력도 허용. */
+export type GeminiRealtimeModel =
+  | 'gemini-2.5-flash-native-audio-preview'
+  | (string & {});
+
+/** Gemini 음성 ID. 자유 입력도 허용. */
+export type GeminiVoice =
+  | 'Puck'
+  | 'Charon'
+  | 'Kore'
+  | 'Fenrir'
+  | 'Aoede'
+  | 'Leda'
+  | 'Orus'
+  | 'Zephyr'
+  | (string & {});
+
+/** Provider 공통 설정 */
+interface AIConfigBase {
   /** AI 제공자의 API 키. */
   apiKey: string;
-  /** 음성 ID (기본값: 'marin'). */
-  voice?: AIVoice;
   /** 언어 코드 (기본값: 'ko'). */
   language?: string;
   /** 초기 메시지 (system prompt 등). OpenAI Chat Completions 형식. */
@@ -48,6 +52,41 @@ export interface AIConfig {
   /** 턴 감지 설정 (기본값: semantic_vad medium). */
   turnDetection?: Record<string, unknown>;
 }
+
+/** OpenAI provider 설정. provider: 'openai'일 때 모델과 음성이 OpenAI 전용으로 제한됨. */
+export interface OpenAIAIConfig extends AIConfigBase {
+  provider: 'openai';
+  /** OpenAI Realtime 모델. */
+  model: OpenAIRealtimeModel;
+  /** OpenAI 음성 ID (기본값: 'marin'). */
+  voice?: OpenAIVoice;
+}
+
+/** Gemini provider 설정. provider: 'gemini'일 때 모델과 음성이 Gemini 전용으로 제한됨. */
+export interface GeminiAIConfig extends AIConfigBase {
+  provider: 'gemini';
+  /** Gemini Realtime 모델. */
+  model: GeminiRealtimeModel;
+  /** Gemini 음성 ID. */
+  voice?: GeminiVoice;
+}
+
+/** 기타 provider. 자유 입력. */
+export interface CustomAIConfig extends AIConfigBase {
+  provider: string & {};
+  model: string;
+  voice?: string;
+}
+
+/**
+ * AI Completion 모드 설정.
+ *
+ * `provider` 값에 따라 `model`과 `voice`의 자동완성이 달라집니다:
+ * - `'openai'` → OpenAI 모델/음성만 표시
+ * - `'gemini'` → Gemini 모델/음성만 표시
+ * - 기타 → 자유 입력
+ */
+export type AIConfig = OpenAIAIConfig | GeminiAIConfig | CustomAIConfig;
 
 // ── Call API 파라미터 ────────────────────────────────────────────────────────
 

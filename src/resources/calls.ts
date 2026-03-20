@@ -3,7 +3,7 @@ import { stripNotGiven } from '../util.js';
 import { Page, PageSchema } from '../pagination.js';
 import { CallSchema, CallControlResponseSchema } from '../types/call.js';
 import type { Call, CallControlResponse } from '../types/call.js';
-import type { CallCreateParams, CallListParams, AIConfig } from '../types/call-params.js';
+import type { CallCreateParams, CallListParams } from '../types/call-params.js';
 
 export class Calls extends APIResource {
   async create(

@@ -1,1 +1,5 @@
-export const VERSION = '0.1.0';
+declare const __PKG_VERSION__: string;
+
+export const VERSION: string = typeof __PKG_VERSION__ !== 'undefined'
+  ? __PKG_VERSION__
+  : 'dev';

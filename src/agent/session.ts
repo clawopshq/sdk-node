@@ -33,6 +33,10 @@ export interface SendDtmfFn {
   (digit: string): Promise<void>;
 }
 
+export interface TransferFn {
+  (params: Record<string, unknown>): Promise<Record<string, unknown>>;
+}
+
 export class CallSession {
   readonly callId: string;
   readonly fromNumber: string;
@@ -47,6 +51,7 @@ export class CallSession {
   private _clearAudioFn: ClearAudioFn | null = null;
   private _hangupFn: HangupFn | null = null;
   /** @internal */ _sendDtmfFn: SendDtmfFn | null = null;
+  /** @internal */ _transferFn: TransferFn | null = null;
   /** @internal */ _isTransportConnected: (() => boolean) | null = null;
   private _dtmfCollectorActive = false;
   private _dtmfResolvers: ((digit: string) => void)[] = [];
@@ -225,6 +230,34 @@ export class CallSession {
         throw new Error(`유효하지 않은 DTMF 문자: ${ch}`);
       }
     }
+  }
+
+  /** Transfer the call to another destination. */
+  async transfer(
+    to: string,
+    options?: {
+      mode?: 'blind' | 'warm';
+      afterTransfer?: 'terminate' | 'return';
+      holdMedia?: string;
+      whisper?: string;
+      context?: Record<string, unknown>;
+      callerId?: string;
+      timeout?: number;
+    },
+  ): Promise<Record<string, unknown>> {
+    if (!this._transferFn) {
+      throw new Error('transfer not available');
+    }
+    return this._transferFn({
+      to,
+      mode: options?.mode ?? 'blind',
+      afterTransfer: options?.afterTransfer ?? 'terminate',
+      holdMedia: options?.holdMedia ?? 'ringback',
+      whisper: options?.whisper ?? null,
+      context: options?.context ?? null,
+      callerId: options?.callerId ?? null,
+      timeout: options?.timeout ?? 30,
+    });
   }
 
   /** Register an event handler. */

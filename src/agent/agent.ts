@@ -468,6 +468,8 @@ export class ClawOpsAgent {
           () => mediaWs.isConnected,
         );
 
+        session._transferFn = (params) => this._controlWs!.requestTransfer(session.callId, params);
+
         const sessionHandler = this._session;
 
         // Inject tools and recorder into session if supported

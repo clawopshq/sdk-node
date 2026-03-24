@@ -48,6 +48,10 @@ export class ControlWebSocket {
   private _url: string;
   private _ws: WsType | null = null;
   private _handlers: Map<string, ControlEventHandler[]> = new Map();
+  private _transferResolvers = new Map<string, {
+    resolve: (value: Record<string, unknown>) => void;
+    reject: (reason: Error) => void;
+  }>();
   private _reconnectDelay = INITIAL_RECONNECT_DELAY;
   private _closed = false;
   private _connectedResolve: (() => void) | null = null;
@@ -87,6 +91,28 @@ export class ControlWebSocket {
     return this._connectedPromise;
   }
 
+  /** Request a call transfer and wait for the result. */
+  async requestTransfer(callId: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return new Promise((resolve, reject) => {
+      const timeout = ((params.timeout as number) || 30) + 10;
+      const timer = setTimeout(() => {
+        this._transferResolvers.delete(callId);
+        reject(new Error('transfer timeout'));
+      }, timeout * 1000);
+
+      this._transferResolvers.set(callId, {
+        resolve: (value) => { clearTimeout(timer); resolve(value); },
+        reject: (reason) => { clearTimeout(timer); reject(reason); },
+      });
+
+      this.send({
+        event: 'call.transfer',
+        callId,
+        transfer: params,
+      });
+    });
+  }
+
   /** Send a JSON message over the control WebSocket. */
   send(message: Record<string, unknown>): void {
     if (this._ws && this._ws.readyState === 1 /* OPEN */) {
@@ -98,6 +124,10 @@ export class ControlWebSocket {
   close(): void {
     this._closed = true;
     this._clearPingTimer();
+    for (const [, resolver] of this._transferResolvers) {
+      resolver.reject(new Error('connection closed'));
+    }
+    this._transferResolvers.clear();
     if (this._ws) {
       this._ws.close();
       this._ws = null;
@@ -151,6 +181,16 @@ export class ControlWebSocket {
   }
 
   private _dispatchEvent(event: ControlEvent): void {
+    // Resolve pending transfer promises on terminal transfer events
+    if (['call.transfer.completed', 'call.transfer.failed'].includes(event.event)) {
+      const callId = event.callId as string;
+      const resolver = this._transferResolvers.get(callId);
+      if (resolver) {
+        this._transferResolvers.delete(callId);
+        resolver.resolve((event.transfer as Record<string, unknown>) || {});
+      }
+    }
+
     const handlers = this._handlers.get(event.event);
     if (handlers) {
       for (const handler of handlers) {

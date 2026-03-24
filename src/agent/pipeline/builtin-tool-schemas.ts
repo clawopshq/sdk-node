@@ -48,12 +48,33 @@ const SEND_DTMF = {
   },
 } as const;
 
-type NeutralSchema = typeof HANG_UP | typeof COLLECT_DTMF | typeof SEND_DTMF;
+const TRANSFER_CALL = {
+  name: 'transfer_call',
+  description:
+    'Transfer the current call to another phone number. Use for blind transfer (direct handoff) or warm transfer (with whisper message to the target).',
+  parameters: {
+    type: 'object' as const,
+    properties: {
+      to: { type: 'string' as const, description: 'Phone number to transfer to' },
+      mode: { type: 'string' as const, enum: ['blind', 'warm'], description: 'blind: direct transfer, warm: play whisper to target first' },
+      after_transfer: { type: 'string' as const, enum: ['terminate', 'return'], description: 'terminate: end AI session, return: AI resumes after transfer ends' },
+      hold_media: { type: 'string' as const, description: 'Hold media for customer: ringback, moh, silence' },
+      whisper: { type: 'string' as const, description: 'Message to speak to transfer target (warm mode only)' },
+      context: { type: 'object' as const, description: 'Structured data to pass to transfer target via webhook' },
+      caller_id: { type: 'string' as const, description: 'Override caller ID for the transfer leg' },
+      timeout: { type: 'integer' as const, description: 'Seconds to wait for transfer target to answer' },
+    },
+    required: ['to'] as string[],
+  },
+} as const;
+
+type NeutralSchema = typeof HANG_UP | typeof COLLECT_DTMF | typeof SEND_DTMF | typeof TRANSFER_CALL;
 
 const TOOL_MAP = new Map<BuiltinTool, NeutralSchema>([
   [BuiltinTool.HANG_UP, HANG_UP],
   [BuiltinTool.COLLECT_DTMF, COLLECT_DTMF],
   [BuiltinTool.SEND_DTMF, SEND_DTMF],
+  [BuiltinTool.TRANSFER_CALL, TRANSFER_CALL],
 ]);
 
 export const BUILTIN_TOOL_NAMES: Set<string> = new Set(
@@ -150,6 +171,22 @@ export async function executeBuiltinTool(
     try {
       await call.sendDtmfSequence((args['digits'] as string) ?? '');
       return 'sent';
+    } catch (e) {
+      return `Error: ${e}`;
+    }
+  }
+  if (funcName === 'transfer_call') {
+    try {
+      const result = await call.transfer(args['to'] as string, {
+        mode: (args['mode'] as 'blind' | 'warm') ?? undefined,
+        afterTransfer: (args['after_transfer'] as 'terminate' | 'return') ?? undefined,
+        holdMedia: args['hold_media'] as string ?? undefined,
+        whisper: args['whisper'] as string ?? undefined,
+        context: args['context'] as Record<string, unknown> ?? undefined,
+        callerId: args['caller_id'] as string ?? undefined,
+        timeout: args['timeout'] as number ?? undefined,
+      });
+      return JSON.stringify(result);
     } catch (e) {
       return `Error: ${e}`;
     }

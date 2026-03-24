@@ -9,6 +9,8 @@ export enum BuiltinTool {
   COLLECT_DTMF = 'collect_dtmf',
   /** DTMF 전송 도구. ARS 탐색이나 내선번호 입력에 사용합니다. */
   SEND_DTMF = 'send_dtmf',
+  /** 통화 전환 도구. 현재 통화를 다른 번호로 전환합니다. */
+  TRANSFER_CALL = 'transfer_call',
 
   /** 모든 내장 도구를 활성화합니다. (기본값) */
   ALL = 'all',
@@ -20,6 +22,7 @@ const INDIVIDUAL_TOOLS = new Set([
   BuiltinTool.HANG_UP,
   BuiltinTool.COLLECT_DTMF,
   BuiltinTool.SEND_DTMF,
+  BuiltinTool.TRANSFER_CALL,
 ]);
 
 export function resolveBuiltinTools(

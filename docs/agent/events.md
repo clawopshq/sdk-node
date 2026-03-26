@@ -60,6 +60,7 @@ agent.on('call_start', async (call) => {
   await call.sendAudio(pcm16Bytes);   // 오디오 전송
   await call.clearAudio();            // 오디오 큐 초기화 (인터럽트 시)
   await call.hangup();                // 통화 종료
+  await call.transfer('01012345678'); // 다른 번호로 통화 전환
   await call.wait();                  // 통화 종료까지 대기 (아웃바운드 시 유용)
 });
 ```

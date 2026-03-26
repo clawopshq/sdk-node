@@ -56,13 +56,11 @@ const TRANSFER_CALL = {
     type: 'object' as const,
     properties: {
       to: { type: 'string' as const, description: 'Phone number to transfer to' },
-      mode: { type: 'string' as const, enum: ['blind', 'warm'], description: 'blind: direct transfer, warm: play whisper to target first' },
-      after_transfer: { type: 'string' as const, enum: ['terminate', 'return'], description: 'terminate: end AI session, return: AI resumes after transfer ends' },
-      hold_media: { type: 'string' as const, description: 'Hold media for customer: ringback, moh, silence' },
-      whisper: { type: 'string' as const, description: 'Message to speak to transfer target (warm mode only)' },
-      context: { type: 'object' as const, description: 'Structured data to pass to transfer target via webhook' },
+      mode: { type: 'string' as const, enum: ['blind', 'warm'], description: 'blind: direct transfer (default), warm: play whisper to target first' },
+      after_transfer: { type: 'string' as const, enum: ['terminate', 'return'], description: 'terminate: end AI session (default), return: AI resumes after transfer ends' },
+      whisper: { type: 'string' as const, description: 'Message to speak to transfer target before connecting customer (warm mode only)' },
       caller_id: { type: 'string' as const, description: 'Override caller ID for the transfer leg' },
-      timeout: { type: 'integer' as const, description: 'Seconds to wait for transfer target to answer' },
+      timeout: { type: 'integer' as const, description: 'Seconds to wait for transfer target to answer (default 30)' },
     },
     required: ['to'] as string[],
   },
@@ -177,16 +175,17 @@ export async function executeBuiltinTool(
   }
   if (funcName === 'transfer_call') {
     try {
-      const result = await call.transfer(args['to'] as string, {
+      // Fire-and-forget: transfer 요청만 보내고 즉시 반환.
+      // call-engine이 transfer 시작 시 media WS를 닫으므로,
+      // 결과를 await하면 LLM 세션이 먼저 종료된다.
+      call.transfer(args['to'] as string, {
         mode: (args['mode'] as 'blind' | 'warm') ?? undefined,
         afterTransfer: (args['after_transfer'] as 'terminate' | 'return') ?? undefined,
-        holdMedia: args['hold_media'] as string ?? undefined,
         whisper: args['whisper'] as string ?? undefined,
-        context: args['context'] as Record<string, unknown> ?? undefined,
         callerId: args['caller_id'] as string ?? undefined,
         timeout: args['timeout'] as number ?? undefined,
-      });
-      return JSON.stringify(result);
+      }).catch(() => {});
+      return JSON.stringify({ status: 'transfer_initiated' });
     } catch (e) {
       return `Error: ${e}`;
     }

@@ -18,6 +18,7 @@ import type {
 import type { SessionTelemetry } from '../telemetry.js';
 import type { Logger } from 'pino';
 import { NOOP_LOGGER } from '../logger.js';
+import { HoldAudioPlayer } from '../hold-audio.js';
 import { BUILTIN_TOOL_NAMES, executeBuiltinTool, getBuiltinToolSchemas } from './builtin-tool-schemas.js';
 
 export interface PipelineSessionOptions {
@@ -64,6 +65,7 @@ export class PipelineSession implements Session {
   private _running = false;
   private _speaking = false;
   private _builtinTools: Set<BuiltinTool> | null = null;
+  private _holdAudioChunks: Buffer[] | null = null;
   private _log: Logger = NOOP_LOGGER;
 
   constructor(options: PipelineSessionOptions) {
@@ -91,6 +93,11 @@ export class PipelineSession implements Session {
 
   setBuiltinTools(tools: Set<BuiltinTool>): void {
     this._builtinTools = tools;
+  }
+
+  /** Tool 실행 중 재생할 hold audio 청크를 설정한다. */
+  setHoldAudio(chunks: Buffer[]): void {
+    this._holdAudioChunks = chunks;
   }
 
   getTelemetry(): SessionTelemetry {
@@ -296,7 +303,19 @@ export class PipelineSession implements Session {
 
       if (!this._tools) return;
       this._callSession?.recordToolCall();
-      const result = await this._tools.call(name, args);
+
+      const player =
+        this._holdAudioChunks && this._callSession
+          ? new HoldAudioPlayer(this._callSession, this._holdAudioChunks)
+          : null;
+      player?.start();
+
+      let result: unknown;
+      try {
+        result = await this._tools.call(name, args);
+      } finally {
+        player?.stop();
+      }
 
       this._conversation.push({
         role: 'assistant',

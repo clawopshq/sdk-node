@@ -13,6 +13,7 @@ import { MediaWebSocket } from './media-ws.js';
 import { AudioRecorder } from './recorder.js';
 import { CallSession } from './session.js';
 import { BuiltinTool, resolveBuiltinTools } from './builtin-tool.js';
+import { loadHoldAudio } from './hold-audio.js';
 import { ToolRegistry } from './tool.js';
 import type { FunctionTool } from './tool.js';
 import type { Session } from './pipeline/base.js';
@@ -54,6 +55,8 @@ export interface ClawOpsAgentOptions {
   passiveDtmfDebounceMs?: number;
   /** Custom pino logger instance. If omitted, a default logger is created. */
   logger?: Logger;
+  /** Tool 실행 중 재생할 hold audio. true=기본 차임, string=wav 파일 경로, Buffer=raw ulaw. */
+  holdAudio?: boolean | string | Buffer;
 }
 
 export class ClawOpsAgent {
@@ -78,6 +81,7 @@ export class ClawOpsAgent {
   private _log: Logger;
   private _pipelineLog: Logger;
   private _isPipelineSession = false;
+  private _holdAudioChunks: Buffer[] | null = null;
 
   constructor(options: ClawOpsAgentOptions) {
     this._apiKey = options.apiKey ?? process.env['CLAWOPS_API_KEY'] ?? '';
@@ -100,6 +104,10 @@ export class ClawOpsAgent {
     this._pipelineLog = createPipelineLogger(this._log);
     // Detect PipelineSession at construction time (duck-type check)
     this._isPipelineSession = '_stt' in this._session && '_llm' in this._session;
+
+    if (options.holdAudio) {
+      this._holdAudioChunks = loadHoldAudio(options.holdAudio as true | string | Buffer);
+    }
   }
 
   /**
@@ -491,6 +499,13 @@ export class ClawOpsAgent {
         }
         if ('setLogger' in sessionHandler && typeof sessionHandler.setLogger === 'function') {
           sessionHandler.setLogger(this._isPipelineSession ? this._pipelineLog : this._log);
+        }
+        if (
+          this._holdAudioChunks &&
+          'setHoldAudio' in sessionHandler &&
+          typeof sessionHandler.setHoldAudio === 'function'
+        ) {
+          sessionHandler.setHoldAudio(this._holdAudioChunks);
         }
 
         // Save session handler for DTMF routing

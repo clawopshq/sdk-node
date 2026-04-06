@@ -13,6 +13,7 @@ import { ulawToPcm16 } from '../../audio.js';
 import { BuiltinTool } from '../../builtin-tool.js';
 import type { Logger } from 'pino';
 import { NOOP_LOGGER } from '../../logger.js';
+import { HoldAudioPlayer } from '../../hold-audio.js';
 import {
   BUILTIN_TOOL_NAMES,
   executeBuiltinTool,
@@ -107,6 +108,9 @@ export class OpenAIRealtime implements Session {
   private _responseInProgress = false;
   private _onResponseDone: (() => void) | null = null;
 
+  // Hold audio — tool 실행 중 대기음
+  private _holdAudioChunks: Buffer[] | null = null;
+
   constructor(options: OpenAIRealtimeOptions = {}) {
     this._apiKey = options.apiKey ?? process.env['OPENAI_API_KEY'] ?? '';
     this._systemPrompt = options.systemPrompt ?? '';
@@ -128,6 +132,11 @@ export class OpenAIRealtime implements Session {
   /** Inject per-call AudioRecorder. */
   setRecorder(recorder: AudioRecorder): void {
     this._recorder = recorder;
+  }
+
+  /** Tool 실행 중 재생할 hold audio 청크를 설정한다. */
+  setHoldAudio(chunks: Buffer[]): void {
+    this._holdAudioChunks = chunks;
   }
 
   async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
@@ -442,6 +451,11 @@ export class OpenAIRealtime implements Session {
       }
 
       let result: unknown;
+      const player =
+        this._holdAudioChunks && this._call
+          ? new HoldAudioPlayer(this._call, this._holdAudioChunks)
+          : null;
+      player?.start();
       try {
         const args = JSON.parse((item['arguments'] as string) ?? '{}') as Record<string, unknown>;
         this._call?.recordToolCall();
@@ -452,6 +466,8 @@ export class OpenAIRealtime implements Session {
           this._call?.recordToolError(err);
         }
         result = `Error: ${err}`;
+      } finally {
+        player?.stop();
       }
 
       if (controller.signal.aborted) {

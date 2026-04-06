@@ -15,6 +15,7 @@ import { pcm16ToUlaw, resamplePcm16, ulawToPcm16 } from '../../audio.js';
 import { BuiltinTool } from '../../builtin-tool.js';
 import type { Logger } from 'pino';
 import { NOOP_LOGGER } from '../../logger.js';
+import { HoldAudioPlayer } from '../../hold-audio.js';
 import {
   BUILTIN_TOOL_NAMES,
   executeBuiltinTool,
@@ -171,6 +172,7 @@ export class GeminiRealtime implements Session {
   private _audioRemainder: Buffer = Buffer.alloc(0);
   private _builtinTools: Set<BuiltinTool> | null = null;
   private _toolCallInProgress = false;
+  private _holdAudioChunks: Buffer[] | null = null;
   private _log: Logger = NOOP_LOGGER;
 
   constructor(options: GeminiRealtimeOptions = {}) {
@@ -194,6 +196,11 @@ export class GeminiRealtime implements Session {
 
   setBuiltinTools(tools: Set<BuiltinTool>): void {
     this._builtinTools = tools;
+  }
+
+  /** Tool 실행 중 재생할 hold audio 청크를 설정한다. */
+  setHoldAudio(chunks: Buffer[]): void {
+    this._holdAudioChunks = chunks;
   }
 
   setLogger(logger: Logger): void {
@@ -447,53 +454,63 @@ export class GeminiRealtime implements Session {
 
     const responses: Array<Record<string, unknown>> = [];
 
-    for (const fc of functionCalls) {
-      const name = fc.name ?? '';
-      const fcId = fc.id ?? '';
-      const args = fc.args ?? {};
-      this._log.info({ tool: name, args }, 'Tool call: %s', name);
+    const player =
+      this._holdAudioChunks && this._call
+        ? new HoldAudioPlayer(this._call, this._holdAudioChunks)
+        : null;
+    player?.start();
 
-      // Built-in tools
-      if (BUILTIN_TOOL_NAMES.has(name) && this._call) {
-        const result = await executeBuiltinTool(name, args as Record<string, unknown>, this._call);
-        if (result !== null) {
-          if (name === 'hang_up') {
-            this._log.info('hang_up: ending call');
-            return;
+    try {
+      for (const fc of functionCalls) {
+        const name = fc.name ?? '';
+        const fcId = fc.id ?? '';
+        const args = fc.args ?? {};
+        this._log.info({ tool: name, args }, 'Tool call: %s', name);
+
+        // Built-in tools
+        if (BUILTIN_TOOL_NAMES.has(name) && this._call) {
+          const result = await executeBuiltinTool(name, args as Record<string, unknown>, this._call);
+          if (result !== null) {
+            if (name === 'hang_up') {
+              this._log.info('hang_up: ending call');
+              return;
+            }
+            this._log.info('Builtin tool result: %s -> %s', name, result);
+            responses.push({ id: fcId, name, response: { result } });
+            continue;
           }
-          this._log.info('Builtin tool result: %s -> %s', name, result);
-          responses.push({ id: fcId, name, response: { result } });
+        }
+
+        if (!this._tools || !this._tools.has(name)) {
+          this._log.error('Unknown tool: %s', name);
+          responses.push({ id: fcId, name, response: { error: `Unknown tool: ${name}` } });
           continue;
         }
-      }
 
-      if (!this._tools || !this._tools.has(name)) {
-        this._log.error('Unknown tool: %s', name);
-        responses.push({ id: fcId, name, response: { error: `Unknown tool: ${name}` } });
-        continue;
-      }
-
-      try {
-        this._call?.recordToolCall();
-        const result = await this._tools.call(name, args);
-        const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
-        this._log.info('Tool result: %s -> %s', name, resultStr.substring(0, 200));
-        responses.push({
-          id: fcId,
-          name,
-          response: { result: resultStr },
-        });
-      } catch (err) {
-        this._log.error({ err }, 'Tool call failed: %s', name);
-        if (err instanceof Error) {
-          this._call?.recordToolError(err);
+        try {
+          this._call?.recordToolCall();
+          const result = await this._tools.call(name, args);
+          const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+          this._log.info('Tool result: %s -> %s', name, resultStr.substring(0, 200));
+          responses.push({
+            id: fcId,
+            name,
+            response: { result: resultStr },
+          });
+        } catch (err) {
+          this._log.error({ err }, 'Tool call failed: %s', name);
+          if (err instanceof Error) {
+            this._call?.recordToolError(err);
+          }
+          responses.push({
+            id: fcId,
+            name,
+            response: { error: String(err) },
+          });
         }
-        responses.push({
-          id: fcId,
-          name,
-          response: { error: String(err) },
-        });
       }
+    } finally {
+      player?.stop();
     }
 
     if (responses.length > 0 && this._session) {

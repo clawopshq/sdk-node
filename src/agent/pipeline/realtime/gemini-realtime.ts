@@ -171,7 +171,9 @@ export class GeminiRealtime implements Session {
   private _sentAudioChunks = 0;
   private _audioRemainder: Buffer = Buffer.alloc(0);
   private _builtinTools: Set<BuiltinTool> | null = null;
-  private _toolCallInProgress = false;
+  private _pendingToolCall: LiveServerToolCall | null = null;
+  private _toolDrainTimer: ReturnType<typeof setTimeout> | null = null;
+  private _lastAudioTime = 0;
   private _holdAudioChunks: Buffer[] | null = null;
   private _log: Logger = NOOP_LOGGER;
 
@@ -290,7 +292,7 @@ export class GeminiRealtime implements Session {
   }
 
   feedAudio(audio: Buffer): void {
-    if (this._session && !this._closed && !this._toolCallInProgress) {
+    if (this._session && !this._closed) {
       // G.711 ulaw 8kHz → PCM16 8kHz → PCM16 16kHz
       const pcm8k = ulawToPcm16(audio);
       if (this._recorder) {
@@ -316,6 +318,11 @@ export class GeminiRealtime implements Session {
 
   async stop(): Promise<void> {
     this._closed = true;
+    if (this._toolDrainTimer) {
+      clearTimeout(this._toolDrainTimer);
+      this._toolDrainTimer = null;
+    }
+    this._pendingToolCall = null;
     if (this._session) {
       try {
         this._session.close();
@@ -358,6 +365,7 @@ export class GeminiRealtime implements Session {
             const mimeType = inlineData.mimeType ?? '';
             if (mimeType.includes('audio')) {
               this._handleAudioData(inlineData.data as string);
+              if (this._pendingToolCall) this._lastAudioTime = Date.now();
             }
           }
           // NOTE: modelTurn text는 outputTranscription과 중복이므로 emit하지 않음
@@ -395,9 +403,10 @@ export class GeminiRealtime implements Session {
       }
     }
 
-    // Handle tool calls
+    // Handle tool calls — debounce로 남은 오디오 drain 후 실행
     if (msg.toolCall) {
-      this._handleToolCall(msg.toolCall);
+      this._pendingToolCall = msg.toolCall;
+      this._scheduleToolExecution();
     }
 
     // Handle tool call cancellation
@@ -406,6 +415,11 @@ export class GeminiRealtime implements Session {
       | undefined;
     if (toolCancellation) {
       this._log.info({ ids: toolCancellation.ids }, 'Tool call cancelled');
+      this._pendingToolCall = null;
+      if (this._toolDrainTimer) {
+        clearTimeout(this._toolDrainTimer);
+        this._toolDrainTimer = null;
+      }
     }
   }
 
@@ -445,12 +459,30 @@ export class GeminiRealtime implements Session {
     }
   }
 
+  // Gemini는 tool_call 후에도 오디오를 계속 보내므로, 이 시간 내 응답이 없으면 drain 완료로 간주
+  private static readonly TOOL_DRAIN_TIMEOUT = 300;
+
+  private _scheduleToolExecution(): void {
+    if (this._toolDrainTimer) return;
+    this._lastAudioTime = Date.now();
+    this._toolDrainTimer = setTimeout(() => {
+      this._toolDrainTimer = null;
+      if (Date.now() - this._lastAudioTime < GeminiRealtime.TOOL_DRAIN_TIMEOUT) {
+        // 아직 오디오가 오고 있음 — 재스케줄
+        this._scheduleToolExecution();
+        return;
+      }
+      if (this._pendingToolCall) {
+        const tc = this._pendingToolCall;
+        this._pendingToolCall = null;
+        this._handleToolCall(tc);
+      }
+    }, GeminiRealtime.TOOL_DRAIN_TIMEOUT);
+  }
+
   private async _handleToolCall(toolCall: LiveServerToolCall): Promise<void> {
     const functionCalls = toolCall.functionCalls;
     if (!functionCalls) return;
-
-    // 도구 호출 중에는 오디오 입력 중단 (Gemini가 tool call 상태에서 audio input 수신 시 1008 에러)
-    this._toolCallInProgress = true;
 
     const responses: Array<Record<string, unknown>> = [];
 
@@ -469,7 +501,11 @@ export class GeminiRealtime implements Session {
 
         // Built-in tools
         if (BUILTIN_TOOL_NAMES.has(name) && this._call) {
-          const result = await executeBuiltinTool(name, args as Record<string, unknown>, this._call);
+          const result = await executeBuiltinTool(
+            name,
+            args as Record<string, unknown>,
+            this._call,
+          );
           if (result !== null) {
             if (name === 'hang_up') {
               this._log.info('hang_up: ending call');
@@ -519,6 +555,5 @@ export class GeminiRealtime implements Session {
         functionResponses: responses,
       });
     }
-    this._toolCallInProgress = false;
   }
 }

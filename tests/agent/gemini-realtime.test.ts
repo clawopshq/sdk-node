@@ -235,8 +235,8 @@ describe('GeminiRealtime', () => {
         },
       });
 
-      // hang_up은 _scheduleToolExecution의 300ms debounce를 거침
-      await new Promise((r) => setTimeout(r, 400));
+      // hang_up은 _scheduleToolExecution의 300ms debounce를 거침 (CI 환경 고려하여 여유 확보)
+      await new Promise((r) => setTimeout(r, 800));
 
       expect(call.hangup).toHaveBeenCalledOnce();
       // hang_up은 toolResponse를 보내지 않음

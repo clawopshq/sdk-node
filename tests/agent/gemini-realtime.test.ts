@@ -131,7 +131,7 @@ describe('GeminiRealtime', () => {
 
   describe('feedAudio()', () => {
     it('sends PCM16 16kHz audio via SDK sendRealtimeInput', async () => {
-      const session = new GeminiRealtime({ apiKey: 'test-key' });
+      const session = new GeminiRealtime({ apiKey: 'test-key', greeting: false });
       const call = createMockCallSession();
       await session.start(call);
 
@@ -235,8 +235,8 @@ describe('GeminiRealtime', () => {
         },
       });
 
-      // hang_up은 비동기이므로 잠시 대기
-      await new Promise((r) => setTimeout(r, 10));
+      // hang_up은 _scheduleToolExecution의 300ms debounce를 거침
+      await new Promise((r) => setTimeout(r, 400));
 
       expect(call.hangup).toHaveBeenCalledOnce();
       // hang_up은 toolResponse를 보내지 않음

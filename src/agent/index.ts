@@ -4,7 +4,7 @@
 
 // Core
 export { ClawOpsAgent } from './agent.js';
-export type { ClawOpsAgentOptions, AgentEventType } from './agent.js';
+export type { ClawOpsAgentOptions, AgentEventType, ToolConfig } from './agent.js';
 
 // Session
 export { CallSession } from './session.js';

@@ -30,6 +30,12 @@ export type AgentEventType = 'call_start' | 'call_end' | 'call_failed' | 'transc
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentEventHandler = (...args: any[]) => void | Promise<void>;
 
+/** Tool 실행 관련 설정. */
+export interface ToolConfig {
+  /** Tool 실행 중 재생할 hold audio. true=기본 차임, string=wav 파일 경로, Buffer=raw ulaw. */
+  holdAudio?: boolean | string | Buffer;
+}
+
 export interface ClawOpsAgentOptions {
   /** ClawOps API key. Falls back to CLAWOPS_API_KEY env var. */
   apiKey?: string;
@@ -55,8 +61,8 @@ export interface ClawOpsAgentOptions {
   passiveDtmfDebounceMs?: number;
   /** Custom pino logger instance. If omitted, a default logger is created. */
   logger?: Logger;
-  /** Tool 실행 중 재생할 hold audio. true=기본 차임, string=wav 파일 경로, Buffer=raw ulaw. */
-  holdAudio?: boolean | string | Buffer;
+  /** Tool 실행 관련 설정. */
+  toolConfig?: ToolConfig;
 }
 
 export class ClawOpsAgent {
@@ -105,8 +111,8 @@ export class ClawOpsAgent {
     // Detect PipelineSession at construction time (duck-type check)
     this._isPipelineSession = '_stt' in this._session && '_llm' in this._session;
 
-    if (options.holdAudio) {
-      this._holdAudioChunks = loadHoldAudio(options.holdAudio as true | string | Buffer);
+    if (options.toolConfig?.holdAudio) {
+      this._holdAudioChunks = loadHoldAudio(options.toolConfig.holdAudio as true | string | Buffer);
     }
   }
 

@@ -77,13 +77,13 @@ describe('GeminiRealtime', () => {
       const connectArgs = mockConnect.mock.calls[0][0];
 
       // model 확인
-      expect(connectArgs.model).toBe('gemini-2.5-flash-native-audio-preview-12-2025');
+      expect(connectArgs.model).toBe('gemini-3.1-flash-live-preview');
 
       // config 확인
       const config = connectArgs.config;
       expect(config.responseModalities).toEqual(['AUDIO']);
       expect(config.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Kore');
-      expect(config.systemInstruction).toBe('Test prompt');
+      expect(config.systemInstruction).toEqual({ parts: [{ text: 'Test prompt' }] });
 
       // Stage 2: transcription 포함
       expect(config).toHaveProperty('inputAudioTranscription');
@@ -93,8 +93,8 @@ describe('GeminiRealtime', () => {
       expect(config).not.toHaveProperty('realtimeInputConfig');
       expect(config).not.toHaveProperty('contextWindowCompression');
 
-      // greeting 전송 확인
-      expect(mockSession.sendClientContent).toHaveBeenCalledOnce();
+      // greeting 전송 확인 (3.1에서는 sendRealtimeInput 사용)
+      expect(mockSession.sendRealtimeInput).toHaveBeenCalledOnce();
 
       await session.stop();
     });

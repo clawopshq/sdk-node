@@ -1,9 +1,7 @@
 // ── AI Completion 타입 ───────────────────────────────────────────────────────
 
 /** OpenAI Realtime 모델. 자유 입력도 허용. */
-export type OpenAIRealtimeModel =
-  | 'gpt-realtime'
-  | (string & {});
+export type OpenAIRealtimeModel = 'gpt-realtime' | (string & {});
 
 /** OpenAI 음성 ID. 자유 입력도 허용. */
 export type OpenAIVoice =
@@ -20,9 +18,7 @@ export type OpenAIVoice =
   | (string & {});
 
 /** Gemini Realtime 모델. 자유 입력도 허용. */
-export type GeminiRealtimeModel =
-  | 'gemini-2.5-flash-native-audio-preview-12-2025'
-  | (string & {});
+export type GeminiRealtimeModel = 'gemini-3.1-flash-live-preview' | (string & {});
 
 /** Gemini 음성 ID. 자유 입력도 허용. */
 export type GeminiVoice =

@@ -6,18 +6,18 @@ WebSocket 역방향 연결 방식으로 ngrok 없이 로컬에서 바로 실행�
 
 ## 문서 목록
 
-| 문서 | 내용 |
-|------|------|
-| [빠른 시작](quickstart.md) | 설치, 환경변수, 기본 사용법 |
-| [검증된 제공자](providers.md) | SDK별 제공자 호환성 매트릭스 |
-| [파이프라인 모드](pipeline.md) | 커스텀 STT/LLM/TTS 조합 |
+| 문서                                 | 내용                                  |
+| ------------------------------------ | ------------------------------------- |
+| [빠른 시작](quickstart.md)           | 설치, 환경변수, 기본 사용법           |
+| [검증된 제공자](providers.md)        | SDK별 제공자 호환성 매트릭스          |
+| [파이프라인 모드](pipeline.md)       | 커스텀 STT/LLM/TTS 조합               |
 | [커스텀 제공자](custom-providers.md) | 나만의 STT/LLM/TTS 제공자 구현 가이드 |
-| [Tool](tools.md) | AI 함수 호출 (`agent.tool()`) |
-| [이벤트 & CallSession](events.md) | 통화 이벤트 핸들러, CallSession API |
-| [MCP 서버](mcp.md) | MCP 서버 연동 |
-| [녹음](recording.md) | 통화 녹음 설정 |
-| [Tracing](tracing.md) | OpenTelemetry 연동 |
-| [아키텍처](architecture.md) | 내부 구조, 보안 모델 |
+| [Tool](tools.md)                     | AI 함수 호출 (`agent.tool()`)         |
+| [이벤트 & CallSession](events.md)    | 통화 이벤트 핸들러, CallSession API   |
+| [MCP 서버](mcp.md)                   | MCP 서버 연동                         |
+| [녹음](recording.md)                 | 통화 녹음 설정                        |
+| [Tracing](tracing.md)                | OpenTelemetry 연동                    |
+| [아키텍처](architecture.md)          | 내부 구조, 보안 모델                  |
 
 ## 동작 원리
 
@@ -43,13 +43,13 @@ WebSocket 역방향 연결 방식으로 ngrok 없이 로컬에서 바로 실행�
 
 ## 시작 방법
 
-| 메서드 | 용도 |
-|--------|------|
-| `agent.serve()` | 인바운드 서버 모드 (SIGINT/SIGTERM까지 대기, 자동 disconnect) |
-| `agent.connect()` | Control WS 연결만 (논블로킹, 아웃바운드/혼합 모드용) |
-| `agent.disconnect()` | 연결 해제 |
-| `agent.call(to)` | 발신 전화 (미연결 시 자동 connect) |
-| `session.wait()` | 통화 종료까지 대기 |
+| 메서드               | 용도                                                          |
+| -------------------- | ------------------------------------------------------------- |
+| `agent.serve()`      | 인바운드 서버 모드 (SIGINT/SIGTERM까지 대기, 자동 disconnect) |
+| `agent.connect()`    | Control WS 연결만 (논블로킹, 아웃바운드/혼합 모드용)          |
+| `agent.disconnect()` | 연결 해제                                                     |
+| `agent.call(to)`     | 발신 전화 (미연결 시 자동 connect)                            |
+| `session.wait()`     | 통화 종료까지 대기                                            |
 
 ## 세션 타입
 
@@ -88,9 +88,7 @@ const agent = new ClawOpsAgent({
 });
 ```
 
-> **Known Issue (2026-03-12):** `gemini-2.5-flash-native-audio-preview-12-2025` 모델에서 function calling(tool use)과 실시간 오디오 스트리밍을 함께 사용할 때 WebSocket 1008 (Policy Violation) 에러로 세션이 간헐적으로 종료될 수 있습니다. 이는 Google Gemini Live API의 서버 측 알려진 이슈입니다.
-> - [Google AI Forum #114644](https://discuss.ai.google.dev/t/gemini-live-api-websocket-error-1008-operation-is-not-implemented-or-supported-or-enabled/114644)
-> - [googleapis/js-genai #1236](https://github.com/googleapis/js-genai/issues/1236)
+> **Note:** 기본 모델이 `gemini-3.1-flash-live-preview`로 업데이트되었습니다. 이전 `gemini-2.5-flash-native-audio-preview-12-2025` 모델은 더 이상 지원되지 않습니다.
 
 ### Pipeline 모드
 
@@ -98,7 +96,12 @@ STT, LLM, TTS 제공자를 직접 조합합니다. 제공자를 자유롭게 교
 
 ```typescript
 import { ClawOpsAgent } from '@teamlearners/clawops/agent';
-import { PipelineSession, DeepgramSTT, OpenAILLM, ElevenLabsTTS } from '@teamlearners/clawops/agent';
+import {
+  PipelineSession,
+  DeepgramSTT,
+  OpenAILLM,
+  ElevenLabsTTS,
+} from '@teamlearners/clawops/agent';
 
 const agent = new ClawOpsAgent({
   from: '07012341234',

@@ -15,7 +15,11 @@ import { pcm16ToUlaw, resamplePcm16, ulawToPcm16 } from '../../audio.js';
 import { BuiltinTool } from '../../builtin-tool.js';
 import type { Logger } from 'pino';
 import { NOOP_LOGGER } from '../../logger.js';
-import { BUILTIN_TOOL_NAMES, executeBuiltinTool, getBuiltinToolSchemas } from '../builtin-tool-schemas.js';
+import {
+  BUILTIN_TOOL_NAMES,
+  executeBuiltinTool,
+  getBuiltinToolSchemas,
+} from '../builtin-tool-schemas.js';
 
 /**
  * $ref 문자열을 $defs에서 찾아 반환한다.
@@ -139,7 +143,7 @@ export interface GeminiRealtimeOptions {
   apiKey?: string;
   /** System prompt / instructions for the AI. */
   systemPrompt?: string;
-  /** Model to use. Default: 'gemini-2.5-flash-native-audio-preview-12-2025' */
+  /** Model to use. Default: 'gemini-3.1-flash-live-preview' */
   model?: string;
   /** Voice name. Default: 'Kore' */
   voice?: string;
@@ -172,7 +176,7 @@ export class GeminiRealtime implements Session {
   constructor(options: GeminiRealtimeOptions = {}) {
     this._apiKey = options.apiKey ?? process.env['GOOGLE_API_KEY'] ?? '';
     this._systemPrompt = options.systemPrompt ?? '';
-    this._model = options.model ?? 'gemini-2.5-flash-native-audio-preview-12-2025';
+    this._model = options.model ?? 'gemini-3.1-flash-live-preview';
     this._voice = options.voice ?? 'Kore';
     this._language = options.language ?? 'ko';
     this._greeting = options.greeting ?? true;
@@ -243,7 +247,9 @@ export class GeminiRealtime implements Session {
     };
 
     if (this._systemPrompt) {
-      config['systemInstruction'] = this._systemPrompt;
+      config['systemInstruction'] = {
+        parts: [{ text: this._systemPrompt }],
+      };
     }
 
     // Tools
@@ -261,7 +267,10 @@ export class GeminiRealtime implements Session {
           this._log.error({ err }, 'Gemini SDK error');
         },
         onclose: (ev) => {
-          this._log.info({ code: (ev as { code?: number })?.code ?? 'unknown' }, 'Gemini connection closed');
+          this._log.info(
+            { code: (ev as { code?: number })?.code ?? 'unknown' },
+            'Gemini connection closed',
+          );
           this._closed = true;
         },
       },
@@ -269,15 +278,7 @@ export class GeminiRealtime implements Session {
 
     // Send greeting
     if (this._greeting) {
-      this._session.sendClientContent({
-        turns: [
-          {
-            role: 'user',
-            parts: [{ text: '인사해 주세요.' }],
-          },
-        ],
-        turnComplete: true,
-      });
+      this._session.sendRealtimeInput({ text: '인사해 주세요.' });
     }
   }
 
@@ -302,10 +303,7 @@ export class GeminiRealtime implements Session {
 
   async feedDtmf(digits: string): Promise<void> {
     if (this._session) {
-      this._session.sendClientContent({
-        turns: [{ role: 'user', parts: [{ text: `[DTMF 입력: ${digits}]` }] }],
-        turnComplete: true,
-      });
+      this._session.sendRealtimeInput({ text: `[DTMF 입력: ${digits}]` });
     }
   }
 

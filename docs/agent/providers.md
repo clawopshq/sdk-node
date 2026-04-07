@@ -13,6 +13,8 @@ ClawOps Voice Agent SDK의 제공자 목록입니다. 검증 상태를 확인하
 | OpenAI Realtime API    | `OpenAIRealtime` | `gpt-realtime-1.5`              |      ✅      | `OPENAI_API_KEY` |   ✅   |  ✅  | **검증 완료** | 2026-03-12 |
 | Google Gemini Live API | `GeminiRealtime` | `gemini-3.1-flash-live-preview` |      ✅      | `GOOGLE_API_KEY` |   —    |  ✅  |    검증 중    | —          |
 
+> **Vertex AI:** `GOOGLE_API_KEY` 대신 `GOOGLE_GENAI_USE_VERTEXAI=true`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` 환경변수를 설정하면 Google Cloud Vertex AI 백엔드를 사용할 수 있습니다. ADC(Application Default Credentials) 인증이 필요합니다.
+
 ## Pipeline 모드 제공자
 
 STT → LLM → TTS를 개별 조합하는 방식입니다. `PipelineSession`에서 사용합니다.
@@ -30,6 +32,9 @@ STT → LLM → TTS를 개별 조합하는 방식입니다. `PipelineSession`에
 | OpenAI        | `OpenAILLM`     | Native SDK  |      —       |     —     | `OPENAI_API_KEY`     |   —    |  —   | 검증 전 | —      |
 | Anthropic     | `AnthropicLLM`  | Native SDK  |      —       |     —     | `ANTHROPIC_API_KEY`  |   —    |  —   | 검증 전 | —      |
 | Google Gemini | `GeminiLLM`     | Native SDK  |      —       |     —     | `GOOGLE_API_KEY`     |   —    |  —   | 검증 전 | —      |
+
+> **Vertex AI:** `GeminiLLM`도 Vertex AI 백엔드를 지원합니다. `GOOGLE_GENAI_USE_VERTEXAI=true`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` 환경변수를 설정하면 `GOOGLE_API_KEY` 없이 동작합니다.
+
 | Ollama        | `OllamaLLM`     | OpenAI 호환 |      —       |     —     | `OLLAMA_BASE_URL`    |   —    |  —   | 검증 전 | —      |
 | Mistral       | `MistralLLM`    | OpenAI 호환 |      —       |     —     | `MISTRAL_API_KEY`    |   —    |  —   | 검증 전 | —      |
 | Groq          | `GroqLLM`       | OpenAI 호환 |      —       |     —     | `GROQ_API_KEY`       |   —    |  —   | 검증 전 | —      |

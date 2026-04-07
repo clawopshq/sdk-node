@@ -109,7 +109,10 @@ PCM16 16kHz (STT 입력) / PCM16 24kHz (TTS 출력)
 | `CLAWOPS_API_KEY` | ClawOps API 키 (`sk_...`) | 예 |
 | `CLAWOPS_ACCOUNT_ID` | 계정 ID (`AC...`) | 예 |
 | `OPENAI_API_KEY` | OpenAI API 키 | OpenAI Realtime 사용 시 |
-| `GOOGLE_API_KEY` | Google API 키 | Gemini Realtime 사용 시 |
+| `GOOGLE_API_KEY` | Google API 키 | Gemini Realtime / GeminiLLM (Google AI) 사용 시 |
+| `GOOGLE_GENAI_USE_VERTEXAI` | `true` 설정 시 Vertex AI 사용 | Gemini Vertex AI 사용 시 (`GOOGLE_API_KEY` 대체) |
+| `GOOGLE_CLOUD_PROJECT` | GCP 프로젝트 ID | Gemini Vertex AI 사용 시 |
+| `GOOGLE_CLOUD_LOCATION` | GCP 리전 (예: `us-central1`) | Gemini Vertex AI 사용 시 |
 | `DEEPGRAM_API_KEY` | Deepgram API 키 | DeepgramSTT 사용 시 |
 | `ELEVENLABS_API_KEY` | ElevenLabs API 키 | ElevenLabsTTS 사용 시 |
 | `CLAWOPS_BASE_URL` | API 기본 URL | 아니오 |

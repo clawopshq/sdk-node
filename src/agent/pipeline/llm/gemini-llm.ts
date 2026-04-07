@@ -41,9 +41,8 @@ export class GeminiLLM implements LLM {
   ): AsyncGenerator<LLMChunk> {
     const { GoogleGenAI } = await import('@google/genai');
 
-    const client = new GoogleGenAI({
-      apiKey: this._options.apiKey ?? process.env['GOOGLE_API_KEY'],
-    });
+    const apiKey = this._options.apiKey ?? process.env['GOOGLE_API_KEY'];
+    const client = apiKey ? new GoogleGenAI({ apiKey }) : new GoogleGenAI();
 
     // Convert messages to Gemini format
     let systemInstruction: string | undefined;

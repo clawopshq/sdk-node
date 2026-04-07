@@ -232,14 +232,10 @@ export class GeminiRealtime implements Session {
     this._sentAudioChunks = 0;
     this._audioRemainder = Buffer.alloc(0);
 
-    if (!this._apiKey) {
-      throw new Error('Google API key is required. Set GOOGLE_API_KEY or pass apiKey option.');
-    }
-
     // @google/genai의 conditional exports 타입이 bundler 모드에서
     // live 프로퍼티를 인식하지 못하므로 node 엔트리 직접 import
     const { GoogleGenAI } = await import('@google/genai/node');
-    const client = new GoogleGenAI({ apiKey: this._apiKey });
+    const client = this._apiKey ? new GoogleGenAI({ apiKey: this._apiKey }) : new GoogleGenAI({});
 
     // Build config
     const config: Record<string, unknown> = {

@@ -25,7 +25,11 @@ export CLAWOPS_API_KEY="sk_..."
 export CLAWOPS_ACCOUNT_ID="AC..."
 export OPENAI_API_KEY="sk-..."           # OpenAI Realtime / OpenAILLM
 export ANTHROPIC_API_KEY="..."           # AnthropicLLM
-export GOOGLE_API_KEY="..."              # Gemini Realtime / GeminiLLM
+export GOOGLE_API_KEY="..."              # Gemini Realtime / GeminiLLM (Google AI)
+# 또는 Google Cloud Vertex AI 사용 시 (GOOGLE_API_KEY 불필요)
+# export GOOGLE_GENAI_USE_VERTEXAI=true
+# export GOOGLE_CLOUD_PROJECT="your-project-id"
+# export GOOGLE_CLOUD_LOCATION="us-central1"
 export MISTRAL_API_KEY="..."             # MistralLLM
 export GROQ_API_KEY="..."               # GroqLLM
 export PERPLEXITY_API_KEY="..."          # PerplexityLLM

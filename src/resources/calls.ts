@@ -52,6 +52,9 @@ export class Calls extends APIResource {
   ): Promise<Page<Call>> {
     const query = stripNotGiven({
       status: params.status,
+      from: params.from,
+      to: params.to,
+      number: params.number,
       page: params.page,
       pageSize: params.pageSize,
     });

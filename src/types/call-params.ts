@@ -122,6 +122,12 @@ export interface CallCreateParams {
 
 export interface CallListParams {
   status?: 'queued' | 'ringing' | 'in-progress' | 'completed' | 'failed';
+  /** 발신번호로 필터링. 배열 시 IN 조건. */
+  from?: string | string[];
+  /** 수신번호로 필터링. 배열 시 IN 조건. */
+  to?: string | string[];
+  /** 관여 번호로 필터링 (from OR to 매칭). 배열 시 IN 조건. */
+  number?: string | string[];
   page?: number;
   pageSize?: number;
 }

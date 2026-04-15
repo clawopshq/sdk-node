@@ -154,8 +154,6 @@ export interface GeminiRealtimeOptions {
   greeting?: boolean;
   /** Gemini VAD config. @google/genai RealtimeInputConfig 구조 그대로 전달. */
   realtimeInputConfig?: Record<string, unknown>;
-  /** Input audio transcription config. @google/genai AudioTranscriptionConfig 구조 그대로 전달. */
-  inputAudioTranscription?: Record<string, unknown>;
 }
 
 export class GeminiRealtime implements Session {
@@ -166,7 +164,6 @@ export class GeminiRealtime implements Session {
   private _language: string;
   private _greeting: boolean;
   private _realtimeInputConfig: Record<string, unknown> | null;
-  private _inputAudioTranscription: Record<string, unknown>;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _session: any = null;
@@ -191,7 +188,6 @@ export class GeminiRealtime implements Session {
     this._language = options.language ?? 'ko';
     this._greeting = options.greeting ?? true;
     this._realtimeInputConfig = options.realtimeInputConfig ?? null;
-    this._inputAudioTranscription = options.inputAudioTranscription ?? {};
   }
 
   /** Inject per-call ToolRegistry. */
@@ -255,7 +251,7 @@ export class GeminiRealtime implements Session {
           },
         },
       },
-      inputAudioTranscription: this._inputAudioTranscription,
+      inputAudioTranscription: {},
       outputAudioTranscription: {},
     };
 

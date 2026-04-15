@@ -30,7 +30,6 @@ export class Calls extends APIResource {
             Greeting: params.ai.greeting,
             TurnDetection: params.ai.turnDetection,
             RealtimeInputConfig: params.ai.realtimeInputConfig,
-            InputAudioTranscription: params.ai.inputAudioTranscription,
           })
         : undefined,
       StatusCallback: params.statusCallback,

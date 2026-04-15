@@ -125,7 +125,6 @@ const agent = new ClawOpsAgent({
       },
       activityHandling: 'NO_INTERRUPTION',
     },
-    inputAudioTranscription: {},
   }),
 });
 ```
@@ -133,7 +132,6 @@ const agent = new ClawOpsAgent({
 | 파라미터 | 타입 | 설명 |
 | --- | --- | --- |
 | `realtimeInputConfig` | `Record<string, unknown>` | Gemini VAD 설정. `automaticActivityDetection`, `activityHandling`, `turnCoverage` 등을 포함. |
-| `inputAudioTranscription` | `Record<string, unknown>` | 입력 오디오 전사 설정. 기본값: `{}` (전사 활성화). |
 
 ### 음성 옵션
 

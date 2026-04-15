@@ -68,6 +68,10 @@ interface AIConfigBase {
   greeting?: boolean;
   /** 턴 감지 설정 (기본값: semantic_vad medium). */
   turnDetection?: Record<string, unknown>;
+  /** Gemini VAD 설정. @google/genai RealtimeInputConfig 구조 그대로 전달. */
+  realtimeInputConfig?: Record<string, unknown>;
+  /** 입력 오디오 전사 설정. @google/genai AudioTranscriptionConfig 구조 그대로 전달. */
+  inputAudioTranscription?: Record<string, unknown>;
 }
 
 /** OpenAI provider 설정. provider: 'openai'일 때 모델과 음성이 OpenAI 전용으로 제한됨. */

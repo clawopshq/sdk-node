@@ -191,4 +191,75 @@ describe('Calls resource', () => {
       expect(body.Status).toBe('completed');
     });
   });
+
+  describe('getTranscript', () => {
+    it('returns completed with segments', async () => {
+      const body = {
+        status: 'completed',
+        callId: 'CA_123',
+        segmentCount: 2,
+        segments: [
+          { speaker: 'AGENT', start: 0, end: 1.2, text: '안녕하세요.' },
+          { speaker: 'CUSTOMER', start: 1.5, end: 2.8, text: '네.' },
+        ],
+      };
+      const fetchFn = mockResponse(body);
+      const client = createClient(fetchFn);
+
+      const r = await client.calls.getTranscript('CA_123');
+
+      const [url, init] = fetchFn.mock.calls[0];
+      expect(init!.method).toBe('GET');
+      expect(url).toBe('http://localhost:3000/v1/accounts/AC_test/calls/CA_123/transcript');
+      expect(r.status).toBe('completed');
+      expect(r.segmentCount).toBe(2);
+      expect(r.segments?.[0].speaker).toBe('AGENT');
+    });
+
+    it('returns pending with startedAt', async () => {
+      const body = { status: 'pending', startedAt: '2026-04-23T08:33:00Z' };
+      const fetchFn = mockResponse(body);
+      const client = createClient(fetchFn);
+
+      const r = await client.calls.getTranscript('CA_123');
+      expect(r.status).toBe('pending');
+      expect(r.startedAt).toBe('2026-04-23T08:33:00Z');
+    });
+
+    it('returns failed with stage and error', async () => {
+      const body = { status: 'failed', stage: 'runtime', error: 'boom' };
+      const fetchFn = mockResponse(body);
+      const client = createClient(fetchFn);
+
+      const r = await client.calls.getTranscript('CA_123');
+      expect(r.status).toBe('failed');
+      expect(r.stage).toBe('runtime');
+      expect(r.error).toBe('boom');
+    });
+
+    it('returns not_requested', async () => {
+      const body = { status: 'not_requested' };
+      const fetchFn = mockResponse(body);
+      const client = createClient(fetchFn);
+
+      const r = await client.calls.getTranscript('CA_123');
+      expect(r.status).toBe('not_requested');
+    });
+  });
+
+  describe('requestTranscript', () => {
+    it('sends POST with no body and returns 202 shape', async () => {
+      const body = { status: 'pending', callId: 'CA_123' };
+      const fetchFn = mockResponse(body, 202);
+      const client = createClient(fetchFn);
+
+      const r = await client.calls.requestTranscript('CA_123');
+
+      const [url, init] = fetchFn.mock.calls[0];
+      expect(init!.method).toBe('POST');
+      expect(url).toBe('http://localhost:3000/v1/accounts/AC_test/calls/CA_123/transcript');
+      expect(r.status).toBe('pending');
+      expect(r.callId).toBe('CA_123');
+    });
+  });
 });

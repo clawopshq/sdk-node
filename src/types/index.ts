@@ -18,3 +18,14 @@ export type { NumberCreateParams, NumberUpdateParams } from './number-params.js'
 
 export type { WebhookLog } from './webhook-log.js';
 export { WebhookLogSchema } from './webhook-log.js';
+
+export type {
+  TranscriptSegment,
+  TranscriptStatus,
+  TranscriptRequestAccepted,
+} from './transcript.js';
+export {
+  TranscriptSegmentSchema,
+  TranscriptStatusSchema,
+  TranscriptRequestAcceptedSchema,
+} from './transcript.js';

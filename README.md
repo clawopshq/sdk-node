@@ -182,6 +182,17 @@ const detail = await client.calls.get('CAabcdef1234567890');
 
 // 통화 종료
 await client.calls.update('CAabcdef1234567890', { status: 'completed' });
+
+// 통화 전사 상태 조회 (completed 시 segments 까지 inline)
+const state = await client.calls.getTranscript('CAabcdef1234567890');
+if (state.status === 'completed') {
+  for (const seg of state.segments ?? []) {
+    console.log(`[${seg.speaker}] ${seg.text}`);
+  }
+} else if (state.status === 'not_requested') {
+  // 조직 설정 off 거나 아직 요청 안 된 상태 — 명시 요청 (사용량 과금)
+  await client.calls.requestTranscript('CAabcdef1234567890');
+}
 ```
 
 ### 전화번호 (Numbers)

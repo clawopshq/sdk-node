@@ -29,3 +29,6 @@ export {
   TranscriptStatusSchema,
   TranscriptRequestAcceptedSchema,
 } from './transcript.js';
+
+export type { SummaryStatus } from './summary.js';
+export { SummaryStatusSchema } from './summary.js';

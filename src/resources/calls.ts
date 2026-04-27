@@ -9,6 +9,8 @@ import {
   TranscriptRequestAcceptedSchema,
 } from '../types/transcript.js';
 import type { TranscriptStatus, TranscriptRequestAccepted } from '../types/transcript.js';
+import { SummaryStatusSchema } from '../types/summary.js';
+import type { SummaryStatus } from '../types/summary.js';
 
 export class Calls extends APIResource {
   async create(
@@ -148,6 +150,27 @@ export class Calls extends APIResource {
   ): Promise<TranscriptRequestAccepted> {
     return this._client._post(`${this._basePath}/calls/${callId}/transcript`, {
       castTo: TranscriptRequestAcceptedSchema,
+      ...options,
+    });
+  }
+
+  /**
+   * 통화 요약 상태 조회. transcript 가 완료된 통화에 대해 자동 생성된
+   * LLM 구조화 요약 결과를 반환합니다. completed 일 때 resultJson 채워짐.
+   *
+   * @throws NotFoundError (404) — 통화 없음
+   * @throws PermissionDeniedError (403) — accountId 불일치
+   */
+  async getSummary(
+    callId: string,
+    options: {
+      extraHeaders?: Record<string, string>;
+      extraQuery?: Record<string, unknown>;
+      timeout?: number;
+    } = {},
+  ): Promise<SummaryStatus> {
+    return this._client._get(`${this._basePath}/calls/${callId}/summary`, {
+      castTo: SummaryStatusSchema,
       ...options,
     });
   }

@@ -31,6 +31,7 @@ export { WebhookVerificationError, Webhooks } from './webhooks.js';
 
 export { Page } from './pagination.js';
 
+export { AssignmentLinks } from './resources/assignment-links.js';
 export { Calls } from './resources/calls.js';
 export { Messages } from './resources/messages.js';
 export { Numbers } from './resources/numbers.js';
@@ -53,4 +54,8 @@ export type {
   NumberCreateParams,
   NumberUpdateParams,
   WebhookLog,
+  AssignmentLink,
+  AssignmentLinkAssignment,
+  AssignmentLinkCreateResponse,
+  AssignmentLinkStatus,
 } from './types/index.js';

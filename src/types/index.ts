@@ -32,3 +32,15 @@ export {
 
 export type { SummaryStatus } from './summary.js';
 export { SummaryStatusSchema } from './summary.js';
+
+export type {
+  AssignmentLink,
+  AssignmentLinkAssignment,
+  AssignmentLinkCreateResponse,
+  AssignmentLinkStatus,
+} from './assignment-link.js';
+export {
+  AssignmentLinkSchema,
+  AssignmentLinkAssignmentSchema,
+  AssignmentLinkCreateResponseSchema,
+} from './assignment-link.js';

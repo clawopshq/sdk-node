@@ -1,4 +1,5 @@
 import type { APIClient } from '../base-client.js';
+import { AssignmentLinks } from './assignment-links.js';
 import { Calls } from './calls.js';
 import { Messages } from './messages.js';
 import { Numbers } from './numbers.js';
@@ -27,5 +28,9 @@ export class AccountContext {
 
   get webhookLogs(): WebhookLogs {
     return new WebhookLogs(this._client, this._accountId);
+  }
+
+  get assignmentLinks(): AssignmentLinks {
+    return new AssignmentLinks(this._client, this._accountId);
   }
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { tmpdir } from 'node:os'
@@ -146,22 +146,57 @@ describe('AudioRecorder', () => {
     }
   })
 
-  it('inserts silence for wall-clock gaps', () => {
+  it('preserves inbound media timestamp gaps', () => {
     const dir = makeTmpDir()
     const rec = new AudioRecorder(dir, 'call-gap')
-    const times = [0, 0, 1000]
-    let callIdx = 0
-    vi.spyOn(performance, 'now').mockImplementation(() => times[callIdx++] ?? 1000)
+    const chunk = Buffer.alloc(320, 1)
 
     rec.start()
-    rec.writeInbound(Buffer.alloc(160, 1))
-    rec.writeInbound(Buffer.alloc(160, 2))
+    rec.writeInbound(chunk, 0)
+    rec.writeInbound(chunk, 500)
     rec.stop()
 
-    vi.spyOn(performance, 'now').mockRestore()
-
     const callDir = path.join(dir, 'call-gap')
-    const inSize = fs.statSync(path.join(callDir, 'in.wav')).size - 44
-    expect(inSize).toBeGreaterThanOrEqual(16000)
+    const data = fs.readFileSync(path.join(callDir, 'in.wav')).subarray(44)
+    const expectedSecondPos = 500 * 16
+    expect(data.subarray(0, 320)).toEqual(chunk)
+    expect(data.subarray(320, expectedSecondPos)).toEqual(Buffer.alloc(expectedSecondPos - 320))
+    expect(data.subarray(expectedSecondPos, expectedSecondPos + 320)).toEqual(chunk)
+  })
+
+  it('preserves outbound media timestamp gaps', () => {
+    const dir = makeTmpDir()
+    const rec = new AudioRecorder(dir, 'call-out-gap')
+    const chunk = Buffer.alloc(320, 2)
+
+    rec.start()
+    rec.writeInbound(Buffer.alloc(320, 1), 0)
+    rec.writeOutbound(chunk, 0)
+    rec.writeInbound(Buffer.alloc(320, 1), 500)
+    rec.writeOutbound(chunk, 500)
+    rec.stop()
+
+    const callDir = path.join(dir, 'call-out-gap')
+    const data = fs.readFileSync(path.join(callDir, 'out.wav')).subarray(44)
+    const expectedSecondPos = 500 * 16
+    expect(data.subarray(0, 320)).toEqual(chunk)
+    expect(data.subarray(320, expectedSecondPos)).toEqual(Buffer.alloc(expectedSecondPos - 320))
+    expect(data.subarray(expectedSecondPos, expectedSecondPos + 320)).toEqual(chunk)
+  })
+
+  it('does not collapse consecutive outbound chunks at same timestamp', () => {
+    const dir = makeTmpDir()
+    const rec = new AudioRecorder(dir, 'call-out-cursor')
+    const chunk = Buffer.alloc(320, 2)
+
+    rec.start()
+    rec.writeInbound(Buffer.alloc(320, 1), 0)
+    rec.writeOutbound(chunk, 0)
+    rec.writeOutbound(chunk, 0)
+    rec.stop()
+
+    const callDir = path.join(dir, 'call-out-cursor')
+    const data = fs.readFileSync(path.join(callDir, 'out.wav')).subarray(44, 44 + 640)
+    expect(data).toEqual(Buffer.concat([chunk, chunk]))
   })
 })

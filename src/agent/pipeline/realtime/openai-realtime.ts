@@ -9,7 +9,6 @@ import type { ToolRegistry } from '../../tool.js';
 import type { AudioRecorder } from '../../recorder.js';
 import type { Session } from '../base.js';
 import type { SessionTelemetry } from '../../telemetry.js';
-import { ulawToPcm16 } from '../../audio.js';
 import { BuiltinTool } from '../../builtin-tool.js';
 import type { Logger } from 'pino';
 import { NOOP_LOGGER } from '../../logger.js';
@@ -27,7 +26,7 @@ const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime?model=';
  */
 interface PlaybackState {
   itemId: string; // OpenAI conversation item ID
-  startTs: number; // 첫 delta 수신 시점의 timestamp (Date.now)
+  startTs: number; // 첫 delta 수신 시점의 media timestamp
   sentChunks: number; // 플랫폼으로 전송된 오디오 청크 수 (각 20ms)
   generating: boolean; // OpenAI가 아직 오디오를 생성 중인지
   audioRemainder: Buffer; // 160B 미만 잔여 오디오 버퍼
@@ -210,8 +209,8 @@ export class OpenAIRealtime implements Session {
     this._send({ type: 'response.create' });
   }
 
-  feedAudio(audio: Buffer): void {
-    this._latestMediaTs = Date.now();
+  feedAudio(audio: Buffer, timestamp?: number): void {
+    this._latestMediaTs = timestamp ?? this._latestMediaTs;
     if (this._ws && this._ws.readyState === 1 && !this._closed) {
       // Agent path: audio comes as ulaw directly from platform, no conversion needed
       this._send({
@@ -341,7 +340,7 @@ export class OpenAIRealtime implements Session {
     if (this._playback === null) {
       this._playback = {
         itemId: (msg['item_id'] as string) || '',
-        startTs: this._latestMediaTs || Date.now(),
+        startTs: this._latestMediaTs,
         sentChunks: 0,
         generating: true,
         audioRemainder: Buffer.alloc(0),
@@ -352,10 +351,6 @@ export class OpenAIRealtime implements Session {
 
     const pb = this._playback;
     const ulaw = Buffer.from(msg['delta'] as string, 'base64');
-
-    if (this._recorder) {
-      this._recorder.writeOutbound(ulawToPcm16(ulaw));
-    }
 
     // Align to 160B (20ms at 8kHz ulaw) frames, matching Python SDK
     const combined = Buffer.concat([pb.audioRemainder, ulaw]);
@@ -393,7 +388,7 @@ export class OpenAIRealtime implements Session {
     // response.cancel을 중복 호출하면 서버 상태가 꼬일 수 있으므로 생략.
     // conversation.item.truncate는 오디오와 transcript를 모두 잘라내어
     // 대화 맥락을 손실시키므로 호출하지 않는다.
-    const playedMs = Math.max(0, (this._latestMediaTs || Date.now()) - pb.startTs);
+    const playedMs = Math.max(0, this._latestMediaTs - pb.startTs);
 
     this._log.info(
       '[Interrupt] item=%s played=%dms total=%dms',

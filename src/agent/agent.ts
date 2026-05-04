@@ -459,9 +459,14 @@ export class ClawOpsAgent {
         const mediaWs = new MediaWebSocket();
         mediaWs.setLogger(this._log);
 
+        let latestMediaTs = 0;
+
         // Bind transport functions to session — sessions send ulaw bytes directly
         session._bindTransport(
           (audio: Buffer) => {
+            if (recorder) {
+              recorder.writeOutbound(ulawToPcm16(audio), latestMediaTs);
+            }
             mediaWs.sendAudio(audio.toString('base64'));
             session.recordFirstResponse();
           },
@@ -518,12 +523,13 @@ export class ClawOpsAgent {
         this._callSessions.set(session.callId, sessionHandler);
 
         // Handle inbound audio — feed raw ulaw to session (each session converts as needed)
-        mediaWs.onAudio((ulawAudio: Buffer, _timestamp: number) => {
-          if (sessionHandler) {
-            sessionHandler.feedAudio(ulawAudio);
-          }
+        mediaWs.onAudio((ulawAudio: Buffer, timestamp: number) => {
+          latestMediaTs = timestamp;
           if (recorder) {
-            recorder.writeInbound(ulawToPcm16(ulawAudio));
+            recorder.writeInbound(ulawToPcm16(ulawAudio), timestamp);
+          }
+          if (sessionHandler) {
+            sessionHandler.feedAudio(ulawAudio, timestamp);
           }
         });
 

@@ -23,13 +23,14 @@ const agent = new ClawOpsAgent({
 
 | 파일 | 내용 |
 |------|------|
-| `{callId}_in.wav` | 발신자 음성 (수신 오디오) |
-| `{callId}_out.wav` | AI 응답 (송신 오디오) |
-| `{callId}_mix.wav` | 양방향 믹스 |
+| `{callId}/in.wav` | 발신자 음성 (수신 오디오) |
+| `{callId}/out.wav` | AI 응답, hold audio 등 실제 송신 오디오 |
+| `{callId}/mix.wav` | 양방향 믹스 |
 
 ## 동작 원리
 
-- 수신 오디오(발신자)가 타임라인 역할을 합니다
-- 송신 오디오(AI 응답)는 버퍼에 쌓이고, 수신 청크가 올 때마다 같은 길이만큼 꺼내서 샘플 단위로 믹스합니다
+- 수신 오디오(발신자)의 media timestamp가 통화 타임라인 역할을 합니다
+- 송신 오디오는 `CallSession.sendAudio()` 직전에 가로채어 같은 타임라인에 기록합니다
+- 같은 timestamp에서 연속 송신되는 청크는 오디오 길이만큼 cursor를 전진시켜 서로 겹치지 않습니다
 - 파일은 실시간으로 기록되므로 통화 중 디스크에 바로 저장됩니다
 - 통화 종료 시 WAV 헤더가 최종 크기로 업데이트됩니다

@@ -301,9 +301,6 @@ export class GeminiRealtime implements Session {
     if (this._session && !this._closed) {
       // G.711 ulaw 8kHz → PCM16 8kHz → PCM16 16kHz
       const pcm8k = ulawToPcm16(audio);
-      if (this._recorder) {
-        this._recorder.writeInbound(pcm8k);
-      }
       const pcm16k = resamplePcm16(pcm8k, 8000, 16000);
 
       // SDK Blob.data expects base64 string, not Buffer
@@ -433,9 +430,6 @@ export class GeminiRealtime implements Session {
     if (!this._call) return;
 
     const pcm24k = Buffer.from(b64Data, 'base64');
-    if (this._recorder) {
-      this._recorder.writeOutbound(resamplePcm16(pcm24k, 24000, 8000));
-    }
 
     // PCM16 24kHz → PCM16 8kHz → G.711 ulaw
     const pcm8k = resamplePcm16(pcm24k, 24000, 8000);

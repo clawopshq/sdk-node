@@ -44,7 +44,7 @@ export interface Session {
   /** Start the realtime session with the call session and tools. */
   start(callSession: CallSession, tools?: ToolRegistry): Promise<void>;
   /** Feed raw audio into the session. */
-  feedAudio(audio: Buffer): void;
+  feedAudio(audio: Buffer, timestamp?: number): void;
   /** Feed DTMF digits into the LLM context and trigger a response. */
   feedDtmf?(digits: string): Promise<void>;
   /** Stop the session. */

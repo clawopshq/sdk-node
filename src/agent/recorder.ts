@@ -1,7 +1,7 @@
 /**
  * 3-file call recording: in.wav, out.wav, mix.wav
  *
- * Wall-clock 동기화로 실시간 녹음. 세 파일 모두 동일한 길이로 유지된다.
+ * Inbound/outbound 모두 media timestamp 기반 timeline에 기록한다.
  * recordings/{call_id}/in.wav   — 상대방 음성 (PCM16 8kHz mono)
  * recordings/{call_id}/out.wav  — AI 음성 (PCM16 8kHz mono)
  * recordings/{call_id}/mix.wav  — 양쪽 믹싱 (PCM16 8kHz mono)
@@ -53,8 +53,9 @@ export class AudioRecorder {
   private _inWritten = 0
   private _outWritten = 0
   private _mixWritten = 0
-  private _startTime = 0
   private _started = false
+  private _baseTs: number | null = null
+  private _outCursor = 0
   private _log: Logger = NOOP_LOGGER;
 
   setLogger(logger: Logger): void {
@@ -74,19 +75,20 @@ export class AudioRecorder {
     fs.writeSync(this._fdIn, header)
     fs.writeSync(this._fdOut, header)
     fs.writeSync(this._fdMix, header)
-    this._startTime = performance.now()
     this._started = true
     this._log.info('Recording started: %s', this._dir);
   }
 
-  private _expectedBytes(): number {
-    const elapsed = (performance.now() - this._startTime) / 1000 // ms → s
-    return Math.floor(elapsed * BYTES_PER_SECOND)
+  private _timestampToBytes(mediaTsMs: number): number {
+    if (this._baseTs === null) {
+      this._baseTs = mediaTsMs
+    }
+    const target = Math.floor(((mediaTsMs - this._baseTs) * BYTES_PER_SECOND) / 1000)
+    return Math.max(0, target - (target % 2))
   }
 
-  private _padSilence(fd: number, written: number): number {
-    const expected = this._expectedBytes()
-    let gap = expected - written
+  private _padSilence(fd: number, written: number, target: number): number {
+    let gap = target - written
     if (gap <= 0) return 0
     gap = gap - (gap % 2) // 2-byte align
     if (gap > 0) {
@@ -97,11 +99,14 @@ export class AudioRecorder {
 
   private _writeToMix(data: Buffer, trackPos: number): void {
     if (this._fdMix === null) return
+    data = data.subarray(0, data.length - (data.length % 2))
+    if (data.length === 0) return
     const filePos = 44 + trackPos
 
     if (trackPos < this._mixWritten) {
       // Overlap: read existing, mix, write back
-      const overlap = Math.min(data.length, this._mixWritten - trackPos)
+      let overlap = Math.min(data.length, this._mixWritten - trackPos)
+      overlap = overlap - (overlap % 2)
       const existing = Buffer.alloc(overlap)
       fs.readSync(this._fdMix, existing, 0, overlap, filePos)
       const mixed = mixSamples(existing, data.subarray(0, overlap))
@@ -127,10 +132,13 @@ export class AudioRecorder {
     }
   }
 
-  writeInbound(pcm16_8k: Buffer): void {
+  writeInbound(pcm16_8k: Buffer, mediaTsMs: number = 0): void {
     if (!this._started || this._fdIn === null) return
     try {
-      const gap = this._padSilence(this._fdIn, this._inWritten)
+      pcm16_8k = pcm16_8k.subarray(0, pcm16_8k.length - (pcm16_8k.length % 2))
+      if (pcm16_8k.length === 0) return
+      const target = this._timestampToBytes(mediaTsMs)
+      const gap = this._padSilence(this._fdIn, this._inWritten, target)
       this._inWritten += gap
       const posBefore = this._inWritten
       fs.writeSync(this._fdIn, pcm16_8k)
@@ -141,14 +149,21 @@ export class AudioRecorder {
     }
   }
 
-  writeOutbound(pcm16_8k: Buffer): void {
+  writeOutbound(pcm16_8k: Buffer, mediaTsMs?: number): void {
     if (!this._started || this._fdOut === null) return
     try {
-      const gap = this._padSilence(this._fdOut, this._outWritten)
+      pcm16_8k = pcm16_8k.subarray(0, pcm16_8k.length - (pcm16_8k.length % 2))
+      if (pcm16_8k.length === 0) return
+      let target = this._outCursor
+      if (mediaTsMs !== undefined) {
+        target = Math.max(target, this._timestampToBytes(mediaTsMs))
+      }
+      const gap = this._padSilence(this._fdOut, this._outWritten, target)
       this._outWritten += gap
       const posBefore = this._outWritten
       fs.writeSync(this._fdOut, pcm16_8k)
       this._outWritten += pcm16_8k.length
+      this._outCursor = this._outWritten
       this._writeToMix(pcm16_8k, posBefore)
     } catch (err) {
       this._log.error({ err }, 'Recording write error (outbound)');

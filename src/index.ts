@@ -35,6 +35,8 @@ export { AssignmentLinks } from './resources/assignment-links.js';
 export { Calls } from './resources/calls.js';
 export { Messages } from './resources/messages.js';
 export { Numbers } from './resources/numbers.js';
+export { Recordings } from './resources/recordings.js';
+export type { RecordingDownload } from './resources/recordings.js';
 export { WebhookLogs } from './resources/webhook-logs.js';
 export { AccountContext } from './resources/accounts.js';
 

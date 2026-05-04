@@ -3,6 +3,7 @@ import { AssignmentLinks } from './assignment-links.js';
 import { Calls } from './calls.js';
 import { Messages } from './messages.js';
 import { Numbers } from './numbers.js';
+import { Recordings } from './recordings.js';
 import { WebhookLogs } from './webhook-logs.js';
 
 export class AccountContext {
@@ -24,6 +25,10 @@ export class AccountContext {
 
   get numbers(): Numbers {
     return new Numbers(this._client, this._accountId);
+  }
+
+  get recordings(): Recordings {
+    return new Recordings(this._client, this._accountId);
   }
 
   get webhookLogs(): WebhookLogs {

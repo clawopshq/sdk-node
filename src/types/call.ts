@@ -8,6 +8,7 @@ export const CallSchema = z
     from: z.string(),
     direction: z.enum(['outbound', 'inbound']),
     duration: z.number().nullable().optional(),
+    recordingUrl: z.string().nullable().optional(),
     accountId: z.string(),
     dateCreated: z.string(),
     dateUpdated: z.string().nullable().optional(),

@@ -70,18 +70,17 @@ export class APIClient {
     return headers;
   }
 
-  protected async _request<T>(
+  protected async _send(
     method: string,
     path: string,
     options: {
       body?: Record<string, unknown> | null;
       query?: Record<string, unknown> | null;
-      castTo?: z.ZodType<T>;
       extraHeaders?: Record<string, string>;
       extraQuery?: Record<string, unknown>;
       timeout?: number;
     } = {},
-  ): Promise<T | null> {
+  ): Promise<Response> {
     const headers = this._buildHeaders(options.extraHeaders);
 
     const params = new URLSearchParams();
@@ -128,22 +127,7 @@ export class APIClient {
         clearTimeout(timeoutId);
       }
 
-      if (response.ok) {
-        if (response.status === 204 || !options.castTo) {
-          return null;
-        }
-        let json: unknown;
-        try {
-          json = await response.json();
-        } catch {
-          throw new APIResponseValidationError({ status: response.status }, { method, url });
-        }
-        const parsed = options.castTo.safeParse(json);
-        if (!parsed.success) {
-          throw new APIResponseValidationError({ status: response.status }, { method, url });
-        }
-        return parsed.data;
-      }
+      if (response.ok) return response;
 
       if (retriesLeft > 0 && this._shouldRetry(response.status)) {
         retriesLeft--;
@@ -159,6 +143,35 @@ export class APIClient {
       }
       throw makeStatusError(response.status, body, response.headers, { method, url });
     }
+  }
+
+  protected async _request<T>(
+    method: string,
+    path: string,
+    options: {
+      body?: Record<string, unknown> | null;
+      query?: Record<string, unknown> | null;
+      castTo?: z.ZodType<T>;
+      extraHeaders?: Record<string, string>;
+      extraQuery?: Record<string, unknown>;
+      timeout?: number;
+    } = {},
+  ): Promise<T | null> {
+    const response = await this._send(method, path, options);
+    if (response.status === 204 || !options.castTo) return null;
+
+    const url = `${this._baseURL}${path}`;
+    let json: unknown;
+    try {
+      json = await response.json();
+    } catch {
+      throw new APIResponseValidationError({ status: response.status }, { method, url });
+    }
+    const parsed = options.castTo.safeParse(json);
+    if (!parsed.success) {
+      throw new APIResponseValidationError({ status: response.status }, { method, url });
+    }
+    return parsed.data;
   }
 
   private _shouldRetry(status: number): boolean {
@@ -214,6 +227,18 @@ export class APIClient {
   ): Promise<T> {
     const result = await this._request<T>('PUT', path, options);
     return result!;
+  }
+
+  async _getRaw(
+    path: string,
+    options: {
+      query?: Record<string, unknown> | null;
+      extraHeaders?: Record<string, string>;
+      extraQuery?: Record<string, unknown>;
+      timeout?: number;
+    } = {},
+  ): Promise<Response> {
+    return this._send('GET', path, options);
   }
 
   async _delete(

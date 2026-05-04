@@ -201,6 +201,25 @@ if (summary.status === 'completed') {
 }
 ```
 
+### 통화 녹음 (Recordings)
+
+콘솔에서 들리는 것과 동일한 서버측 MixMonitor 원본(WAV PCM 16bit mono 8kHz)을 다운로드합니다. SDK 측 mix.wav가 아닌 서버에서 합성된 파일이라 싱크/볼륨이 정상입니다.
+
+```typescript
+import { writeFile } from 'node:fs/promises';
+
+// callList 응답의 recordingUrl 필드로 녹음 유무 확인 가능
+const list = await client.calls.list({ pageSize: 10 });
+for (const call of list.data) {
+  if (!call.recordingUrl) continue; // failed/no-answer 등은 null
+  const rec = await client.recordings.download(call.callId);
+  await writeFile(rec.filename ?? `${call.callId}.wav`, Buffer.from(rec.data));
+  console.log(rec.contentType, rec.data.byteLength, 'bytes');
+}
+```
+
+녹음이 없는 통화(`recordingUrl: null`)에 호출하면 `NotFoundError(404)` 가 발생합니다.
+
 ### 전화번호 (Numbers)
 
 ```typescript

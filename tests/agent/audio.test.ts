@@ -3,6 +3,8 @@ import {
   ulawToPcm16,
   pcm16ToUlaw,
   resamplePcm16,
+  applyPcm16Gain,
+  applyUlawGain,
   DECODE_TABLE,
 } from '../../src/agent/audio.js';
 
@@ -58,5 +60,53 @@ describe('audio codec', () => {
 
   it('DECODE_TABLE has 256 entries', () => {
     expect(DECODE_TABLE.length).toBe(256);
+  });
+
+  it('applyPcm16Gain scales samples and clips to int16 range', () => {
+    const pcm = Buffer.alloc(8);
+    pcm.writeInt16LE(1000, 0);
+    pcm.writeInt16LE(-1000, 2);
+    pcm.writeInt16LE(20000, 4);
+    pcm.writeInt16LE(-20000, 6);
+    const out = applyPcm16Gain(pcm, 2.0);
+    expect(out.readInt16LE(0)).toBe(2000);
+    expect(out.readInt16LE(2)).toBe(-2000);
+    expect(out.readInt16LE(4)).toBe(32767);
+    expect(out.readInt16LE(6)).toBe(-32768);
+  });
+
+  it('applyPcm16Gain mutes with gain=0', () => {
+    const pcm = Buffer.alloc(4);
+    pcm.writeInt16LE(1000, 0);
+    pcm.writeInt16LE(-1000, 2);
+    const out = applyPcm16Gain(pcm, 0);
+    expect(out.readInt16LE(0)).toBe(0);
+    expect(out.readInt16LE(2)).toBe(0);
+  });
+
+  it('applyPcm16Gain returns same buffer for gain=1.0', () => {
+    const pcm = Buffer.from([0x12, 0x34, 0x56, 0x78]);
+    expect(applyPcm16Gain(pcm, 1.0)).toBe(pcm);
+  });
+
+  it('applyPcm16Gain rejects invalid gain', () => {
+    expect(() => applyPcm16Gain(Buffer.alloc(2), -1)).toThrow(/gain/);
+    expect(() => applyPcm16Gain(Buffer.alloc(2), Infinity)).toThrow(/gain/);
+    expect(() => applyPcm16Gain(Buffer.alloc(2), NaN)).toThrow(/gain/);
+  });
+
+  it('applyUlawGain mutes ulaw to silence (0xFF)', () => {
+    const pcm = Buffer.alloc(4);
+    pcm.writeInt16LE(1000, 0);
+    pcm.writeInt16LE(-1000, 2);
+    const ulaw = pcm16ToUlaw(pcm);
+    const out = applyUlawGain(ulaw, 0);
+    expect(out[0]).toBe(0xff);
+    expect(out[1]).toBe(0xff);
+  });
+
+  it('applyUlawGain returns same buffer for gain=1.0', () => {
+    const ulaw = Buffer.from([0x12, 0x34]);
+    expect(applyUlawGain(ulaw, 1.0)).toBe(ulaw);
   });
 });

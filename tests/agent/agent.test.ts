@@ -22,6 +22,31 @@ describe('ClawOpsAgent', () => {
     expect(agent).toBeDefined();
   });
 
+  it('accepts rxGain and txGain', () => {
+    const agent = new ClawOpsAgent({
+      apiKey: 'sk_test',
+      accountId: 'AC123',
+      from: '07012341234',
+      session: mockSession,
+      rxGain: 0.8,
+      txGain: 1.2,
+    });
+    expect((agent as unknown as { _rxGain: number })._rxGain).toBe(0.8);
+    expect((agent as unknown as { _txGain: number })._txGain).toBe(1.2);
+  });
+
+  it('rejects invalid rxGain/txGain', () => {
+    const base = {
+      apiKey: 'sk_test',
+      accountId: 'AC123',
+      from: '07012341234',
+      session: mockSession,
+    };
+    expect(() => new ClawOpsAgent({ ...base, rxGain: -0.1 })).toThrow(/rxGain/);
+    expect(() => new ClawOpsAgent({ ...base, txGain: Infinity })).toThrow(/txGain/);
+    expect(() => new ClawOpsAgent({ ...base, rxGain: NaN })).toThrow(/rxGain/);
+  });
+
   it('registers tools via agent.tool() with object', () => {
     const agent = new ClawOpsAgent({
       apiKey: 'sk_test',

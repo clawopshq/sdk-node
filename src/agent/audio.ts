@@ -92,6 +92,36 @@ export function ulawToPcm16(ulaw: Buffer): Buffer {
 }
 
 /**
+ * Apply multiplicative gain to PCM16 little-endian audio.
+ * gain=1.0 is pass-through, 0 is mute, 2.0 is 2x amplification (clipped to int16 range).
+ */
+export function applyPcm16Gain(pcm: Buffer, gain: number): Buffer {
+  if (!pcm.length) return Buffer.alloc(0);
+  if (gain === 1.0) return pcm;
+  if (!Number.isFinite(gain) || gain < 0) {
+    throw new Error('gain must be a finite number >= 0');
+  }
+  const nSamples = pcm.length >> 1;
+  const out = Buffer.alloc(nSamples * 2);
+  for (let i = 0; i < nSamples; i++) {
+    let value = Math.round(pcm.readInt16LE(i * 2) * gain);
+    if (value > 32767) value = 32767;
+    else if (value < -32768) value = -32768;
+    out.writeInt16LE(value, i * 2);
+  }
+  return out;
+}
+
+/**
+ * Apply multiplicative gain to G.711 mu-law audio.
+ */
+export function applyUlawGain(ulaw: Buffer, gain: number): Buffer {
+  if (!ulaw.length) return Buffer.alloc(0);
+  if (gain === 1.0) return ulaw;
+  return pcm16ToUlaw(applyPcm16Gain(ulawToPcm16(ulaw), gain));
+}
+
+/**
  * Resample PCM16 audio using linear interpolation.
  */
 export function resamplePcm16(pcm: Buffer, fromRate: number, toRate: number): Buffer {

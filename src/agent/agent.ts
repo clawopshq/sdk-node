@@ -4,7 +4,7 @@
 
 import { DEFAULT_BASE_URL } from '../constants.js';
 import { AgentConnectionError, AgentError } from '../error.js';
-import { ulawToPcm16 } from './audio.js';
+import { applyUlawGain, ulawToPcm16 } from './audio.js';
 import { ControlWebSocket } from './control-ws.js';
 import type { ControlEvent } from './control-ws.js';
 import { MCPClient } from './mcp/client.js';
@@ -63,6 +63,16 @@ export interface ClawOpsAgentOptions {
   logger?: Logger;
   /** Tool 실행 관련 설정. */
   toolConfig?: ToolConfig;
+  /**
+   * Gain applied to inbound audio (caller → AI). 1.0 = pass-through (default), 0 = mute, 2.0 = 2x amplify.
+   * AI/STT receive the gained audio, and recording captures it post-gain.
+   */
+  rxGain?: number;
+  /**
+   * Gain applied to outbound audio (AI → caller). 1.0 = pass-through (default), 0 = mute, 2.0 = 2x amplify.
+   * The caller hears the gained audio, and recording captures it post-gain.
+   */
+  txGain?: number;
 }
 
 export class ClawOpsAgent {
@@ -88,6 +98,8 @@ export class ClawOpsAgent {
   private _pipelineLog: Logger;
   private _isPipelineSession = false;
   private _holdAudioChunks: Buffer[] | null = null;
+  private _rxGain: number;
+  private _txGain: number;
 
   constructor(options: ClawOpsAgentOptions) {
     this._apiKey = options.apiKey ?? process.env['CLAWOPS_API_KEY'] ?? '';
@@ -100,6 +112,8 @@ export class ClawOpsAgent {
     this._mcpServers = options.mcpServers ?? [];
     this._builtinTools = resolveBuiltinTools(options.builtinTools ?? BuiltinTool.ALL);
     this._passiveDtmfDebounceMs = options.passiveDtmfDebounceMs ?? 500;
+    this._rxGain = ClawOpsAgent._validateGain('rxGain', options.rxGain ?? 1.0);
+    this._txGain = ClawOpsAgent._validateGain('txGain', options.txGain ?? 1.0);
 
     // Configure tracing
     if (options.tracing) {
@@ -114,6 +128,13 @@ export class ClawOpsAgent {
     if (options.toolConfig?.holdAudio) {
       this._holdAudioChunks = loadHoldAudio(options.toolConfig.holdAudio as true | string | Buffer);
     }
+  }
+
+  private static _validateGain(name: string, gain: number): number {
+    if (typeof gain !== 'number' || !Number.isFinite(gain) || gain < 0) {
+      throw new AgentError(`${name}=${gain} must be a finite number >= 0`);
+    }
+    return gain;
   }
 
   /**
@@ -464,10 +485,11 @@ export class ClawOpsAgent {
         // Bind transport functions to session — sessions send ulaw bytes directly
         session._bindTransport(
           (audio: Buffer) => {
+            const gained = applyUlawGain(audio, this._txGain);
             if (recorder) {
-              recorder.writeOutbound(ulawToPcm16(audio), latestMediaTs);
+              recorder.writeOutbound(ulawToPcm16(gained), latestMediaTs);
             }
-            mediaWs.sendAudio(audio.toString('base64'));
+            mediaWs.sendAudio(gained.toString('base64'));
             session.recordFirstResponse();
           },
           () => {
@@ -525,11 +547,12 @@ export class ClawOpsAgent {
         // Handle inbound audio — feed raw ulaw to session (each session converts as needed)
         mediaWs.onAudio((ulawAudio: Buffer, timestamp: number) => {
           latestMediaTs = timestamp;
+          const gained = applyUlawGain(ulawAudio, this._rxGain);
           if (recorder) {
-            recorder.writeInbound(ulawToPcm16(ulawAudio), timestamp);
+            recorder.writeInbound(ulawToPcm16(gained), timestamp);
           }
           if (sessionHandler) {
-            sessionHandler.feedAudio(ulawAudio, timestamp);
+            sessionHandler.feedAudio(gained, timestamp);
           }
         });
 

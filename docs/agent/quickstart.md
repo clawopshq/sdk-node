@@ -82,6 +82,13 @@ const agent = new ClawOpsAgent({
   // 녹음
   recording: true,
   recordingPath: './recordings',
+
+  // 오디오 게인 (AI 기준)
+  // rx (receive) = AI가 수신하는 오디오 = caller가 말하는 소리 → STT/LLM이 듣는 음량
+  // tx (transmit) = AI가 송신하는 오디오 = AI가 말하는 소리 → caller가 듣는 음량
+  // 값: 1.0 = 원본 그대로 (기본), 0 = 완전 무음, 2.0 = 2배 증폭, 0.5 = 절반으로 감쇄
+  rxGain: 1.0,
+  txGain: 1.0,
 });
 ```
 

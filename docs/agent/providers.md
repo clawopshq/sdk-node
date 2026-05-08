@@ -10,7 +10,7 @@ ClawOps Voice Agent SDK의 제공자 목록입니다. 검증 상태를 확인하
 
 | 제공자                 | 클래스           | 기본 모델                       | Tool Calling | 환경변수         | Python | Node |     상태      | 검증일     |
 | ---------------------- | ---------------- | ------------------------------- | :----------: | ---------------- | :----: | :--: | :-----------: | ---------- |
-| OpenAI Realtime API    | `OpenAIRealtime` | `gpt-realtime-1.5`              |      ✅      | `OPENAI_API_KEY` |   ✅   |  ✅  | **검증 완료** | 2026-03-12 |
+| OpenAI Realtime API    | `OpenAIRealtime` | `gpt-realtime-2`              |      ✅      | `OPENAI_API_KEY` |   ✅   |  ✅  | **검증 완료** | 2026-03-12 |
 | Google Gemini Live API | `GeminiRealtime` | `gemini-3.1-flash-live-preview` |      ✅      | `GOOGLE_API_KEY` |   —    |  ✅  |    검증 중    | —          |
 
 > **Vertex AI:** `GOOGLE_API_KEY` 대신 `GOOGLE_GENAI_USE_VERTEXAI=true`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` 환경변수를 설정하면 Google Cloud Vertex AI 백엔드를 사용할 수 있습니다. ADC(Application Default Credentials) 인증이 필요합니다.

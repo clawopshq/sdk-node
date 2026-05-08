@@ -69,7 +69,7 @@ const agent = new ClawOpsAgent({
   session: new OpenAIRealtime({
     systemPrompt: '상담원입니다.',
     voice: 'marin', // marin, ash, ballad, coral, sage, verse
-    model: 'gpt-realtime-1.5',
+    model: 'gpt-realtime-2',
     language: 'ko',
     turnDetection: { type: 'semantic_vad', eagerness: 'medium' },
     greeting: true,

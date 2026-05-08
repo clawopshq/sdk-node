@@ -37,7 +37,7 @@ export interface OpenAIRealtimeOptions {
   apiKey?: string;
   /** System prompt / instructions for the AI. */
   systemPrompt?: string;
-  /** Model to use. Default: 'gpt-realtime-1.5' */
+  /** Model to use. Default: 'gpt-realtime-2' */
   model?: string;
   /** Voice ID. Default: 'marin' */
   voice?: string;
@@ -113,7 +113,7 @@ export class OpenAIRealtime implements Session {
   constructor(options: OpenAIRealtimeOptions = {}) {
     this._apiKey = options.apiKey ?? process.env['OPENAI_API_KEY'] ?? '';
     this._systemPrompt = options.systemPrompt ?? '';
-    this._model = options.model ?? 'gpt-realtime-1.5';
+    this._model = options.model ?? 'gpt-realtime-2';
     this._voice = options.voice ?? 'marin';
     this._language = options.language ?? 'ko';
     this._turnDetection =

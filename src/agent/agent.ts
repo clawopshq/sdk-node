@@ -340,9 +340,7 @@ export class ClawOpsAgent {
     }
 
     if (mediaUrl) {
-      this._startCallSession(session, mediaUrl).catch((err) => {
-        this._log.error({ err }, 'Call session error: %s', callId);
-      });
+      this._safeStartCallSession(session, mediaUrl, callId);
     }
   }
 
@@ -383,9 +381,7 @@ export class ClawOpsAgent {
 
     if (mediaUrl) {
       this._log.info('Outbound call answered: %s -> %s (%s)', this._fromNumber, session.toNumber, callId);
-      this._startCallSession(session, mediaUrl).catch((err) => {
-        this._log.error({ err }, 'Call session error: %s', callId);
-      });
+      this._safeStartCallSession(session, mediaUrl, callId);
     }
   }
 
@@ -437,6 +433,34 @@ export class ClawOpsAgent {
         });
       }
     }, this._passiveDtmfDebounceMs);
+  }
+
+  /**
+   * _startCallSession 의 예외를 잡아 control WS 로 call.session_failed 전송한다.
+   *
+   * OpenAI/Gemini API 키 누락 등 session.start() 단계 실패는 media WS connect 에
+   * 도달하지 못해 call-engine 이 30 초간 무음 통화를 유지하게 만든다. 서버에 즉시
+   * 알려서 fail-fast 시키고 _activeSessions 에서 정리한다.
+   */
+  private _safeStartCallSession(session: CallSession, mediaWsUrl: string, callId: string): void {
+    this._startCallSession(session, mediaWsUrl).catch((err: unknown) => {
+      const error = err as Error;
+      this._log.error({ err }, 'Session start failed for %s', callId);
+      if (this._controlWs) {
+        try {
+          this._controlWs.send({
+            event: 'call.session_failed',
+            callId,
+            reason: error?.name ?? 'Error',
+            message: error?.message ?? String(err),
+          });
+        } catch {
+          // best-effort
+        }
+      }
+      this._activeSessions.delete(callId);
+      this._callSessions.delete(callId);
+    });
   }
 
   private async _startCallSession(session: CallSession, mediaWsUrl: string): Promise<void> {

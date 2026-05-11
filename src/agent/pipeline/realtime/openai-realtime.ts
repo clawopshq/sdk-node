@@ -112,6 +112,11 @@ export class OpenAIRealtime implements Session {
 
   constructor(options: OpenAIRealtimeOptions = {}) {
     this._apiKey = options.apiKey ?? process.env['OPENAI_API_KEY'] ?? '';
+    if (!this._apiKey) {
+      throw new Error(
+        'OpenAI API key is required. Set OPENAI_API_KEY env var or pass apiKey option.',
+      );
+    }
     this._systemPrompt = options.systemPrompt ?? '';
     this._model = options.model ?? 'gpt-realtime-2';
     this._voice = options.voice ?? 'marin';
@@ -144,10 +149,6 @@ export class OpenAIRealtime implements Session {
     this._closed = false;
     this._playback = null;
     this._latestMediaTs = 0;
-
-    if (!this._apiKey) {
-      throw new Error('OpenAI API key is required. Set OPENAI_API_KEY or pass apiKey option.');
-    }
 
     const { WebSocket } = await import('ws');
     const url = `${OPENAI_REALTIME_URL}${this._model}`;

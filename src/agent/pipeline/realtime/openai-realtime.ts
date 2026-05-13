@@ -156,7 +156,6 @@ export class OpenAIRealtime implements Session {
     this._ws = new WebSocket(url, {
       headers: {
         Authorization: `Bearer ${this._apiKey}`,
-        'OpenAI-Beta': 'realtime=v1',
       },
     });
 
@@ -247,17 +246,24 @@ export class OpenAIRealtime implements Session {
     this._send({
       type: 'session.update',
       session: {
-        modalities: ['text', 'audio'],
-        voice: this._voice,
+        type: 'realtime',
+        output_modalities: ['audio'],
         instructions: this._systemPrompt,
-        input_audio_format: 'g711_ulaw',
-        output_audio_format: 'g711_ulaw',
-        input_audio_transcription: {
-          model: 'whisper-1',
-          language: this._language,
+        audio: {
+          input: {
+            format: { type: 'audio/pcmu' },
+            noise_reduction: { type: 'far_field' },
+            transcription: {
+              model: 'whisper-1',
+              language: this._language,
+            },
+            turn_detection: this._turnDetection,
+          },
+          output: {
+            format: { type: 'audio/pcmu' },
+            voice: this._voice,
+          },
         },
-        input_audio_noise_reduction: { type: 'far_field' },
-        turn_detection: this._turnDetection,
         tools: toolSchemas,
       },
     });
@@ -267,11 +273,11 @@ export class OpenAIRealtime implements Session {
     const type = msg['type'] as string;
 
     switch (type) {
-      case 'response.audio.delta': {
+      case 'response.output_audio.delta': {
         this._handleAudioDelta(msg);
         break;
       }
-      case 'response.audio.done': {
+      case 'response.output_audio.done': {
         if (this._playback) {
           this._playback.generating = false;
           if (this._playback.audioRemainder.length > 0) {
@@ -310,7 +316,7 @@ export class OpenAIRealtime implements Session {
         }
         break;
       }
-      case 'response.audio_transcript.done': {
+      case 'response.output_audio_transcript.done': {
         // Assistant transcript
         if (this._call) {
           this._call._emit('transcript', 'assistant', (msg['transcript'] as string) ?? '');

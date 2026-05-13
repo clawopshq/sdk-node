@@ -254,7 +254,7 @@ export class OpenAIRealtime implements Session {
             format: { type: 'audio/pcmu' },
             noise_reduction: { type: 'far_field' },
             transcription: {
-              model: 'whisper-1',
+              model: 'gpt-realtime-whisper',
               language: this._language,
             },
             turn_detection: this._turnDetection,

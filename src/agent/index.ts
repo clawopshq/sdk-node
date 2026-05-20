@@ -10,6 +10,12 @@ export type { ClawOpsAgentOptions, AgentEventType, ToolConfig } from './agent.js
 export { CallSession } from './session.js';
 export type { CallDirection, CallStatus } from './session.js';
 
+// Control WebSocket — account-wide call event stream. Useful for multi-tenant
+// workers that dispatch per-call configuration dynamically instead of binding
+// one ClawOpsAgent per number.
+export { ControlWebSocket, buildControlWsUrl } from './control-ws.js';
+export type { ControlWsOptions, ControlEvent } from './control-ws.js';
+
 // Media WebSocket
 export { MediaWebSocket } from './media-ws.js';
 export type { MediaStartEvent, MediaEvent, DtmfEvent } from './media-ws.js';

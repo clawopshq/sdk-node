@@ -73,7 +73,16 @@ export interface ClawOpsAgentOptions {
    * The caller hears the gained audio, and recording captures it post-gain.
    */
   txGain?: number;
+  /**
+   * AMD (Answering Machine Detection). Instance-wide default for `call()`.
+   * - 'Enable': run AMD, deliver AnsweredBy via webhook, continue the call (Twilio-style)
+   * - 'Hangup': run AMD, auto-hangup on machine + billed_duration=0 (Vonage-style)
+   * - undefined: AMD disabled (default behaviour preserved)
+   */
+  machineDetection?: MachineDetection;
 }
+
+export type MachineDetection = 'Enable' | 'Hangup';
 
 export class ClawOpsAgent {
   private _apiKey: string;
@@ -100,6 +109,9 @@ export class ClawOpsAgent {
   private _holdAudioChunks: Buffer[] | null = null;
   private _rxGain: number;
   private _txGain: number;
+  private _machineDetection?: MachineDetection;
+  private _prewarmTasks = new Map<string, Promise<void>>();
+  private _prewarmFailed = new Set<string>();
 
   constructor(options: ClawOpsAgentOptions) {
     this._apiKey = options.apiKey ?? process.env['CLAWOPS_API_KEY'] ?? '';
@@ -114,6 +126,7 @@ export class ClawOpsAgent {
     this._passiveDtmfDebounceMs = options.passiveDtmfDebounceMs ?? 500;
     this._rxGain = ClawOpsAgent._validateGain('rxGain', options.rxGain ?? 1.0);
     this._txGain = ClawOpsAgent._validateGain('txGain', options.txGain ?? 1.0);
+    this._machineDetection = options.machineDetection;
 
     // Configure tracing
     if (options.tracing) {
@@ -268,11 +281,21 @@ export class ClawOpsAgent {
    * Initiate an outbound call.
    * Matches Python SDK: agent.call(to, { timeout })
    */
-  async call(to: string, options?: { timeout?: number }): Promise<CallSession> {
+  async call(
+    to: string,
+    options?: { timeout?: number; machineDetection?: MachineDetection },
+  ): Promise<CallSession> {
     await this.connect();
 
     const url = `${this._baseUrl}/v1/accounts/${this._accountId}/calls`;
-    const body = { To: to, From: this._fromNumber, Timeout: options?.timeout ?? 60 };
+    // Call-level override > instance default > undefined.
+    const effectiveMd = options?.machineDetection ?? this._machineDetection;
+    const body: Record<string, unknown> = {
+      To: to,
+      From: this._fromNumber,
+      Timeout: options?.timeout ?? 60,
+    };
+    if (effectiveMd) body['MachineDetection'] = effectiveMd;
     const resp = await fetch(url, {
       method: 'POST',
       headers: {
@@ -379,10 +402,45 @@ export class ClawOpsAgent {
       this._activeSessions.set(callId, session);
     }
 
+    // Kick off LLM prewarm in parallel with media WS setup. This shaves the
+    // LLM connect + session.update RTT off the user-perceived first-audio
+    // latency. _startCallSession awaits this task and uses attach() instead
+    // of start() when it resolves.
+    this._startPrewarm(callId);
+
     if (mediaUrl) {
       this._log.info('Outbound call answered: %s -> %s (%s)', this._fromNumber, session.toNumber, callId);
       this._safeStartCallSession(session, mediaUrl, callId);
     }
+  }
+
+  /**
+   * Start the LLM session prewarm task for the given callId. Safe to call
+   * multiple times — only the first invocation starts the task.
+   */
+  private _startPrewarm(callId: string): void {
+    if (this._prewarmTasks.has(callId)) return;
+    const sessionHandler = this._session;
+    if (typeof sessionHandler.prewarm !== 'function') return;
+
+    const task = (async () => {
+      try {
+        const PREWARM_TIMEOUT_MS = 10_000;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('prewarm timeout')), PREWARM_TIMEOUT_MS);
+        });
+        try {
+          await Promise.race([sessionHandler.prewarm(), timeout]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      } catch (err) {
+        this._log.warn({ err, callId }, 'prewarm failed; will fall back to start()');
+        this._prewarmFailed.add(callId);
+      }
+    })();
+    this._prewarmTasks.set(callId, task);
   }
 
   private _handleRinging(event: ControlEvent): void {

@@ -35,6 +35,31 @@ describe('ClawOpsAgent', () => {
     expect((agent as unknown as { _txGain: number })._txGain).toBe(1.2);
   });
 
+  it('accepts machineDetection default', () => {
+    const agent = new ClawOpsAgent({
+      apiKey: 'sk_test',
+      accountId: 'AC123',
+      from: '07012341234',
+      session: mockSession,
+      machineDetection: 'Hangup',
+    });
+    expect(
+      (agent as unknown as { _machineDetection?: string })._machineDetection,
+    ).toBe('Hangup');
+  });
+
+  it('machineDetection defaults to undefined', () => {
+    const agent = new ClawOpsAgent({
+      apiKey: 'sk_test',
+      accountId: 'AC123',
+      from: '07012341234',
+      session: mockSession,
+    });
+    expect(
+      (agent as unknown as { _machineDetection?: string })._machineDetection,
+    ).toBeUndefined();
+  });
+
   it('rejects invalid rxGain/txGain', () => {
     const base = {
       apiKey: 'sk_test',

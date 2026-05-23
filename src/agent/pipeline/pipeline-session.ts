@@ -129,12 +129,17 @@ export class PipelineSession implements Session {
     }
   }
 
-  async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
-    this._callSession = callSession;
-    this._tools = tools ?? null;
+  /**
+   * Pre-bootstrap conversation state and (optionally) trigger greeting synthesis
+   * before a real CallSession is attached. Audio chunks are buffered into a
+   * BufferingCall until attach() flushes them.
+   */
+  async prewarm(): Promise<void> {
+    const { BufferingCall } = await import('./buffering-call.js');
+    this._callSession = new BufferingCall() as unknown as CallSession;
     this._running = true;
-    this._log.info('PipelineSession started');
     this._conversation = [];
+    this._log.info('PipelineSession prewarmed');
 
     if (this._systemPrompt) {
       this._conversation.push({
@@ -143,17 +148,33 @@ export class PipelineSession implements Session {
       });
     }
 
-    // Generate initial greeting if enabled
     if (this._greeting) {
       this._generateGreeting().catch((err) => {
         this._log.error({ err }, 'Greeting error');
       });
     }
 
-    // Start the STT listening loop
     this._runSttLoop().catch((err) => {
       this._log.error({ err }, 'STT loop error');
     });
+  }
+
+  /** Attach a real CallSession to the prewarmed session and flush buffered audio. */
+  async attach(callSession: CallSession): Promise<void> {
+    const { BufferingCall } = await import('./buffering-call.js');
+    const prev = this._callSession;
+    this._callSession = callSession;
+    if (prev instanceof BufferingCall) {
+      for (const chunk of prev.drainBuffer()) {
+        callSession.sendAudio(chunk);
+      }
+    }
+  }
+
+  async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
+    this._tools = tools ?? null;
+    await this.prewarm();
+    await this.attach(callSession);
   }
 
   feedAudio(audio: Buffer): void {

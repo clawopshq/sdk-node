@@ -143,37 +143,30 @@ export class OpenAIRealtime implements Session {
     this._holdAudioChunks = chunks;
   }
 
-  async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
-    this._call = callSession;
-    if (tools) this._tools = tools;
+  /** Open WS + session.update + (optional) response.create without a CallSession. */
+  async prewarm(): Promise<void> {
+    const { BufferingCall } = await import('../buffering-call.js');
+    this._call = new BufferingCall() as unknown as CallSession;
     this._closed = false;
     this._playback = null;
     this._latestMediaTs = 0;
 
     const { WebSocket } = await import('ws');
     const url = `${OPENAI_REALTIME_URL}${this._model}`;
-
     this._ws = new WebSocket(url, {
-      headers: {
-        Authorization: `Bearer ${this._apiKey}`,
-      },
+      headers: { Authorization: `Bearer ${this._apiKey}` },
     });
 
     return new Promise<void>((resolve, reject) => {
       const ws = this._ws!;
-
       ws.on('open', () => {
         this._sendSessionUpdate();
-        this._log.info('OpenAI Realtime connected');
-
-        // Send initial greeting if enabled (matching Python SDK)
+        this._log.info('OpenAI Realtime connected (prewarm)');
         if (this._greeting) {
           this._send({ type: 'response.create' });
         }
-
         resolve();
       });
-
       ws.on('message', (data: Buffer | string) => {
         try {
           const msg = JSON.parse(data.toString()) as Record<string, unknown>;
@@ -182,11 +175,9 @@ export class OpenAIRealtime implements Session {
           // Ignore parse errors
         }
       });
-
       ws.on('close', () => {
         this._closed = true;
       });
-
       ws.on('error', (err: Error) => {
         if (!this._ws) {
           reject(err);
@@ -194,6 +185,24 @@ export class OpenAIRealtime implements Session {
         this._log.error({ err }, 'OpenAI Realtime WS error');
       });
     });
+  }
+
+  /** Attach a real CallSession to the prewarmed session and flush buffered audio. */
+  async attach(callSession: CallSession): Promise<void> {
+    const { BufferingCall } = await import('../buffering-call.js');
+    const prev = this._call;
+    this._call = callSession;
+    if (prev instanceof BufferingCall) {
+      for (const chunk of prev.drainBuffer()) {
+        callSession.sendAudio(chunk);
+      }
+    }
+  }
+
+  async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
+    if (tools) this._tools = tools;
+    await this.prewarm();
+    await this.attach(callSession);
   }
 
   async feedDtmf(digits: string): Promise<void> {

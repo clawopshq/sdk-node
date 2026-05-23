@@ -100,6 +100,8 @@ export class ClawOpsAgent {
   private _holdAudioChunks: Buffer[] | null = null;
   private _rxGain: number;
   private _txGain: number;
+  private _prewarmTasks = new Map<string, Promise<void>>();
+  private _prewarmFailed = new Set<string>();
 
   constructor(options: ClawOpsAgentOptions) {
     this._apiKey = options.apiKey ?? process.env['CLAWOPS_API_KEY'] ?? '';
@@ -352,6 +354,13 @@ export class ClawOpsAgent {
       session._markEnded();
       this._activeSessions.delete(callId);
     }
+    this._cleanupPrewarm(callId);
+  }
+
+  /** Drop prewarm bookkeeping for a callId. Used on hangup/failure paths. */
+  private _cleanupPrewarm(callId: string): void {
+    this._prewarmTasks.delete(callId);
+    this._prewarmFailed.delete(callId);
   }
 
   private _handleOutboundReady(event: ControlEvent): void {
@@ -379,10 +388,47 @@ export class ClawOpsAgent {
       this._activeSessions.set(callId, session);
     }
 
+    // Kick off LLM prewarm in parallel with media WS setup so the LLM
+    // connect + session.update RTT can overlap with media bridge bring-up.
+    // _startCallSession awaits this task and uses attach() instead of start()
+    // when it resolves.
+    this._startPrewarm(callId);
+
     if (mediaUrl) {
       this._log.info('Outbound call answered: %s -> %s (%s)', this._fromNumber, session.toNumber, callId);
       this._safeStartCallSession(session, mediaUrl, callId);
     }
+  }
+
+  /**
+   * Start the LLM session prewarm task for the given callId. Safe to call
+   * multiple times — only the first invocation starts the task. Failures are
+   * recorded in _prewarmFailed so the call-session path can fall back to start().
+   */
+  private _startPrewarm(callId: string): void {
+    if (this._prewarmTasks.has(callId)) return;
+    const sessionHandler = this._session;
+    if (typeof sessionHandler.prewarm !== 'function') return;
+
+    const PREWARM_TIMEOUT_MS = 10_000;
+    const task = (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('prewarm timeout')),
+            PREWARM_TIMEOUT_MS,
+          );
+        });
+        await Promise.race([sessionHandler.prewarm(), timeout]);
+      } catch (err) {
+        this._log.warn({ err, callId }, 'prewarm failed; will fall back to start()');
+        this._prewarmFailed.add(callId);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    })();
+    this._prewarmTasks.set(callId, task);
   }
 
   private _handleRinging(event: ControlEvent): void {
@@ -402,6 +448,7 @@ export class ClawOpsAgent {
       session._markEnded();
       this._activeSessions.delete(callId);
     }
+    this._cleanupPrewarm(callId);
   }
 
   private _onDtmfEvent(callSession: CallSession, digit: string): void {
@@ -600,8 +647,33 @@ export class ClawOpsAgent {
           await mediaWs.connect(mediaWsUrl, this._apiKey);
           this._log.info('Media stream started: %s', session.callId);
 
-          // Start the session handler
-          await sessionHandler.start(session, sessionTools);
+          // If a prewarm task was kicked off earlier (outbound_ready hook),
+          // await it and then attach() instead of doing a full start(). This
+          // trims the LLM connect + handshake off the perceived first-audio
+          // latency. Falls back to start() if prewarm failed/timed out.
+          const prewarmTask = this._prewarmTasks.get(session.callId);
+          if (prewarmTask && !this._prewarmFailed.has(session.callId)) {
+            try {
+              await prewarmTask;
+              if (this._prewarmFailed.has(session.callId)) {
+                await sessionHandler.start(session, sessionTools);
+              } else {
+                if (
+                  'setToolRegistry' in sessionHandler &&
+                  typeof sessionHandler.setToolRegistry === 'function'
+                ) {
+                  sessionHandler.setToolRegistry(sessionTools);
+                }
+                await sessionHandler.attach(session);
+              }
+            } catch (err) {
+              this._log.warn({ err }, 'prewarm await failed; fallback to start()');
+              await sessionHandler.start(session, sessionTools);
+            }
+          } else {
+            await sessionHandler.start(session, sessionTools);
+          }
+          this._cleanupPrewarm(session.callId);
 
           // Send session telemetry
           const telemetry = sessionHandler.getTelemetry?.() ?? null;

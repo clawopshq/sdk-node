@@ -137,6 +137,73 @@ describe('ClawOpsAgent outbound prewarm', () => {
     expect(sess.stop).not.toHaveBeenCalled();
   });
 
+  it('emits [PREWARM-T] start + done markers on success (Python mirror)', async () => {
+    const sess = buildMockSession();
+    const infoCalls: string[] = [];
+    const fakeLogger = {
+      info: (msgOrObj: unknown, msg?: unknown) => {
+        if (typeof msgOrObj === 'string') infoCalls.push(msgOrObj);
+        else if (typeof msg === 'string') infoCalls.push(msg);
+      },
+      warn: () => {},
+      error: () => {},
+      debug: () => {},
+      trace: () => {},
+      fatal: () => {},
+      child: () => fakeLogger,
+      level: 'info',
+    };
+    const agent = new ClawOpsAgent({
+      apiKey: 'sk_test',
+      accountId: 'AC123',
+      from: '07012341234',
+      session: sess,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      logger: fakeLogger as any,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (agent as any)._startPrewarm('C-mark');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (agent as any)._prewarmTasks.get('C-mark');
+    const joined = infoCalls.join('\n');
+    expect(joined).toContain('[PREWARM-T] start call_id=C-mark');
+    expect(joined).toMatch(/\[PREWARM-T\] done call_id=C-mark elapsed_ms=\d+/);
+  });
+
+  it('emits [PREWARM-T] failed marker with reason on failure', async () => {
+    const sess = buildMockSession();
+    sess.prewarm.mockRejectedValueOnce(new Error('boom-reason'));
+    const warnCalls: string[] = [];
+    const fakeLogger = {
+      info: () => {},
+      warn: (_obj: unknown, msg?: unknown) => {
+        if (typeof msg === 'string') warnCalls.push(msg);
+        else if (typeof _obj === 'string') warnCalls.push(_obj);
+      },
+      error: () => {},
+      debug: () => {},
+      trace: () => {},
+      fatal: () => {},
+      child: () => fakeLogger,
+      level: 'info',
+    };
+    const agent = new ClawOpsAgent({
+      apiKey: 'sk_test',
+      accountId: 'AC123',
+      from: '07012341234',
+      session: sess,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      logger: fakeLogger as any,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (agent as any)._startPrewarm('C-fail');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (agent as any)._prewarmTasks.get('C-fail');
+    const joined = warnCalls.join('\n');
+    expect(joined).toContain('[PREWARM-T] failed call_id=C-fail');
+    expect(joined).toContain('reason=boom-reason');
+  });
+
   it('does not call prewarm when session.prewarm is missing (back-compat)', async () => {
     // Custom session without prewarm — should silently skip
     const legacySess = {

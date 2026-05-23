@@ -447,6 +447,8 @@ export class ClawOpsAgent {
     if (typeof sessionHandler.prewarm !== 'function') return;
 
     const PREWARM_TIMEOUT_MS = 10_000;
+    const t0 = Date.now();
+    this._log.info(`[PREWARM-T] start call_id=${callId} t=${(t0 / 1000).toFixed(3)}`);
     const task = (async () => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
@@ -457,8 +459,15 @@ export class ClawOpsAgent {
           );
         });
         await Promise.race([sessionHandler.prewarm(), timeout]);
+        const elapsed = Date.now() - t0;
+        this._log.info(`[PREWARM-T] done call_id=${callId} elapsed_ms=${elapsed}`);
       } catch (err) {
-        this._log.warn({ err, callId }, 'prewarm failed; will fall back to start()');
+        const elapsed = Date.now() - t0;
+        const reason = err instanceof Error ? err.message : String(err);
+        this._log.warn(
+          { err, callId },
+          `[PREWARM-T] failed call_id=${callId} elapsed_ms=${elapsed} reason=${reason}`,
+        );
         this._prewarmFailed.add(callId);
       } finally {
         if (timer) clearTimeout(timer);
@@ -694,6 +703,9 @@ export class ClawOpsAgent {
               if (this._prewarmFailed.has(session.callId)) {
                 await sessionHandler.start(session, sessionTools);
               } else {
+                this._log.info(
+                  `[PREWARM-T] attach call_id=${session.callId} t=${(Date.now() / 1000).toFixed(3)}`,
+                );
                 await sessionHandler.attach(session);
                 this._prewarmAttached.add(session.callId);
               }

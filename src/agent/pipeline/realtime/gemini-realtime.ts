@@ -229,9 +229,10 @@ export class GeminiRealtime implements Session {
     };
   }
 
-  async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
-    this._call = callSession;
-    if (tools) this._tools = tools;
+  /** Open Live session (no CallSession). Audio deltas accumulate into BufferingCall until attach(). */
+  async prewarm(): Promise<void> {
+    const { BufferingCall } = await import('../buffering-call.js');
+    this._call = new BufferingCall() as unknown as CallSession;
     this._closed = false;
     this._sentAudioChunks = 0;
     this._audioRemainder = Buffer.alloc(0);
@@ -241,7 +242,6 @@ export class GeminiRealtime implements Session {
     const { GoogleGenAI } = await import('@google/genai/node');
     const client = this._apiKey ? new GoogleGenAI({ apiKey: this._apiKey }) : new GoogleGenAI({});
 
-    // Build config
     const config: Record<string, unknown> = {
       responseModalities: ['AUDIO'],
       speechConfig: {
@@ -265,7 +265,6 @@ export class GeminiRealtime implements Session {
       };
     }
 
-    // Tools
     const toolSchemas = this._buildToolSchemas();
     if (toolSchemas.length > 0) {
       config['tools'] = [{ functionDeclarations: toolSchemas }];
@@ -290,11 +289,29 @@ export class GeminiRealtime implements Session {
         },
       },
     });
+    this._log.info('Gemini Live connected (prewarm)');
 
-    // Send greeting
     if (this._greeting) {
       this._session.sendRealtimeInput({ text: '인사해 주세요.' });
     }
+  }
+
+  /** Attach a real CallSession to the prewarmed session and flush buffered audio. */
+  async attach(callSession: CallSession): Promise<void> {
+    const { BufferingCall } = await import('../buffering-call.js');
+    const prev = this._call;
+    this._call = callSession;
+    if (prev instanceof BufferingCall) {
+      for (const chunk of prev.drainBuffer()) {
+        callSession.sendAudio(chunk);
+      }
+    }
+  }
+
+  async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
+    if (tools) this._tools = tools;
+    await this.prewarm();
+    await this.attach(callSession);
   }
 
   feedAudio(audio: Buffer): void {

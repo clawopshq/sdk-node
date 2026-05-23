@@ -41,8 +41,17 @@ export interface LLMChunk {
  * Implementations: OpenAIRealtime, GeminiRealtime
  */
 export interface Session {
-  /** Start the realtime session with the call session and tools. */
+  /** Start the realtime session with the call session and tools. Thin wrapper over prewarm + attach. */
   start(callSession: CallSession, tools?: ToolRegistry): Promise<void>;
+  /**
+   * Open LLM connection (and session.update + optional greeting trigger) without a CallSession.
+   *
+   * Audio deltas produced during the prewarm window accumulate in an internal BufferingCall.
+   * attach() then replaces the BufferingCall with the real CallSession and flushes the buffer.
+   */
+  prewarm(): Promise<void>;
+  /** Attach a real CallSession to a prewarmed session and flush any buffered audio. */
+  attach(callSession: CallSession): Promise<void>;
   /** Feed raw audio into the session. */
   feedAudio(audio: Buffer, timestamp?: number): void;
   /** Feed DTMF digits into the LLM context and trigger a response. */

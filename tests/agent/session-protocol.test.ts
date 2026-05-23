@@ -73,5 +73,15 @@ describe('Session protocol compliance', () => {
       const session = create();
       await expect(session.stop()).resolves.toBeUndefined();
     });
+
+    it('has prewarm method', () => {
+      const session = create();
+      expect(session.prewarm).toBeInstanceOf(Function);
+    });
+
+    it('has attach method', () => {
+      const session = create();
+      expect(session.attach).toBeInstanceOf(Function);
+    });
   });
 });

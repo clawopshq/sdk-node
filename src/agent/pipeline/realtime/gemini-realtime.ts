@@ -344,12 +344,21 @@ export class GeminiRealtime implements Session {
     }
     this._pendingToolCall = null;
     if (this._session) {
-      try {
-        this._session.close();
-      } catch {
-        // Ignore close errors
-      }
+      const sess = this._session;
       this._session = null;
+      // Best-effort close with a 2s timeout guard so prewarm-then-cancel
+      // (missed/declined outbound) doesn't leak the upstream Live session.
+      await Promise.race([
+        (async () => {
+          try {
+            const ret = sess.close();
+            if (ret && typeof ret.then === 'function') await ret;
+          } catch {
+            // ignore close errors
+          }
+        })(),
+        new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+      ]);
     }
   }
 

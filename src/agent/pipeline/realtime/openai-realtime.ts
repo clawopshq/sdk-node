@@ -237,8 +237,29 @@ export class OpenAIRealtime implements Session {
     }
     this._pendingToolCalls.clear();
     if (this._ws) {
-      this._ws.close();
+      // Best-effort close with a 2s timeout guard so prewarm-then-cancel
+      // (missed/declined outbound) doesn't leak the upstream WS.
+      const ws = this._ws;
       this._ws = null;
+      await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = (): void => {
+          if (done) return;
+          done = true;
+          resolve();
+        };
+        const timer = setTimeout(finish, 2000);
+        try {
+          ws.on('close', () => {
+            clearTimeout(timer);
+            finish();
+          });
+          ws.close();
+        } catch {
+          clearTimeout(timer);
+          finish();
+        }
+      });
     }
   }
 

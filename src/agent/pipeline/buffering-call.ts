@@ -7,6 +7,8 @@
  * Python SDK 의 `_BufferingCall` mirror.
  */
 
+import type { CallSession } from '../session.js';
+
 class MetricsStub {
   recordToolCall(): void {}
   recordInterrupt(): void {}
@@ -46,5 +48,21 @@ export class BufferingCall {
     const out = this._buffer;
     this._buffer = [];
     return out;
+  }
+}
+
+/**
+ * prewarm → attach 전환 시 BufferingCall 에 쌓인 audio chunk 를 실제
+ * CallSession 으로 flush 하는 공통 헬퍼. OpenAI / Gemini / PipelineSession
+ * attach() 가 동일 패턴이므로 한 곳에서 관리한다.
+ */
+export function attachBuffered(
+  prev: BufferingCall | CallSession | null,
+  next: CallSession,
+): void {
+  if (prev instanceof BufferingCall) {
+    for (const chunk of prev.drainBuffer()) {
+      next.sendAudio(chunk);
+    }
   }
 }

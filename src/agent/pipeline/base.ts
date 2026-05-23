@@ -48,8 +48,11 @@ export interface Session {
    *
    * Audio deltas produced during the prewarm window accumulate in an internal BufferingCall.
    * attach() then replaces the BufferingCall with the real CallSession and flushes the buffer.
+   *
+   * Tools may optionally be injected here (alternative to calling setToolRegistry separately);
+   * the Session is free to ignore the argument if tools are already set.
    */
-  prewarm(): Promise<void>;
+  prewarm(tools?: ToolRegistry): Promise<void>;
   /** Attach a real CallSession to a prewarmed session and flush any buffered audio. */
   attach(callSession: CallSession): Promise<void>;
   /** Feed raw audio into the session. */

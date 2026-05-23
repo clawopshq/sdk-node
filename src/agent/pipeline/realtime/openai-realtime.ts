@@ -8,6 +8,7 @@ import type { CallSession } from '../../session.js';
 import type { ToolRegistry } from '../../tool.js';
 import type { AudioRecorder } from '../../recorder.js';
 import type { Session } from '../base.js';
+import { BufferingCall, attachBuffered } from '../buffering-call.js';
 import type { SessionTelemetry } from '../../telemetry.js';
 import { BuiltinTool } from '../../builtin-tool.js';
 import type { Logger } from 'pino';
@@ -91,7 +92,7 @@ export class OpenAIRealtime implements Session {
   }
 
   private _ws: import('ws').WebSocket | null = null;
-  private _call: CallSession | null = null;
+  private _call: CallSession | BufferingCall | null = null;
   private _tools: ToolRegistry | null = null;
   private _recorder: AudioRecorder | null = null;
   private _closed = false;
@@ -144,9 +145,9 @@ export class OpenAIRealtime implements Session {
   }
 
   /** Open WS + session.update + (optional) response.create without a CallSession. */
-  async prewarm(): Promise<void> {
-    const { BufferingCall } = await import('../buffering-call.js');
-    this._call = new BufferingCall() as unknown as CallSession;
+  async prewarm(tools?: ToolRegistry): Promise<void> {
+    if (tools) this._tools = tools;
+    this._call = new BufferingCall();
     this._closed = false;
     this._playback = null;
     this._latestMediaTs = 0;
@@ -189,14 +190,9 @@ export class OpenAIRealtime implements Session {
 
   /** Attach a real CallSession to the prewarmed session and flush buffered audio. */
   async attach(callSession: CallSession): Promise<void> {
-    const { BufferingCall } = await import('../buffering-call.js');
     const prev = this._call;
     this._call = callSession;
-    if (prev instanceof BufferingCall) {
-      for (const chunk of prev.drainBuffer()) {
-        callSession.sendAudio(chunk);
-      }
-    }
+    attachBuffered(prev, callSession);
   }
 
   async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
@@ -447,7 +443,7 @@ export class OpenAIRealtime implements Session {
 
     try {
       // Built-in tools
-      if (BUILTIN_TOOL_NAMES.has(funcName) && this._call) {
+      if (BUILTIN_TOOL_NAMES.has(funcName) && this._call && !(this._call instanceof BufferingCall)) {
         const args = JSON.parse((item['arguments'] as string) ?? '{}') as Record<string, unknown>;
         const result = await executeBuiltinTool(funcName, args, this._call);
         if (result !== null) {
@@ -484,7 +480,7 @@ export class OpenAIRealtime implements Session {
 
       let result: unknown;
       const player =
-        this._holdAudioChunks && this._call
+        this._holdAudioChunks && this._call && !(this._call instanceof BufferingCall)
           ? new HoldAudioPlayer(this._call, this._holdAudioChunks)
           : null;
       player?.start();

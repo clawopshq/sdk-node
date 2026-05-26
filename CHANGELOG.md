@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.17.1 (2026-05-26)
+
+### Fixed
+- `ws` 가 optional peer dependency 로 선언되어 자동 설치되지 않아, agent 통화 시 `Cannot find package 'ws'` 런타임 오류가 발생하던 문제 수정 — `ws` 는 Control/Media WebSocket(모든 통화의 코어 경로)에서 사용하는 필수 의존성이므로 `dependencies` 로 이동.
+
 ## 0.17.0 (2026-05-26)
 
 ### Added

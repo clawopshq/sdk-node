@@ -38,6 +38,60 @@ describe('ClawOpsAgent outbound prewarm', () => {
     expect((agent as any)._prewarmTasks.has('C1')).toBe(true);
   });
 
+  it('handleRinging starts session.prewarm() during ring (before answer)', async () => {
+    const sess = buildMockSession();
+    const agent = buildAgent(sess);
+    // outbound 세션은 call() 시점에 _activeSessions 에 등록되므로 ring 시점에 존재한다.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (agent as any)._activeSessions.set('CR1', { toNumber: '01098765432' });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (agent as any)._handleRinging({ callId: 'CR1' });
+    await Promise.resolve();
+    expect(sess.prewarm).toHaveBeenCalledTimes(1);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((agent as any)._prewarmTasks.has('CR1')).toBe(true);
+  });
+
+  it('outbound_ready does not start a second prewarm after ringing', async () => {
+    const sess = buildMockSession();
+    const agent = buildAgent(sess);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (agent as any)._activeSessions.set('CR2', { toNumber: '01098765432' });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (agent as any)._handleRinging({ callId: 'CR2' });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (agent as any)._handleOutboundReady({ callId: 'CR2', to: '01098765432', mediaUrl: '' });
+    await Promise.resolve();
+    expect(sess.prewarm).toHaveBeenCalledTimes(1);
+  });
+
+  it('call() starts session.prewarm() right after originate', async () => {
+    const sess = buildMockSession();
+    const agent = buildAgent(sess);
+    // control WS 우회
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (agent as any).connect = vi.fn(async () => {});
+
+    const fetchMock = vi.fn(async () => ({
+      status: 201,
+      json: async () => ({ callId: 'CO1' }),
+    })) as unknown as typeof fetch;
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock;
+    try {
+      const call = await agent.call('07099998888');
+      expect(call.callId).toBe('CO1');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((agent as any)._prewarmTasks.has('CO1')).toBe(true);
+      await Promise.resolve();
+      expect(sess.prewarm).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
   it('_startPrewarm is idempotent — calling twice triggers prewarm only once', async () => {
     const sess = buildMockSession();
     const agent = buildAgent(sess);

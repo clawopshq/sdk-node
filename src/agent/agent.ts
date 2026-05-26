@@ -319,6 +319,15 @@ export class ClawOpsAgent {
     callSession.setLogger(this._log);
     this._activeSessions.set(callSession.callId, callSession);
     this._log.info('Outbound call initiated: %s -> %s (%s)', this._fromNumber, to, callSession.callId);
+
+    // originate 직후 prewarm 을 시작한다 — ring 구간(answer 이전)에 LLM 연결 +
+    // greeting 생성을 흡수해 answer→first-audio latency 를 줄인다. call.ringing
+    // 이벤트는 트렁크가 SIP 18x 를 안 올리면 도착하지 않을 수 있어 신뢰하지 않는다.
+    // ringing/outbound_ready 핸들러의 prewarm 시작은 이 시점을 놓쳤을 때의 fallback.
+    if (this._prewarmEnabled) {
+      this._startPrewarm(callSession.callId);
+    }
+
     return callSession;
   }
 
@@ -422,10 +431,10 @@ export class ClawOpsAgent {
       this._activeSessions.set(callId, session);
     }
 
-    // Kick off LLM prewarm in parallel with media WS setup so the LLM
-    // connect + session.update RTT can overlap with media bridge bring-up.
-    // _startCallSession awaits this task and uses attach() instead of start()
-    // when it resolves. prewarmEnabled=false 면 skip → 기존 start() 경로.
+    // prewarm 은 보통 _handleRinging(ring 구간)에서 이미 시작됐다. _startPrewarm 은
+    // idempotent 하므로 여기서의 호출은 ringing 이 오지 않은 경우의 fallback 으로만
+    // 동작한다. _startCallSession 이 이 task 를 await 후 attach() 로 부착한다.
+    // prewarmEnabled=false 면 skip → 기존 start() 경로.
     if (this._prewarmEnabled) {
       this._startPrewarm(callId);
     }
@@ -481,6 +490,13 @@ export class ClawOpsAgent {
     const session = this._activeSessions.get(callId);
     if (session) {
       this._log.info('Outbound call ringing: %s', callId);
+
+      // ring 구간(answer 이전)에 prewarm 을 미리 시작한다 — LLM WS 연결 +
+      // greeting 생성을 ring 시간으로 흡수해 answer→first-audio latency 를 줄인다.
+      // outbound_ready 에서의 prewarm 시작은 ringing 이 안 온 경우의 fallback.
+      if (this._prewarmEnabled) {
+        this._startPrewarm(callId);
+      }
     }
   }
 

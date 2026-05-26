@@ -8,6 +8,7 @@ import type { CallSession } from '../../session.js';
 import type { ToolRegistry } from '../../tool.js';
 import type { AudioRecorder } from '../../recorder.js';
 import type { Session } from '../base.js';
+import { BufferingCall, attachBuffered } from '../buffering-call.js';
 import type { SessionTelemetry } from '../../telemetry.js';
 import { BuiltinTool } from '../../builtin-tool.js';
 import type { Logger } from 'pino';
@@ -91,7 +92,7 @@ export class OpenAIRealtime implements Session {
   }
 
   private _ws: import('ws').WebSocket | null = null;
-  private _call: CallSession | null = null;
+  private _call: CallSession | BufferingCall | null = null;
   private _tools: ToolRegistry | null = null;
   private _recorder: AudioRecorder | null = null;
   private _closed = false;
@@ -143,37 +144,30 @@ export class OpenAIRealtime implements Session {
     this._holdAudioChunks = chunks;
   }
 
-  async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
-    this._call = callSession;
+  /** Open WS + session.update + (optional) response.create without a CallSession. */
+  async prewarm(tools?: ToolRegistry): Promise<void> {
     if (tools) this._tools = tools;
+    this._call = new BufferingCall();
     this._closed = false;
     this._playback = null;
     this._latestMediaTs = 0;
 
     const { WebSocket } = await import('ws');
     const url = `${OPENAI_REALTIME_URL}${this._model}`;
-
     this._ws = new WebSocket(url, {
-      headers: {
-        Authorization: `Bearer ${this._apiKey}`,
-      },
+      headers: { Authorization: `Bearer ${this._apiKey}` },
     });
 
     return new Promise<void>((resolve, reject) => {
       const ws = this._ws!;
-
       ws.on('open', () => {
         this._sendSessionUpdate();
-        this._log.info('OpenAI Realtime connected');
-
-        // Send initial greeting if enabled (matching Python SDK)
+        this._log.info('OpenAI Realtime connected (prewarm)');
         if (this._greeting) {
           this._send({ type: 'response.create' });
         }
-
         resolve();
       });
-
       ws.on('message', (data: Buffer | string) => {
         try {
           const msg = JSON.parse(data.toString()) as Record<string, unknown>;
@@ -182,11 +176,9 @@ export class OpenAIRealtime implements Session {
           // Ignore parse errors
         }
       });
-
       ws.on('close', () => {
         this._closed = true;
       });
-
       ws.on('error', (err: Error) => {
         if (!this._ws) {
           reject(err);
@@ -194,6 +186,19 @@ export class OpenAIRealtime implements Session {
         this._log.error({ err }, 'OpenAI Realtime WS error');
       });
     });
+  }
+
+  /** Attach a real CallSession to the prewarmed session and flush buffered audio. */
+  async attach(callSession: CallSession): Promise<void> {
+    const prev = this._call;
+    this._call = callSession;
+    attachBuffered(prev, callSession);
+  }
+
+  async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
+    if (tools) this._tools = tools;
+    await this.prewarm();
+    await this.attach(callSession);
   }
 
   async feedDtmf(digits: string): Promise<void> {
@@ -228,8 +233,29 @@ export class OpenAIRealtime implements Session {
     }
     this._pendingToolCalls.clear();
     if (this._ws) {
-      this._ws.close();
+      // Best-effort close with a 2s timeout guard so prewarm-then-cancel
+      // (missed/declined outbound) doesn't leak the upstream WS.
+      const ws = this._ws;
       this._ws = null;
+      await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = (): void => {
+          if (done) return;
+          done = true;
+          resolve();
+        };
+        const timer = setTimeout(finish, 2000);
+        try {
+          ws.on('close', () => {
+            clearTimeout(timer);
+            finish();
+          });
+          ws.close();
+        } catch {
+          clearTimeout(timer);
+          finish();
+        }
+      });
     }
   }
 
@@ -417,7 +443,7 @@ export class OpenAIRealtime implements Session {
 
     try {
       // Built-in tools
-      if (BUILTIN_TOOL_NAMES.has(funcName) && this._call) {
+      if (BUILTIN_TOOL_NAMES.has(funcName) && this._call && !(this._call instanceof BufferingCall)) {
         const args = JSON.parse((item['arguments'] as string) ?? '{}') as Record<string, unknown>;
         const result = await executeBuiltinTool(funcName, args, this._call);
         if (result !== null) {
@@ -454,7 +480,7 @@ export class OpenAIRealtime implements Session {
 
       let result: unknown;
       const player =
-        this._holdAudioChunks && this._call
+        this._holdAudioChunks && this._call && !(this._call instanceof BufferingCall)
           ? new HoldAudioPlayer(this._call, this._holdAudioChunks)
           : null;
       player?.start();

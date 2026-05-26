@@ -73,6 +73,12 @@ export interface ClawOpsAgentOptions {
    * The caller hears the gained audio, and recording captures it post-gain.
    */
   txGain?: number;
+  /**
+   * outbound_ready 시점에 session.prewarm() 을 백그라운드로 시작할지 여부.
+   * false 면 기존 start() 단일 경로로 동작 (prewarm 비활성). Default: true.
+   * Python SDK 의 `prewarm_enabled` 과 mirror.
+   */
+  prewarmEnabled?: boolean;
 }
 
 export class ClawOpsAgent {
@@ -100,6 +106,11 @@ export class ClawOpsAgent {
   private _holdAudioChunks: Buffer[] | null = null;
   private _rxGain: number;
   private _txGain: number;
+  private _prewarmTasks = new Map<string, Promise<void>>();
+  private _prewarmFailed = new Set<string>();
+  /** prewarm 세션이 실제 CallSession 에 attach 완료된 callId. attached 이후의 stop() 은 정상 종료 경로가 책임진다. */
+  private _prewarmAttached = new Set<string>();
+  private _prewarmEnabled: boolean;
 
   constructor(options: ClawOpsAgentOptions) {
     this._apiKey = options.apiKey ?? process.env['CLAWOPS_API_KEY'] ?? '';
@@ -114,6 +125,7 @@ export class ClawOpsAgent {
     this._passiveDtmfDebounceMs = options.passiveDtmfDebounceMs ?? 500;
     this._rxGain = ClawOpsAgent._validateGain('rxGain', options.rxGain ?? 1.0);
     this._txGain = ClawOpsAgent._validateGain('txGain', options.txGain ?? 1.0);
+    this._prewarmEnabled = options.prewarmEnabled ?? true;
 
     // Configure tracing
     if (options.tracing) {
@@ -307,6 +319,15 @@ export class ClawOpsAgent {
     callSession.setLogger(this._log);
     this._activeSessions.set(callSession.callId, callSession);
     this._log.info('Outbound call initiated: %s -> %s (%s)', this._fromNumber, to, callSession.callId);
+
+    // originate 직후 prewarm 을 시작한다 — ring 구간(answer 이전)에 LLM 연결 +
+    // greeting 생성을 흡수해 answer→first-audio latency 를 줄인다. call.ringing
+    // 이벤트는 트렁크가 SIP 18x 를 안 올리면 도착하지 않을 수 있어 신뢰하지 않는다.
+    // ringing/outbound_ready 핸들러의 prewarm 시작은 이 시점을 놓쳤을 때의 fallback.
+    if (this._prewarmEnabled) {
+      this._startPrewarm(callSession.callId);
+    }
+
     return callSession;
   }
 
@@ -352,6 +373,37 @@ export class ClawOpsAgent {
       session._markEnded();
       this._activeSessions.delete(callId);
     }
+    void this._cleanupPrewarm(callId);
+  }
+
+  /**
+   * Drop prewarm bookkeeping for a callId. Used on hangup/failure paths.
+   *
+   * prewarm 이 진행 중이거나 완료됐지만 attach 전에 호출되면 LLM WS 가 leak 되므로
+   * race 후 session.stop() 으로 정리한다. (TS 에는 Promise.cancel 이 없어 Python
+   * 의 task.cancel() 등가물은 _session.stop() 호출이다.)
+   *
+   * 이미 attach 된 callId 면 stop() 을 호출하지 않는다 — 정상 종료 경로 (call-session
+   * finally) 가 책임지기 때문이다.
+   */
+  private async _cleanupPrewarm(callId: string): Promise<void> {
+    const task = this._prewarmTasks.get(callId);
+    const attached = this._prewarmAttached.has(callId);
+    this._prewarmTasks.delete(callId);
+    this._prewarmFailed.delete(callId);
+    this._prewarmAttached.delete(callId);
+    if (!task || attached) return;
+    // prewarm 미완료 → 완료까지 await 한 뒤 stop(); 실패 시에도 stop() 시도.
+    try {
+      await task;
+    } catch {
+      /* prewarm error path already logged */
+    }
+    try {
+      await this._session.stop();
+    } catch (err) {
+      this._log.warn({ err, callId }, 'prewarm cleanup stop() failed');
+    }
   }
 
   private _handleOutboundReady(event: ControlEvent): void {
@@ -379,10 +431,58 @@ export class ClawOpsAgent {
       this._activeSessions.set(callId, session);
     }
 
+    // prewarm 은 보통 _handleRinging(ring 구간)에서 이미 시작됐다. _startPrewarm 은
+    // idempotent 하므로 여기서의 호출은 ringing 이 오지 않은 경우의 fallback 으로만
+    // 동작한다. _startCallSession 이 이 task 를 await 후 attach() 로 부착한다.
+    // prewarmEnabled=false 면 skip → 기존 start() 경로.
+    if (this._prewarmEnabled) {
+      this._startPrewarm(callId);
+    }
+
     if (mediaUrl) {
       this._log.info('Outbound call answered: %s -> %s (%s)', this._fromNumber, session.toNumber, callId);
       this._safeStartCallSession(session, mediaUrl, callId);
     }
+  }
+
+  /**
+   * Start the LLM session prewarm task for the given callId. Safe to call
+   * multiple times — only the first invocation starts the task. Failures are
+   * recorded in _prewarmFailed so the call-session path can fall back to start().
+   */
+  private _startPrewarm(callId: string): void {
+    if (this._prewarmTasks.has(callId)) return;
+    const sessionHandler = this._session;
+    if (typeof sessionHandler.prewarm !== 'function') return;
+
+    const PREWARM_TIMEOUT_MS = 10_000;
+    const t0 = Date.now();
+    this._log.info(`[PREWARM-T] start call_id=${callId} t=${(t0 / 1000).toFixed(3)}`);
+    const task = (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('prewarm timeout')),
+            PREWARM_TIMEOUT_MS,
+          );
+        });
+        await Promise.race([sessionHandler.prewarm(), timeout]);
+        const elapsed = Date.now() - t0;
+        this._log.info(`[PREWARM-T] done call_id=${callId} elapsed_ms=${elapsed}`);
+      } catch (err) {
+        const elapsed = Date.now() - t0;
+        const reason = err instanceof Error ? err.message : String(err);
+        this._log.warn(
+          { err, callId },
+          `[PREWARM-T] failed call_id=${callId} elapsed_ms=${elapsed} reason=${reason}`,
+        );
+        this._prewarmFailed.add(callId);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    })();
+    this._prewarmTasks.set(callId, task);
   }
 
   private _handleRinging(event: ControlEvent): void {
@@ -390,6 +490,13 @@ export class ClawOpsAgent {
     const session = this._activeSessions.get(callId);
     if (session) {
       this._log.info('Outbound call ringing: %s', callId);
+
+      // ring 구간(answer 이전)에 prewarm 을 미리 시작한다 — LLM WS 연결 +
+      // greeting 생성을 ring 시간으로 흡수해 answer→first-audio latency 를 줄인다.
+      // outbound_ready 에서의 prewarm 시작은 ringing 이 안 온 경우의 fallback.
+      if (this._prewarmEnabled) {
+        this._startPrewarm(callId);
+      }
     }
   }
 
@@ -402,6 +509,7 @@ export class ClawOpsAgent {
       session._markEnded();
       this._activeSessions.delete(callId);
     }
+    void this._cleanupPrewarm(callId);
   }
 
   private _onDtmfEvent(callSession: CallSession, digit: string): void {
@@ -600,8 +708,40 @@ export class ClawOpsAgent {
           await mediaWs.connect(mediaWsUrl, this._apiKey);
           this._log.info('Media stream started: %s', session.callId);
 
-          // Start the session handler
-          await sessionHandler.start(session, sessionTools);
+          // If a prewarm task was kicked off earlier (outbound_ready hook),
+          // await it and then attach() instead of doing a full start(). This
+          // trims the LLM connect + handshake off the perceived first-audio
+          // latency. Falls back to start() if prewarm failed/timed out.
+          const prewarmTask = this._prewarmTasks.get(session.callId);
+          if (prewarmTask && !this._prewarmFailed.has(session.callId)) {
+            try {
+              await prewarmTask;
+              if (this._prewarmFailed.has(session.callId)) {
+                await sessionHandler.start(session, sessionTools);
+              } else {
+                this._log.info(
+                  `[PREWARM-T] attach call_id=${session.callId} t=${(Date.now() / 1000).toFixed(3)}`,
+                );
+                await sessionHandler.attach(session);
+                this._prewarmAttached.add(session.callId);
+              }
+            } catch (err) {
+              this._log.warn(
+                { err, callId: session.callId },
+                'prewarm/attach failed, falling back to start()',
+              );
+              // attach() throw 시 prewarmed LLM 세션이 살아있다. 두 번째 start() 가
+              // 새 WS 를 열어 첫 세션이 leak 되지 않도록 먼저 stop() 정리.
+              try { await sessionHandler.stop(); } catch { /* best-effort */ }
+              await sessionHandler.start(session, sessionTools);
+            }
+          } else {
+            await sessionHandler.start(session, sessionTools);
+          }
+          // 정상 경로에서는 attached 플래그를 정상 종료가 책임지지만, bookkeeping 만 정리.
+          this._prewarmTasks.delete(session.callId);
+          this._prewarmFailed.delete(session.callId);
+          this._prewarmAttached.delete(session.callId);
 
           // Send session telemetry
           const telemetry = sessionHandler.getTelemetry?.() ?? null;

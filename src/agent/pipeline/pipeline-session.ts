@@ -20,6 +20,7 @@ import type { Logger } from 'pino';
 import { NOOP_LOGGER } from '../logger.js';
 import { HoldAudioPlayer } from '../hold-audio.js';
 import { BUILTIN_TOOL_NAMES, executeBuiltinTool, getBuiltinToolSchemas } from './builtin-tool-schemas.js';
+import { BufferingCall, attachBuffered } from './buffering-call.js';
 
 export interface PipelineSessionOptions {
   stt: STT;
@@ -57,7 +58,7 @@ export class PipelineSession implements Session {
   private _sampleRate: number;
   private _interruptOnSpeech: boolean;
 
-  private _callSession: CallSession | null = null;
+  private _callSession: CallSession | BufferingCall | null = null;
   private _tools: ToolRegistry | null = null;
   private _recorder: AudioRecorder | null = null;
   private _conversation: ConversationMessage[] = [];
@@ -129,12 +130,17 @@ export class PipelineSession implements Session {
     }
   }
 
-  async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
-    this._callSession = callSession;
-    this._tools = tools ?? null;
+  /**
+   * Pre-bootstrap conversation state and (optionally) trigger greeting synthesis
+   * before a real CallSession is attached. Audio chunks are buffered into a
+   * BufferingCall until attach() flushes them.
+   */
+  async prewarm(tools?: ToolRegistry): Promise<void> {
+    if (tools) this._tools = tools;
+    this._callSession = new BufferingCall();
     this._running = true;
-    this._log.info('PipelineSession started');
     this._conversation = [];
+    this._log.info('PipelineSession prewarmed');
 
     if (this._systemPrompt) {
       this._conversation.push({
@@ -143,17 +149,28 @@ export class PipelineSession implements Session {
       });
     }
 
-    // Generate initial greeting if enabled
     if (this._greeting) {
       this._generateGreeting().catch((err) => {
         this._log.error({ err }, 'Greeting error');
       });
     }
 
-    // Start the STT listening loop
     this._runSttLoop().catch((err) => {
       this._log.error({ err }, 'STT loop error');
     });
+  }
+
+  /** Attach a real CallSession to the prewarmed session and flush buffered audio. */
+  async attach(callSession: CallSession): Promise<void> {
+    const prev = this._callSession;
+    this._callSession = callSession;
+    attachBuffered(prev, callSession);
+  }
+
+  async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
+    this._tools = tools ?? null;
+    await this.prewarm();
+    await this.attach(callSession);
   }
 
   feedAudio(audio: Buffer): void {
@@ -291,7 +308,7 @@ export class PipelineSession implements Session {
       const args = JSON.parse(argsStr) as Record<string, unknown>;
 
       // Built-in tools - intercept before registry lookup
-      if (BUILTIN_TOOL_NAMES.has(name) && this._callSession) {
+      if (BUILTIN_TOOL_NAMES.has(name) && this._callSession && !(this._callSession instanceof BufferingCall)) {
         const result = await executeBuiltinTool(name, args, this._callSession);
         if (result !== null) {
           if (name === 'hang_up') return;
@@ -305,7 +322,7 @@ export class PipelineSession implements Session {
       this._callSession?.recordToolCall();
 
       const player =
-        this._holdAudioChunks && this._callSession
+        this._holdAudioChunks && this._callSession && !(this._callSession instanceof BufferingCall)
           ? new HoldAudioPlayer(this._callSession, this._holdAudioChunks)
           : null;
       player?.start();

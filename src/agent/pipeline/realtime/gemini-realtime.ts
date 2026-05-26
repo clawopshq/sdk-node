@@ -9,6 +9,7 @@ import type { CallSession } from '../../session.js';
 import type { ToolRegistry } from '../../tool.js';
 import type { AudioRecorder } from '../../recorder.js';
 import type { Session } from '../base.js';
+import { BufferingCall, attachBuffered } from '../buffering-call.js';
 import type { SessionTelemetry } from '../../telemetry.js';
 import type { LiveServerMessage, LiveServerToolCall } from '@google/genai/node';
 import { pcm16ToUlaw, resamplePcm16, ulawToPcm16 } from '../../audio.js';
@@ -167,7 +168,7 @@ export class GeminiRealtime implements Session {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _session: any = null;
-  private _call: CallSession | null = null;
+  private _call: CallSession | BufferingCall | null = null;
   private _tools: ToolRegistry | null = null;
   private _recorder: AudioRecorder | null = null;
   private _closed = false;
@@ -229,9 +230,10 @@ export class GeminiRealtime implements Session {
     };
   }
 
-  async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
-    this._call = callSession;
+  /** Open Live session (no CallSession). Audio deltas accumulate into BufferingCall until attach(). */
+  async prewarm(tools?: ToolRegistry): Promise<void> {
     if (tools) this._tools = tools;
+    this._call = new BufferingCall();
     this._closed = false;
     this._sentAudioChunks = 0;
     this._audioRemainder = Buffer.alloc(0);
@@ -241,7 +243,6 @@ export class GeminiRealtime implements Session {
     const { GoogleGenAI } = await import('@google/genai/node');
     const client = this._apiKey ? new GoogleGenAI({ apiKey: this._apiKey }) : new GoogleGenAI({});
 
-    // Build config
     const config: Record<string, unknown> = {
       responseModalities: ['AUDIO'],
       speechConfig: {
@@ -265,7 +266,6 @@ export class GeminiRealtime implements Session {
       };
     }
 
-    // Tools
     const toolSchemas = this._buildToolSchemas();
     if (toolSchemas.length > 0) {
       config['tools'] = [{ functionDeclarations: toolSchemas }];
@@ -290,11 +290,24 @@ export class GeminiRealtime implements Session {
         },
       },
     });
+    this._log.info('Gemini Live connected (prewarm)');
 
-    // Send greeting
     if (this._greeting) {
       this._session.sendRealtimeInput({ text: '인사해 주세요.' });
     }
+  }
+
+  /** Attach a real CallSession to the prewarmed session and flush buffered audio. */
+  async attach(callSession: CallSession): Promise<void> {
+    const prev = this._call;
+    this._call = callSession;
+    attachBuffered(prev, callSession);
+  }
+
+  async start(callSession: CallSession, tools?: ToolRegistry): Promise<void> {
+    if (tools) this._tools = tools;
+    await this.prewarm();
+    await this.attach(callSession);
   }
 
   feedAudio(audio: Buffer): void {
@@ -327,12 +340,21 @@ export class GeminiRealtime implements Session {
     }
     this._pendingToolCall = null;
     if (this._session) {
-      try {
-        this._session.close();
-      } catch {
-        // Ignore close errors
-      }
+      const sess = this._session;
       this._session = null;
+      // Best-effort close with a 2s timeout guard so prewarm-then-cancel
+      // (missed/declined outbound) doesn't leak the upstream Live session.
+      await Promise.race([
+        (async () => {
+          try {
+            const ret = sess.close();
+            if (ret && typeof ret.then === 'function') await ret;
+          } catch {
+            // ignore close errors
+          }
+        })(),
+        new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+      ]);
     }
   }
 
@@ -487,7 +509,7 @@ export class GeminiRealtime implements Session {
     const responses: Array<Record<string, unknown>> = [];
 
     const player =
-      this._holdAudioChunks && this._call
+      this._holdAudioChunks && this._call && !(this._call instanceof BufferingCall)
         ? new HoldAudioPlayer(this._call, this._holdAudioChunks)
         : null;
     player?.start();
@@ -500,7 +522,7 @@ export class GeminiRealtime implements Session {
         this._log.info({ tool: name, args }, 'Tool call: %s', name);
 
         // Built-in tools
-        if (BUILTIN_TOOL_NAMES.has(name) && this._call) {
+        if (BUILTIN_TOOL_NAMES.has(name) && this._call && !(this._call instanceof BufferingCall)) {
           const result = await executeBuiltinTool(
             name,
             args as Record<string, unknown>,

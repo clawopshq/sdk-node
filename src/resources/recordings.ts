@@ -34,6 +34,22 @@ export class Recordings extends APIResource {
    * @throws NotFoundError (404) — 통화가 없거나 녹음이 없음(`recordingUrl: null`).
    * @throws PermissionDeniedError (403) — accountId 불일치.
    */
+  /**
+   * 통화 녹음을 삭제합니다 (포인터 제거, 멱등 — 이미 없어도 성공).
+   *
+   * @throws NotFoundError (404) — 통화가 없음.
+   * @throws PermissionDeniedError (403) — accountId 불일치.
+   */
+  async delete(
+    callId: string,
+    options: {
+      extraHeaders?: Record<string, string>;
+      timeout?: number;
+    } = {},
+  ): Promise<void> {
+    await this._client._delete(`${this._basePath}/recordings/${callId}`, options);
+  }
+
   async download(
     callId: string,
     options: {

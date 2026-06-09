@@ -1,6 +1,6 @@
 {
   "name": "@teamlearners/clawops",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "Official Node.js/TypeScript SDK for the ClawOps Voice API",
   "type": "module",
   "exports": {

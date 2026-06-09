@@ -42,6 +42,7 @@ export class Calls extends APIResource {
       StatusCallback: params.statusCallback,
       StatusCallbackEvent: params.statusCallbackEvent,
       Timeout: params.timeout,
+      MachineDetection: params.machineDetection,
     });
     return this._client._post(`${this._basePath}/calls`, {
       body,

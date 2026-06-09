@@ -278,13 +278,26 @@ export class ClawOpsAgent {
 
   /**
    * Initiate an outbound call.
-   * Matches Python SDK: agent.call(to, { timeout })
+   * Matches Python SDK: agent.call(to, { timeout, machineDetection })
+   *
+   * @param options.machineDetection 자동응답기/음성사서함 감지(AMD).
+   *   `'Enable'`=감지 후 `AnsweredBy` 통보(통화 계속), `'Hangup'`=음성사서함 감지 시 자동 종료.
    */
-  async call(to: string, options?: { timeout?: number }): Promise<CallSession> {
+  async call(
+    to: string,
+    options?: { timeout?: number; machineDetection?: 'Enable' | 'Hangup' },
+  ): Promise<CallSession> {
     await this.connect();
 
     const url = `${this._baseUrl}/v1/accounts/${this._accountId}/calls`;
-    const body = { To: to, From: this._fromNumber, Timeout: options?.timeout ?? 60 };
+    const body: Record<string, unknown> = {
+      To: to,
+      From: this._fromNumber,
+      Timeout: options?.timeout ?? 60,
+    };
+    if (options?.machineDetection) {
+      body['MachineDetection'] = options.machineDetection;
+    }
     const resp = await fetch(url, {
       method: 'POST',
       headers: {

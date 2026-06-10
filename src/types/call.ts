@@ -9,6 +9,8 @@ export const CallSchema = z
     direction: z.enum(['outbound', 'inbound']),
     duration: z.number().nullable().optional(),
     recordingUrl: z.string().nullable().optional(),
+    /** AMD(machineDetection) 결과 — AMD 켠 발신 통화에만 값 존재. */
+    answeredBy: z.enum(['human', 'machine', 'unknown']).nullable().optional(),
     accountId: z.string(),
     dateCreated: z.string(),
     dateUpdated: z.string().nullable().optional(),

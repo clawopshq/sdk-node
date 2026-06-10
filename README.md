@@ -183,6 +183,18 @@ const call = await client.calls.create({
 });
 console.log(call.callId);
 
+// 음성사서함 감지(AMD) — Enable=결과만 통보(통화 계속), Hangup=사서함이면 자동 종료
+const amdCall = await client.calls.create({
+  to: '01012345678',
+  from: '07052358010',
+  url: 'https://my-app.com/twiml',
+  machineDetection: 'Enable',
+});
+// 통화 종료 후 결과 확인: human(사람) / machine(자동응답기) / unknown(판정 불가)
+const done = await client.calls.get(amdCall.callId);
+console.log(done.answeredBy);
+// statusCallback 을 설정했다면 completed 이벤트 payload 의 AnsweredBy 로도 통보됩니다.
+
 // AI Completion 모드 — AI가 직접 통화를 처리
 const aiCall = await client.calls.create({
   to: '01012345678',

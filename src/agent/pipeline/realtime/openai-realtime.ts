@@ -285,7 +285,7 @@ export class OpenAIRealtime implements Session {
             format: { type: 'audio/pcmu' },
             noise_reduction: { type: 'near_field' },
             transcription: {
-              model: 'gpt-4o-transcribe-diarize',
+              model: 'gpt-4o-transcribe',
               language: this._language,
             },
             turn_detection: this._turnDetection,

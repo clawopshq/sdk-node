@@ -75,7 +75,7 @@ describe('OpenAIRealtime', () => {
     expect(session).toBeDefined();
   });
 
-  it('turnDetection defaults to semantic_vad with medium eagerness', () => {
+  it('turnDetection defaults to semantic_vad with low eagerness', () => {
     const session = new OpenAIRealtime();
     expect(session).toBeDefined();
   });

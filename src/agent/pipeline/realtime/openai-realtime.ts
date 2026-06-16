@@ -45,8 +45,8 @@ export interface OpenAIRealtimeOptions {
   /** Language code (BCP 47). Default: 'ko' */
   language?: string;
   /**
-   * Turn detection configuration. Default: semantic_vad with eagerness 'medium'.
-   * - `{ type: 'semantic_vad', eagerness?: 'low'|'medium'|'high'|'auto', interrupt_response?: boolean }`
+   * Turn detection configuration. Default: semantic_vad with eagerness 'low'.
+   * - `{ type: 'semantic_vad', eagerness?: 'low'|'medium'|'high'|'auto', create_response?: boolean, interrupt_response?: boolean }`
    * - `{ type: 'server_vad', threshold?: number, silence_duration_ms?: number, prefix_padding_ms?: number }`
    * - `null` to disable turn detection
    */
@@ -125,7 +125,12 @@ export class OpenAIRealtime implements Session {
     this._turnDetection =
       options.turnDetection !== undefined
         ? options.turnDetection
-        : { type: 'semantic_vad', eagerness: 'medium', interrupt_response: true };
+        : {
+            type: 'semantic_vad',
+            eagerness: 'low',
+            create_response: true,
+            interrupt_response: true,
+          };
     this._greeting = options.greeting ?? true;
   }
 
@@ -278,9 +283,9 @@ export class OpenAIRealtime implements Session {
         audio: {
           input: {
             format: { type: 'audio/pcmu' },
-            noise_reduction: { type: 'far_field' },
+            noise_reduction: { type: 'near_field' },
             transcription: {
-              model: 'gpt-realtime-whisper',
+              model: 'gpt-4o-transcribe-diarize',
               language: this._language,
             },
             turn_detection: this._turnDetection,

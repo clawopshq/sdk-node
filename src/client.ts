@@ -6,6 +6,8 @@ import { Calls } from './resources/calls.js';
 import { Messages } from './resources/messages.js';
 import { Numbers } from './resources/numbers.js';
 import { Recordings } from './resources/recordings.js';
+import { SipCredentials } from './resources/sip-credentials.js';
+import { SipEndpoints } from './resources/sip-endpoints.js';
 import { WebhookLogs } from './resources/webhook-logs.js';
 import { AccountContext } from './resources/accounts.js';
 import { Webhooks } from './webhooks.js';
@@ -58,6 +60,14 @@ export class ClawOps extends APIClient {
 
   get numbers(): Numbers {
     return new Numbers(this, this._defaultAccountId);
+  }
+
+  get sipCredentials(): SipCredentials {
+    return new SipCredentials(this, this._defaultAccountId);
+  }
+
+  get sipEndpoints(): SipEndpoints {
+    return new SipEndpoints(this, this._defaultAccountId);
   }
 
   get recordings(): Recordings {

@@ -280,6 +280,19 @@ const numbers = await client.numbers.list();
 // 웹훅 URL 변경
 await client.numbers.update('07012340001', { webhookUrl: 'https://my-app.com/webhook' });
 
+// 인바운드 소프트폰 착신으로 라우팅 변경 (sip_trunk 부가서비스 + 등록 단말 필요)
+// 1) 등록된 SIP 단말(credential) 목록에서 id 조회
+const creds = await client.sipCredentials.list({ status: 'active' });
+// 2) 그 id 로 라우팅 설정
+await client.numbers.update('07012340001', {
+  routingType: 'softphone',
+  sipCredentialId: creds[0].id,
+});
+
+// (sip 라우팅의 경우) SIP 엔드포인트 id 조회
+const endpoints = await client.sipEndpoints.list({ status: 'active' });
+await client.numbers.update('07012340001', { routingType: 'sip', sipEndpointId: endpoints[0].id });
+
 // 번호 해제
 await client.numbers.delete('07012340001');
 ```

@@ -16,6 +16,9 @@ export { PhoneNumberSchema } from './number.js';
 
 export type { NumberCreateParams, NumberUpdateParams } from './number-params.js';
 
+export type { SipCredential, SipEndpoint } from './sip.js';
+export { SipCredentialSchema, SipEndpointSchema } from './sip.js';
+
 export type { WebhookLog } from './webhook-log.js';
 export { WebhookLogSchema } from './webhook-log.js';
 

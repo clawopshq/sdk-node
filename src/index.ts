@@ -37,6 +37,8 @@ export { Messages } from './resources/messages.js';
 export { Numbers } from './resources/numbers.js';
 export { Recordings } from './resources/recordings.js';
 export type { RecordingDownload } from './resources/recordings.js';
+export { SipCredentials } from './resources/sip-credentials.js';
+export { SipEndpoints } from './resources/sip-endpoints.js';
 export { WebhookLogs } from './resources/webhook-logs.js';
 export { AccountContext } from './resources/accounts.js';
 
@@ -55,6 +57,8 @@ export type {
   NumberUpdateResponse,
   NumberCreateParams,
   NumberUpdateParams,
+  SipCredential,
+  SipEndpoint,
   WebhookLog,
   AssignmentLink,
   AssignmentLinkAssignment,

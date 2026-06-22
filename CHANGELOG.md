@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.21.0 (2026-06-22)
+
+### Added
+- `numbers.update` 에 인바운드 라우팅 파라미터 추가 — `routingType`(`webhook`/`sip`/`softphone`), `sipEndpointId`, `sipCredentialId`. `softphone` 으로 등록된 SIP 단말 착신, `sip` 으로 외부 PBX 라우팅을 API 로 설정할 수 있다 (둘 다 `sip_trunk` 부가서비스 필요).
+- `sipCredentials` / `sipEndpoints` 조회 전용 리소스 신설 (`list` / `get`) — softphone/sip 라우팅 설정에 필요한 id 를 조회한다. 평문 password·ha1 은 응답에 포함되지 않는다.
+- `PhoneNumber` 응답 스키마에 `routingType` / `sipEndpointId` / `sipCredentialId` 필드 추가.
+
 ## 0.20.0 (2026-06-10)
 
 ### Added

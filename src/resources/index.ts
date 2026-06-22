@@ -3,5 +3,7 @@ export { Messages } from './messages.js';
 export { Numbers } from './numbers.js';
 export { Recordings } from './recordings.js';
 export type { RecordingDownload } from './recordings.js';
+export { SipCredentials } from './sip-credentials.js';
+export { SipEndpoints } from './sip-endpoints.js';
 export { WebhookLogs } from './webhook-logs.js';
 export { AccountContext } from './accounts.js';

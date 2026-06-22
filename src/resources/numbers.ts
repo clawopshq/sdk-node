@@ -3,6 +3,7 @@ import { APIResource } from '../resource.js';
 import { stripNotGiven } from '../util.js';
 import { PhoneNumberSchema } from '../types/number.js';
 import type { PhoneNumber, NumberListItem, NumberUpdateResponse } from '../types/number.js';
+import type { NumberUpdateParams } from '../types/number-params.js';
 
 export class Numbers extends APIResource {
   async create(
@@ -38,7 +39,7 @@ export class Numbers extends APIResource {
 
   async update(
     number: string,
-    params: { webhookUrl?: string; webhookMethod?: 'POST' | 'GET' } = {},
+    params: NumberUpdateParams = {},
     options: {
       extraHeaders?: Record<string, string>;
       extraQuery?: Record<string, unknown>;
@@ -48,6 +49,9 @@ export class Numbers extends APIResource {
     const body = stripNotGiven({
       webhookUrl: params.webhookUrl,
       webhookMethod: params.webhookMethod,
+      routingType: params.routingType,
+      sipEndpointId: params.sipEndpointId,
+      sipCredentialId: params.sipCredentialId,
     });
     return this._client._put(`${this._basePath}/numbers/${number}`, {
       body,

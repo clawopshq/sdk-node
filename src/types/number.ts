@@ -6,6 +6,9 @@ export const PhoneNumberSchema = z
     source: z.string().nullable().optional(),
     webhookUrl: z.string().nullable().optional(),
     webhookMethod: z.enum(['POST', 'GET']).nullable().optional(),
+    routingType: z.enum(['webhook', 'sip', 'softphone']).nullable().optional(),
+    sipEndpointId: z.string().nullable().optional(),
+    sipCredentialId: z.string().nullable().optional(),
     createdAt: z.string().nullable().optional(),
   })
   .passthrough();

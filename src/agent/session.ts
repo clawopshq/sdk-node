@@ -237,7 +237,9 @@ export class CallSession {
    *
    * destinationType='pstn' (default): `to` is a phone number dialed via carrier.
    * destinationType='sip': `to` is a SIP URI (e.g. `sip:user@host`) connected
-   * directly to a SIP endpoint without going through the PSTN carrier.
+   * directly to a SIP endpoint without going through the PSTN carrier. Requires the
+   * account to have an active `sip_trunk` add-on; otherwise the transfer fails and
+   * the call continues with the AI (result `{ status: 'failed', ... }`).
    */
   async transfer(
     to: string,

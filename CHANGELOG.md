@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.22.0 (2026-07-07)
+
+### Added
+- `session.transfer(to, { destinationType })` + `transfer_call` 도구에 `destination_type`(`pstn`/`sip`) 파라미터 추가. `'sip'` 이면 `to` 를 SIP URI(`sip:user@host`)로 해석해 통화를 PSTN carrier 없이 SIP 엔드포인트로 직접 전환한다(INVITE 브릿지 — 녹음·관측 유지). 기본값 `'pstn'` (기존 전화번호 전환과 하위호환).
+
 ## 0.21.0 (2026-06-22)
 
 ### Added

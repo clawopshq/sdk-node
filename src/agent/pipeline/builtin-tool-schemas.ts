@@ -51,11 +51,12 @@ const SEND_DTMF = {
 const TRANSFER_CALL = {
   name: 'transfer_call',
   description:
-    'Transfer the current call to another phone number. Use for blind transfer (direct handoff) or warm transfer (with whisper message to the target).',
+    'Transfer the current call to another phone number or SIP endpoint. Use for blind transfer (direct handoff) or warm transfer (with whisper message to the target).',
   parameters: {
     type: 'object' as const,
     properties: {
-      to: { type: 'string' as const, description: 'Phone number to transfer to' },
+      to: { type: 'string' as const, description: "Transfer destination. A phone number when destination_type is 'pstn', or a SIP URI (e.g. 'sip:user@host') when destination_type is 'sip'." },
+      destination_type: { type: 'string' as const, enum: ['pstn', 'sip'], description: 'pstn: dial a phone number via carrier (default). sip: connect directly to a SIP endpoint (no carrier/PSTN).' },
       mode: { type: 'string' as const, enum: ['blind', 'warm'], description: 'blind: direct transfer (default), warm: play whisper to target first' },
       after_transfer: { type: 'string' as const, enum: ['terminate', 'return'], description: 'terminate: end AI session (default), return: AI resumes after transfer ends' },
       whisper: { type: 'string' as const, description: 'Message to speak to transfer target before connecting customer (warm mode only)' },
@@ -179,6 +180,7 @@ export async function executeBuiltinTool(
       // call-engine이 transfer 시작 시 media WS를 닫으므로,
       // 결과를 await하면 LLM 세션이 먼저 종료된다.
       call.transfer(args['to'] as string, {
+        destinationType: (args['destination_type'] as 'pstn' | 'sip') ?? undefined,
         mode: (args['mode'] as 'blind' | 'warm') ?? undefined,
         afterTransfer: (args['after_transfer'] as 'terminate' | 'return') ?? undefined,
         whisper: args['whisper'] as string ?? undefined,

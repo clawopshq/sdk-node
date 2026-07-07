@@ -232,10 +232,17 @@ export class CallSession {
     }
   }
 
-  /** Transfer the call to another destination. */
+  /**
+   * Transfer the call to a phone number or SIP endpoint.
+   *
+   * destinationType='pstn' (default): `to` is a phone number dialed via carrier.
+   * destinationType='sip': `to` is a SIP URI (e.g. `sip:user@host`) connected
+   * directly to a SIP endpoint without going through the PSTN carrier.
+   */
   async transfer(
     to: string,
     options?: {
+      destinationType?: 'pstn' | 'sip';
       mode?: 'blind' | 'warm';
       afterTransfer?: 'terminate' | 'return';
       holdMedia?: string;
@@ -250,6 +257,7 @@ export class CallSession {
     }
     return this._transferFn({
       to,
+      destinationType: options?.destinationType ?? 'pstn',
       mode: options?.mode ?? 'blind',
       afterTransfer: options?.afterTransfer ?? 'terminate',
       holdMedia: options?.holdMedia ?? 'ringback',

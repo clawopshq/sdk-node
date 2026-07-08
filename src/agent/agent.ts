@@ -79,6 +79,13 @@ export interface ClawOpsAgentOptions {
    * Python SDK 의 `prewarm_enabled` 과 mirror.
    */
   prewarmEnabled?: boolean;
+  /**
+   * 이 에이전트의 모든 발신에 적용되는 AMD(machineDetection) default.
+   * `'Enable'`=감지 후 `AnsweredBy` 통보(통화 계속), `'Hangup'`=음성사서함 감지 시 자동 종료.
+   * `call(to, { machineDetection })` 로 호출별 override 가능.
+   * 우선순위: 호출 인자 > 인스턴스 default > 비활성. Python SDK 의 `machine_detection` 과 mirror.
+   */
+  machineDetection?: 'Enable' | 'Hangup';
 }
 
 export class ClawOpsAgent {
@@ -111,6 +118,8 @@ export class ClawOpsAgent {
   /** prewarm 세션이 실제 CallSession 에 attach 완료된 callId. attached 이후의 stop() 은 정상 종료 경로가 책임진다. */
   private _prewarmAttached = new Set<string>();
   private _prewarmEnabled: boolean;
+  /** 모든 발신에 적용되는 AMD default. call() 인자로 호출별 override 가능. */
+  private _machineDetection?: 'Enable' | 'Hangup';
 
   constructor(options: ClawOpsAgentOptions) {
     this._apiKey = options.apiKey ?? process.env['CLAWOPS_API_KEY'] ?? '';
@@ -126,6 +135,7 @@ export class ClawOpsAgent {
     this._rxGain = ClawOpsAgent._validateGain('rxGain', options.rxGain ?? 1.0);
     this._txGain = ClawOpsAgent._validateGain('txGain', options.txGain ?? 1.0);
     this._prewarmEnabled = options.prewarmEnabled ?? true;
+    this._machineDetection = options.machineDetection;
 
     // Configure tracing
     if (options.tracing) {
@@ -282,6 +292,8 @@ export class ClawOpsAgent {
    *
    * @param options.machineDetection 자동응답기/음성사서함 감지(AMD).
    *   `'Enable'`=감지 후 `AnsweredBy` 통보(통화 계속), `'Hangup'`=음성사서함 감지 시 자동 종료.
+   *   미지정 시 인스턴스 default(생성자의 `machineDetection`)를 따른다.
+   *   우선순위: 호출 인자 > 인스턴스 default > 비활성.
    */
   async call(
     to: string,
@@ -295,8 +307,9 @@ export class ClawOpsAgent {
       From: this._fromNumber,
       Timeout: options?.timeout ?? 60,
     };
-    if (options?.machineDetection) {
-      body['MachineDetection'] = options.machineDetection;
+    const effectiveMd = options?.machineDetection ?? this._machineDetection;
+    if (effectiveMd) {
+      body['MachineDetection'] = effectiveMd;
     }
     const resp = await fetch(url, {
       method: 'POST',

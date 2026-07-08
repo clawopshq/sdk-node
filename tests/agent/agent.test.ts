@@ -140,3 +140,79 @@ describe('ClawOpsAgent', () => {
     }
   });
 });
+
+describe('ClawOpsAgent machineDetection', () => {
+  const base = {
+    apiKey: 'sk_test',
+    accountId: 'AC123',
+    from: '07012341234',
+    session: mockSession,
+    // prewarm 은 이 테스트와 무관 — LLM WS 연결 side-effect 회피.
+    prewarmEnabled: false,
+  };
+
+  const asField = (agent: ClawOpsAgent) =>
+    (agent as unknown as { _machineDetection?: 'Enable' | 'Hangup' })._machineDetection;
+
+  it('stores instance-level machineDetection default', () => {
+    expect(asField(new ClawOpsAgent({ ...base, machineDetection: 'Hangup' }))).toBe('Hangup');
+  });
+
+  it('defaults machineDetection to undefined', () => {
+    expect(asField(new ClawOpsAgent({ ...base }))).toBeUndefined();
+  });
+
+  const mockOriginate = () =>
+    vi.fn(
+      async () =>
+        ({ status: 201, json: async () => ({ callId: 'CO1' }) }) as unknown as Response,
+    );
+
+  const postedBody = (fetchMock: ReturnType<typeof mockOriginate>) => {
+    const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    return JSON.parse(init.body as string);
+  };
+
+  const stubConnect = (agent: ClawOpsAgent) => {
+    (agent as unknown as { connect: () => Promise<void> }).connect = async () => {};
+  };
+
+  it('omits MachineDetection in body when unset', async () => {
+    const agent = new ClawOpsAgent({ ...base });
+    stubConnect(agent);
+    const fetchMock = mockOriginate();
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await agent.call('07099998888');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(postedBody(fetchMock)).not.toHaveProperty('MachineDetection');
+  });
+
+  it('applies instance default to originate body', async () => {
+    const agent = new ClawOpsAgent({ ...base, machineDetection: 'Hangup' });
+    stubConnect(agent);
+    const fetchMock = mockOriginate();
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await agent.call('07099998888');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(postedBody(fetchMock)['MachineDetection']).toBe('Hangup');
+  });
+
+  it('call arg overrides instance default (호출 인자 > default)', async () => {
+    const agent = new ClawOpsAgent({ ...base, machineDetection: 'Hangup' });
+    stubConnect(agent);
+    const fetchMock = mockOriginate();
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await agent.call('07099998888', { machineDetection: 'Enable' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(postedBody(fetchMock)['MachineDetection']).toBe('Enable');
+  });
+});

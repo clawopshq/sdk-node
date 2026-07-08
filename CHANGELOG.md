@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.23.0 (2026-07-08)
+
+### Added
+- `new ClawOpsAgent({ machineDetection })` — 인스턴스 레벨 AMD default. 생성 시 지정하면 해당 에이전트의 모든 발신에 적용된다(`'Enable'` / `'Hangup'`). `agent.call(to, { machineDetection })` 의 호출별 override 는 그대로 유지되며, 우선순위는 **호출 인자 > 인스턴스 default > 비활성**. Python SDK 의 `machine_detection` 과 mirror. 서버 동작 변화는 없다(`MachineDetection` body 필드만 조건부 포함).
+
 ## 0.22.0 (2026-07-07)
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "@teamlearners/clawops",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "description": "Official Node.js/TypeScript SDK for the ClawOps Voice API",
   "type": "module",
   "exports": {
@@ -13,6 +13,11 @@
       "types": "./dist/agent/index.d.ts",
       "import": "./dist/agent/index.js",
       "require": "./dist/agent/index.cjs"
+    },
+    "./agent/livekit": {
+      "types": "./dist/agent/livekit/index.d.ts",
+      "import": "./dist/agent/livekit/index.js",
+      "require": "./dist/agent/livekit/index.cjs"
     }
   },
   "main": "./dist/index.cjs",
@@ -41,6 +46,8 @@
     "@anthropic-ai/sdk": ">=0.30.0",
     "@deepgram/sdk": ">=3.0.0",
     "@google/genai": ">=1.0.0",
+    "@livekit/agents": ">=1.5.0",
+    "@livekit/rtc-node": ">=0.13.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@opentelemetry/api": ">=1.20.0",
     "elevenlabs": ">=1.0.0",
@@ -66,6 +73,12 @@
       "optional": true
     },
     "@opentelemetry/api": {
+      "optional": true
+    },
+    "@livekit/agents": {
+      "optional": true
+    },
+    "@livekit/rtc-node": {
       "optional": true
     }
   },

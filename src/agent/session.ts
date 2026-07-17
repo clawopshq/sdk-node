@@ -53,6 +53,14 @@ export class CallSession {
   /** @internal */ _sendDtmfFn: SendDtmfFn | null = null;
   /** @internal */ _transferFn: TransferFn | null = null;
   /** @internal */ _isTransportConnected: (() => boolean) | null = null;
+  /**
+   * @internal Media WS playout 마커 훅. LiveKit(`ClawOpsAudioOutput`)이 재생 완료
+   * 판정(mark echo)과 barge-in 절단 위치 계산에 쓴다. 다른 세션 타입은 읽지 않는다.
+   * prewarm 중(BufferingCall)에는 바인딩되지 않아 null 이다.
+   */
+  /** @internal */ _sendMark: ((name: string) => void) | null = null;
+  /** @internal */ _waitForMark: ((name: string, timeoutMs: number) => Promise<void>) | null = null;
+  /** @internal */ _flushTransport: (() => Promise<void>) | null = null;
   private _dtmfCollectorActive = false;
   private _dtmfResolvers: ((digit: string) => void)[] = [];
   private _dtmfBuffer: string[] = [];

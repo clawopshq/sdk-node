@@ -669,6 +669,12 @@ export class ClawOpsAgent {
 
         session._transferFn = (params) => this._controlWs!.requestTransfer(session.callId, params);
 
+        // Media WS mark/flush 를 세션에 노출 — LiveKit ClawOpsAudioOutput 이 재생 완료
+        // (mark echo) 판정과 barge-in 절단 위치 계산에 쓴다. native 세션은 읽지 않는다.
+        session._sendMark = (name: string) => mediaWs.sendMark(name);
+        session._waitForMark = (name: string, timeoutMs: number) => mediaWs.waitForMark(name, timeoutMs);
+        session._flushTransport = () => mediaWs.flush();
+
         const sessionHandler = this._session;
 
         // Inject tools and recorder into session if supported

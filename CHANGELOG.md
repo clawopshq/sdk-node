@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.24.0 (2026-07-17)
+
+### Added
+- **LiveKit Agents transport (실험적)** — [LiveKit Agents](https://docs.livekit.io/agents/) 로 작성한 음성 에이전트를 LiveKit 서버·SIP·room 없이 실제 ClawOps 번호로 실행한다. 유저는 관용적인 LiveKit 코드를 그대로 쓰고, ClawOps 는 전화 transport 만 공급한다 (room-less). 서브패스 export `@teamlearners/clawops/agent/livekit` 로 `LiveKitSession` 제공 — `new ClawOpsAgent({ from, session: new LiveKitSession(create) })`. `create` 팩토리가 `[AgentSession, Agent]` 를 반환하는 것이 전부이며, `Agent` 서브클래스·`llm.tool`·`onEnter`·handoff 등은 그대로 동작한다.
+  - 내장 통화 제어 도구(`hang_up`/`collect_dtmf`/`send_dtmf`/`transfer_call`)를 LiveKit Toolset 으로 자동 주입(유저 도구와 이름 충돌 시 내장 쪽 제외). `transcript` 이벤트는 `conversation_item_added` 를 브리지해 네이티브 세션과 동일하게 흐른다. prewarm→attach(발신 링 구간 세션 선점)와 mark 기반 재생 완료/barge-in 절단 판정 지원.
+  - `@livekit/agents` · `@livekit/rtc-node` 를 optional peer dependency 로 선언(미설치 소비자 무영향, 런타임 lazy `import`). Python SDK 의 `clawops.agent.livekit` 와 mirror. Node 18+. 동시통화 현재 1건. 문서: [`docs/agent/livekit.md`](docs/agent/livekit.md), 예제: [`examples/livekit-agent.ts`](examples/livekit-agent.ts).
+
 ## 0.23.0 (2026-07-08)
 
 ### Added

@@ -67,3 +67,22 @@ declare module '@modelcontextprotocol/sdk/client/streamableHttp.js' {
     constructor(url: URL);
   }
 }
+
+// LiveKit Agents transport (src/agent/livekit/*). ~네이티브 바이너리를 끌어오므로
+// optional peer 로만 선언하고, 런타임에서 `await import(...)` + `as any` 로 다룬다.
+declare module '@livekit/agents' {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  export const voice: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  export const llm: any;
+}
+
+declare module '@livekit/rtc-node' {
+  export class AudioFrame {
+    constructor(data: Int16Array, sampleRate: number, channels: number, samplesPerChannel: number);
+    data: Int16Array;
+    sampleRate: number;
+    channels: number;
+    samplesPerChannel: number;
+  }
+}

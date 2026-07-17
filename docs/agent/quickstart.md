@@ -16,6 +16,9 @@ npm install @teamlearners/clawops ws @deepgram/sdk @google/genai elevenlabs # Ge
 
 # MCP 서버 지원 포함
 npm install @teamlearners/clawops ws @modelcontextprotocol/sdk
+
+# LiveKit Agents 실행 (실험적) — docs/agent/livekit.md 참조
+npm install @teamlearners/clawops @livekit/agents @livekit/rtc-node
 ```
 
 ## 환경변수

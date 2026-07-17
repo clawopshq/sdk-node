@@ -16,6 +16,7 @@ WebSocket 역방향 연결 방식으로 ngrok 없이 로컬에서 바로 실행�
 | [이벤트 & CallSession](events.md)    | 통화 이벤트 핸들러, CallSession API   |
 | [MCP 서버](mcp.md)                   | MCP 서버 연동                         |
 | [녹음](recording.md)                 | 통화 녹음 설정                        |
+| [LiveKit Agents (실험적)](livekit.md) | LiveKit Agents 를 room 없이 ClawOps 번호로 실행 |
 | [Tracing](tracing.md)                | OpenTelemetry 연동                    |
 | [아키텍처](architecture.md)          | 내부 구조, 보안 모델                  |
 

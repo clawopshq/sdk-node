@@ -31,6 +31,8 @@ vi.mock('@livekit/agents', () => {
   }
   return {
     voice: { AudioOutput },
+    initializeLogger: () => {},
+    loggerOptions: () => ({}),
     llm: {
       ToolFlag: { IGNORE_ON_ENTER: 1 },
       tool: (def: any) => ({ ...def }),

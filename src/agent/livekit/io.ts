@@ -104,6 +104,17 @@ export async function loadClawOpsIO(): Promise<ClawOpsIO> {
     import('@livekit/rtc-node'),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ])) as [any, any];
+
+  // agents-js 는 AudioOutput 생성자(instance-init)에서 log() 를 부르고, 로거가 초기화되지
+  // 않았으면 throw 한다. room-less 는 worker/cli(initializeLogger 를 대신 부르는)를 거치지
+  // 않으므로 우리가 초기화한다 — 단, 유저가 이미 했으면(loggerOptions() 존재) 건드리지 않는다.
+  if (
+    typeof agents.initializeLogger === 'function' &&
+    (typeof agents.loggerOptions !== 'function' || !agents.loggerOptions())
+  ) {
+    agents.initializeLogger({ pretty: false, level: process.env['LIVEKIT_LOG_LEVEL'] ?? 'info' });
+  }
+
   const AudioOutputBase = agents.voice.AudioOutput;
   const AudioFrame = rtc.AudioFrame;
 

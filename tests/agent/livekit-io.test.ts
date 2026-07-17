@@ -29,7 +29,12 @@ vi.mock('@livekit/agents', () => {
     onPlaybackFinished(_o: unknown): void {}
     clearBuffer(): void {}
   }
-  return { voice: { AudioOutput } };
+  // loadClawOpsIO 가 만지는 로거 API 표면 — loggerOptions 가 truthy 면 init 을 건너뛴다.
+  return {
+    voice: { AudioOutput },
+    initializeLogger: () => {},
+    loggerOptions: () => ({}),
+  };
 });
 
 import { AudioFrame } from '@livekit/rtc-node';

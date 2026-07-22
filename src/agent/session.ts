@@ -47,6 +47,7 @@ export class CallSession {
   readonly metadata: Record<string, unknown>;
 
   private _status: CallStatus;
+  private _endedStatus: string | null = null;
   private _sendAudioFn: SendAudioFn | null = null;
   private _clearAudioFn: ClearAudioFn | null = null;
   private _hangupFn: HangupFn | null = null;
@@ -99,6 +100,18 @@ export class CallSession {
 
   get status(): CallStatus {
     return this._status;
+  }
+
+  /**
+   * 서버가 통보한 최종 종료 상태. 통화가 끝나기 전에는 null.
+   *
+   * `completed`(성사) / `no-answer`(벨은 울렸으나 무응답) / `busy`(통화중) /
+   * `rejected`(수신 거절) / `canceled`(응답 전 발신 측 취소) / `failed`(시스템·망 오류).
+   * `status` 는 SDK 내부 수명주기(ringing→active→ended)이므로 통화 성사 여부는
+   * 이 값이나 `call_failed` 이벤트로 판단한다.
+   */
+  get endedStatus(): string | null {
+    return this._endedStatus;
   }
 
   get duration(): number {
@@ -293,8 +306,20 @@ export class CallSession {
     return this._endedPromise;
   }
 
-  /** Mark the session as ended (called internally). */
-  _markEnded(): void {
+  /**
+   * Mark the session as ended (called internally).
+   *
+   * @param status 서버가 통보한 최종 상태(completed/no-answer/busy/rejected/canceled/
+   *   failed). 주어지면 `endedStatus` 로 확정한다 — 상대가 받지 않은 통화를 성사된 통화와
+   *   구분하기 위함이다. 생략하면 미디어 세션 정리 경로에서의 호출이므로, 아직 종료 전일
+   *   때만 'completed' 로 채우고 이미 확정된 서버 상태는 덮어쓰지 않는다.
+   */
+  _markEnded(status?: string): void {
+    if (status !== undefined) {
+      this._endedStatus = status;
+    } else if (this._status !== 'ended') {
+      this._endedStatus = 'completed';
+    }
     this._status = 'ended';
     this._resolveEnded();
   }

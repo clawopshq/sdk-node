@@ -187,29 +187,21 @@ const session2 = await agent.call('01012345678');
 
 ### 발신 결과 확인하기
 
-> **주의:** 현재 SDK는 발신이 성사됐는지 알려주지 않습니다. `await session.wait()` 는 통화가 끝나면 리턴하지만,
-> 상대가 받지 않았어도(무응답) 똑같이 리턴합니다. 무응답·통화중·거절 통화에서는 `call_end` 도 `call_failed` 도
-> 발화되지 않습니다. 발신 결과는 아래 방법으로 확인하세요. (SDK 개선 예정)
-
-가장 확실한 방법은 통화 조회 API 입니다. `status` 가 실제 종료 사유를 담고 있습니다.
+`await session.wait()` 는 **상대가 받지 않아도** 발신이 취소되는 시점에 리턴합니다.
+따라서 리턴했다는 사실만으로는 통화가 성사됐는지 알 수 없고, `endedStatus` 로 확인해야 합니다.
 
 ```typescript
-async function getCallStatus(callId: string): Promise<string> {
-  const accountId = process.env.CLAWOPS_ACCOUNT_ID;
-  const resp = await fetch(
-    `https://api.claw-ops.com/v1/accounts/${accountId}/calls/${callId}`,
-    { headers: { Authorization: `Bearer ${process.env.CLAWOPS_API_KEY}` } },
-  );
-  return ((await resp.json()) as { status: string }).status;
-}
-
-// 사용 예
 const session = await agent.call('01012345678', { timeout: 60 });
 await session.wait();
-console.log(await getCallStatus(session.callId)); // "completed" / "no-answer" / ...
+
+if (session.endedStatus === 'completed') {
+  console.log('통화 완료');
+} else {
+  console.log(`통화 미연결: ${session.endedStatus}`); // no-answer / busy / rejected / ...
+}
 ```
 
-| `status` | 의미 |
+| `endedStatus` | 의미 |
 | --- | --- |
 | `completed` | 상대가 받았고 통화가 정상 종료됨 |
 | `no-answer` | 벨은 울렸으나 받지 않음 (`timeout` 초과로 발신 취소) |
@@ -218,12 +210,34 @@ console.log(await getCallStatus(session.callId)); // "completed" / "no-answer" /
 | `canceled` | 상대가 받기 전에 발신 측이 취소 |
 | `failed` | 시스템/네트워크 오류 |
 
+**`completed` 만이 실제로 연결된 통화를 의미합니다.**
+
+여러 건을 발신하거나 결과를 콜백으로 받고 싶다면 `call_failed` 이벤트를 쓰세요.
+연결되지 못하고 끝난 통화에서만 발화됩니다.
+
+```typescript
+agent.on('call_failed', async (call, reason) => {
+  console.log(`${call.toNumber} 미연결: ${reason}`);
+});
+```
+
+통화 한 건은 반드시 `call_start`+`call_end`(연결됨) 또는 `call_failed`(미연결) 중 한쪽으로 끝납니다.
+자세한 내용은 [이벤트 & CallSession](events.md) 을 참고하세요.
+
+#### 나중에 다시 조회하기
+
+프로세스가 이미 종료됐거나 다른 서버에서 결과를 확인해야 한다면 통화 조회 API 를 쓰세요.
+
+```typescript
+import { ClawOps } from '@teamlearners/clawops';
+
+const client = new ClawOps(); // CLAWOPS_API_KEY / CLAWOPS_ACCOUNT_ID 사용
+const call = await client.calls.get(session.callId);
+console.log(call.status); // endedStatus 와 같은 값
+```
+
 더 자세한 진행 내역(통신망 응답, 벨 울림 여부 등)은 대시보드의 통화 상세 화면이나
 통화 이벤트 조회 API(`GET /v1/accounts/{accountId}/calls/{callId}/events`)에서 볼 수 있습니다.
-
-> **주의:** `@teamlearners/clawops` REST 클라이언트(`client.calls.get()`)는 현재 `status` 를
-> `queued`/`ringing`/`in-progress`/`completed`/`failed` 로만 검증하기 때문에, 무응답·통화중·거절 통화를 조회하면
-> 파싱 에러가 발생합니다. 수정 전까지는 위 예제처럼 `fetch` 로 직접 조회하세요.
 
 ### 번호 하나당 프로세스 하나
 
@@ -241,7 +255,7 @@ console.log(await getCallStatus(session.callId)); // "completed" / "no-answer" /
 
 ### 발신했는데 전화가 오지 않을 때
 
-`status` 가 `no-answer` 라면 **통신망이 상대 단말을 호출(벨)했지만 받지 않았다**는 뜻입니다.
+`endedStatus` 가 `no-answer` 라면 **통신망이 상대 단말을 호출(벨)했지만 받지 않았다**는 뜻입니다.
 발신 측에는 통화 연결음이 정상적으로 들립니다. 아래를 순서대로 확인하세요.
 
 | 확인 | 방법 |

@@ -393,10 +393,20 @@ export class ClawOpsAgent {
 
   private _handleEnded(event: ControlEvent): void {
     const callId = event['callId'] as string;
+    // 서버는 종료 사유를 status 로 싣는다(completed/no-answer/busy/rejected/canceled/
+    // failed). 예전에는 이 값을 버려서 상대가 받지 않은 통화를 성사된 통화와 구분할 수
+    // 없었다.
+    const status = (event['status'] as string) || 'completed';
     const session = this._activeSessions.get(callId);
     if (session) {
-      this._log.info('Call ended (server): %s', callId);
-      session._markEnded();
+      this._log.info('Call ended (server): %s (status=%s)', callId, status);
+      if (status !== 'completed') {
+        // 미연결 종료. call_start 가 없었으므로 call_end 도 발화되지 않는다 —
+        // 이 이벤트가 발신 실패를 알 수 있는 유일한 통로다.
+        this._log.info('Outbound call not connected: %s (%s)', callId, status);
+        session._emit('call_failed', status);
+      }
+      session._markEnded(status);
       this._activeSessions.delete(callId);
     }
     void this._cleanupPrewarm(callId);
@@ -530,9 +540,10 @@ export class ClawOpsAgent {
     const callId = event['callId'] as string;
     const session = this._activeSessions.get(callId);
     if (session) {
-      this._log.info('Outbound call failed: %s (%s)', callId, (event['reason'] as string) ?? 'failed');
-      session._emit('call_failed', (event['reason'] as string) ?? 'failed');
-      session._markEnded();
+      const reason = (event['reason'] as string) ?? 'failed';
+      this._log.info('Outbound call failed: %s (%s)', callId, reason);
+      session._emit('call_failed', reason);
+      session._markEnded(reason);
       this._activeSessions.delete(callId);
     }
     void this._cleanupPrewarm(callId);

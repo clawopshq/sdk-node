@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ClawOpsAgent } from '../../src/agent/index.js';
+import { ClawOpsAgent, CallSession } from '../../src/agent/index.js';
 import { AgentError } from '../../src/error.js';
 import type { FunctionTool } from '../../src/agent/tool.js';
 import type { Session } from '../../src/agent/pipeline/base.js';
@@ -214,5 +214,88 @@ describe('ClawOpsAgent machineDetection', () => {
       vi.unstubAllGlobals();
     }
     expect(postedBody(fetchMock)['MachineDetection']).toBe('Enable');
+  });
+});
+
+// ── 종료 상태 통보 (call.ended 의 status 반영) ──────────────────────────────
+// 배경: 서버는 call.ended 에 종료 사유를 status 로 싣지만 예전 _handleEnded 는 이 값을
+// 버려서, 상대가 받지 않은 통화(no-answer)가 성사된 통화와 구분되지 않았다.
+describe('ClawOpsAgent — 종료 상태 통보', () => {
+  const base = {
+    apiKey: 'sk_test',
+    accountId: 'AC123',
+    from: '07012341234',
+    session: mockSession,
+  };
+
+  function registerOutbound(agent: ClawOpsAgent, callId: string): CallSession {
+    const call = new CallSession({
+      callId,
+      fromNumber: '07012341234',
+      toNumber: '01012345678',
+      accountId: 'AC123',
+      direction: 'outbound',
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (agent as any)._activeSessions.set(callId, call);
+    return call;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleEnded = (agent: ClawOpsAgent, event: Record<string, unknown>) =>
+    (agent as any)._handleEnded(event);
+
+  it.each(['no-answer', 'busy', 'rejected', 'canceled', 'failed'])(
+    '미연결 종료(%s)는 endedStatus 에 사유를 남기고 call_failed 를 발화한다',
+    async (status) => {
+      const agent = new ClawOpsAgent(base);
+      const call = registerOutbound(agent, `CT-${status}`);
+      const seen: string[] = [];
+      call.on('call_failed', async (_c, reason) => {
+        seen.push(reason as string);
+      });
+
+      handleEnded(agent, { callId: `CT-${status}`, status });
+
+      expect(call.endedStatus).toBe(status);
+      expect(seen).toEqual([status]);
+      // wait() 는 무응답에서도 반드시 풀려야 한다(행 방지).
+      await call.wait();
+    },
+  );
+
+  it('성사된 통화에서는 call_failed 가 발화되지 않는다', async () => {
+    const agent = new ClawOpsAgent(base);
+    const call = registerOutbound(agent, 'CT-ok');
+    const seen: string[] = [];
+    call.on('call_failed', async (_c, reason) => {
+      seen.push(reason as string);
+    });
+
+    handleEnded(agent, { callId: 'CT-ok', status: 'completed' });
+
+    expect(call.endedStatus).toBe('completed');
+    expect(seen).toEqual([]);
+    await call.wait();
+  });
+
+  it('status 없는 구버전 이벤트는 completed 로 간주한다 (하위호환)', async () => {
+    const agent = new ClawOpsAgent(base);
+    const call = registerOutbound(agent, 'CT-legacy');
+
+    handleEnded(agent, { callId: 'CT-legacy' });
+
+    expect(call.endedStatus).toBe('completed');
+    expect(call.status).toBe('ended');
+  });
+
+  it('미디어 정리의 인자 없는 _markEnded() 가 서버 종료 사유를 덮어쓰지 않는다', () => {
+    const agent = new ClawOpsAgent(base);
+    const call = registerOutbound(agent, 'CT-keep');
+
+    handleEnded(agent, { callId: 'CT-keep', status: 'no-answer' });
+    call._markEnded();
+
+    expect(call.endedStatus).toBe('no-answer');
   });
 });

@@ -167,10 +167,10 @@ const agent = new ClawOpsAgent({
 });
 
 // 발신만 하는 경우 — 자동으로 connect() 수행
-const session = await agent.call('01012345678', { timeout: 30 });
+const session = await agent.call('01012345678', { timeout: 60 });
 console.log(session.callId); // 즉시 사용 가능
 console.log(session.direction); // "outbound"
-await session.wait(); // 통화 종료까지 대기
+await session.wait(); // 통화가 끝날 때까지 대기 (무응답이어도 리턴)
 await agent.disconnect();
 
 // 수신도 같이 하는 경우 (혼합 모드)
@@ -182,8 +182,74 @@ const session2 = await agent.call('01012345678');
 | 파라미터           | 타입     | 기본값 | 설명                                                                                                  |
 | ------------------ | -------- | ------ | ----------------------------------------------------------------------------------------------------- |
 | `to`               | `string` | 필수   | 수신 전화번호                                                                                          |
-| `timeout`          | `number` | `60`   | 무응답 대기 시간 (초)                                                                                  |
+| `timeout`          | `number` | `60`   | 상대방이 받지 않을 때 발신을 취소하기까지의 대기 시간 (초)                                             |
 | `machineDetection` | `string` | 없음   | 음성사서함 감지(AMD). `'Enable'`=결과만 통보(통화 계속), `'Hangup'`=사서함 감지 시 자동 종료. 결과는 통화 조회의 `answeredBy` 와 status callback 의 `AnsweredBy` 로 확인 |
+
+### 발신 결과 확인하기
+
+> **주의:** 현재 SDK는 발신이 성사됐는지 알려주지 않습니다. `await session.wait()` 는 통화가 끝나면 리턴하지만,
+> 상대가 받지 않았어도(무응답) 똑같이 리턴합니다. 무응답·통화중·거절 통화에서는 `call_end` 도 `call_failed` 도
+> 발화되지 않습니다. 발신 결과는 아래 방법으로 확인하세요. (SDK 개선 예정)
+
+가장 확실한 방법은 통화 조회 API 입니다. `status` 가 실제 종료 사유를 담고 있습니다.
+
+```typescript
+async function getCallStatus(callId: string): Promise<string> {
+  const accountId = process.env.CLAWOPS_ACCOUNT_ID;
+  const resp = await fetch(
+    `https://api.claw-ops.com/v1/accounts/${accountId}/calls/${callId}`,
+    { headers: { Authorization: `Bearer ${process.env.CLAWOPS_API_KEY}` } },
+  );
+  return ((await resp.json()) as { status: string }).status;
+}
+
+// 사용 예
+const session = await agent.call('01012345678', { timeout: 60 });
+await session.wait();
+console.log(await getCallStatus(session.callId)); // "completed" / "no-answer" / ...
+```
+
+| `status` | 의미 |
+| --- | --- |
+| `completed` | 상대가 받았고 통화가 정상 종료됨 |
+| `no-answer` | 벨은 울렸으나 받지 않음 (`timeout` 초과로 발신 취소) |
+| `busy` | 통화중 |
+| `rejected` | 상대가 거절 |
+| `canceled` | 상대가 받기 전에 발신 측이 취소 |
+| `failed` | 시스템/네트워크 오류 |
+
+더 자세한 진행 내역(통신망 응답, 벨 울림 여부 등)은 대시보드의 통화 상세 화면이나
+통화 이벤트 조회 API(`GET /v1/accounts/{accountId}/calls/{callId}/events`)에서 볼 수 있습니다.
+
+> **주의:** `@teamlearners/clawops` REST 클라이언트(`client.calls.get()`)는 현재 `status` 를
+> `queued`/`ringing`/`in-progress`/`completed`/`failed` 로만 검증하기 때문에, 무응답·통화중·거절 통화를 조회하면
+> 파싱 에러가 발생합니다. 수정 전까지는 위 예제처럼 `fetch` 로 직접 조회하세요.
+
+### 번호 하나당 프로세스 하나
+
+플랫폼은 **발신번호 1개당 Agent 연결(control WebSocket) 1개**만 유지합니다.
+같은 번호로 새 연결이 들어오면 기존 연결은 즉시 끊깁니다.
+
+```
+[프로세스 A] agent.serve()          ← 수신 대기 중
+[프로세스 B] agent.call("010...")   ← 같은 번호로 연결 → A 가 끊기고 B 가 소유권 획득
+```
+
+이 상태에서 발신하면 통화가 응답된 직후 `AGENT_SESSION_INIT_FAILED` 로 끊길 수 있습니다.
+수신과 발신을 함께 하려면 **하나의 프로세스에서** `await agent.connect()` 후 `agent.call()` 을 호출하세요
+(위 "혼합 모드" 예제). 발신 스크립트를 여러 번 실행할 때는 이전 프로세스가 완전히 종료됐는지 확인하세요.
+
+### 발신했는데 전화가 오지 않을 때
+
+`status` 가 `no-answer` 라면 **통신망이 상대 단말을 호출(벨)했지만 받지 않았다**는 뜻입니다.
+발신 측에는 통화 연결음이 정상적으로 들립니다. 아래를 순서대로 확인하세요.
+
+| 확인 | 방법 |
+| --- | --- |
+| `timeout` 이 너무 짧지 않은지 | 기본값 `60`. `30` 으로 줄였다면 벨이 몇 번 울리기도 전에 취소됩니다 |
+| **단말 수신 차단** | 아이폰 "알 수 없는 발신자 무음 처리", 스팸 차단 앱(T전화·후후 등)의 070 자동 차단, 방해금지 모드. **이 경우 발신 측에는 정상적으로 벨 소리가 들리지만 단말은 울리지 않습니다** |
+| 다른 단말로 테스트 | 동료·가족 등 **다른 사람의 휴대폰 번호**로 발신해 보세요 |
+| 다른 발신번호로 테스트 | 대시보드에서 번호를 추가 발급받아 다른 `from` 으로 발신해 보세요 |
 
 ## 에러 처리
 

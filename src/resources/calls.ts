@@ -25,20 +25,6 @@ export class Calls extends APIResource {
       To: params.to,
       From: params.from,
       Url: params.url,
-      AI: params.ai
-        ? stripNotGiven({
-            Provider: params.ai.provider,
-            Model: params.ai.model,
-            ApiKey: params.ai.apiKey,
-            Voice: params.ai.voice,
-            Language: params.ai.language,
-            Messages: params.ai.messages,
-            Tools: params.ai.tools,
-            Greeting: params.ai.greeting,
-            TurnDetection: params.ai.turnDetection,
-            RealtimeInputConfig: params.ai.realtimeInputConfig,
-          })
-        : undefined,
       StatusCallback: params.statusCallback,
       StatusCallbackEvent: params.statusCallbackEvent,
       Timeout: params.timeout,

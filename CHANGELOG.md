@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.26.0 (2026-07-23)
+
+### Removed
+- **`calls.create({ ai })` — AI Completion 모드 제거.** 서버에서 해당 모드가 종료되어 `AI` 필드를 포함한 요청은 이제 `410 ai_mode_removed` 로 거절된다. `ai` 파라미터와 `AIConfig`/`OpenAIAIConfig`/`GeminiAIConfig`/`CustomAIConfig` 타입을 삭제했다. 통화에 AI 를 태우려면 **Agent SDK**(`@teamlearners/clawops/agent`) 를 쓰거나, 콘솔에서 만든 매니지드 에이전트 또는 VoiceML(`url`) 을 사용한다. Python SDK 0.38.0 과 mirror.
+
 ## 0.25.1 (2026-07-23)
 
 ### Fixed

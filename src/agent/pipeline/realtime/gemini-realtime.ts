@@ -19,6 +19,7 @@ import { NOOP_LOGGER } from '../../logger.js';
 import { HoldAudioPlayer } from '../../hold-audio.js';
 import {
   BUILTIN_TOOL_NAMES,
+  CALL_NOT_READY_RESULT,
   executeBuiltinTool,
   getBuiltinToolSchemas,
 } from '../builtin-tool-schemas.js';
@@ -158,6 +159,14 @@ export interface GeminiRealtimeOptions {
 }
 
 export class GeminiRealtime implements Session {
+  /**
+   * Gemini Live 는 connect 시점의 config 로 도구가 고정되어 세션 도중 변경할 수 없다.
+   *
+   * 통화 시작 시점에야 붙는 MCP 도구는 prewarm 된 세션에 넣을 방법이 없으므로,
+   * `ClawOpsAgent` 가 MCP 서버 설정과 이 플래그를 보고 prewarm 을 건너뛴다.
+   */
+  readonly toolsFrozenAfterPrewarm = true;
+
   private _apiKey: string;
   private _systemPrompt: string;
   private _model: string;
@@ -537,6 +546,13 @@ export class GeminiRealtime implements Session {
             responses.push({ id: fcId, name, response: { result } });
             continue;
           }
+        }
+
+        // prewarm 창(=상대가 받기 전)에는 통화 제어 도구를 수행할 대상이 없다.
+        if (BUILTIN_TOOL_NAMES.has(name) && this._call instanceof BufferingCall) {
+          this._log.warn('Builtin tool %s called before answer — deferring', name);
+          responses.push({ id: fcId, name, response: { result: CALL_NOT_READY_RESULT } });
+          continue;
         }
 
         if (!this._tools || !this._tools.has(name)) {

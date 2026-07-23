@@ -16,6 +16,7 @@ import { NOOP_LOGGER } from '../../logger.js';
 import { HoldAudioPlayer } from '../../hold-audio.js';
 import {
   BUILTIN_TOOL_NAMES,
+  CALL_NOT_READY_RESULT,
   executeBuiltinTool,
   getBuiltinToolSchemas,
 } from '../builtin-tool-schemas.js';
@@ -66,6 +67,11 @@ export class OpenAIRealtime implements Session {
 
   private _log: Logger = NOOP_LOGGER;
   private _builtinTools: Set<BuiltinTool> | null = null;
+  /**
+   * 마지막 session.update 로 LLM 에 알린 tool 이름들. attach() 가 이 값과 현재
+   * registry 를 비교해 달라졌을 때만(=MCP 도구 등 뒤늦게 붙은 경우) 재전송한다.
+   */
+  private _sentToolNames: string[] | null = null;
 
   setLogger(logger: Logger): void {
     this._log = logger;
@@ -195,6 +201,7 @@ export class OpenAIRealtime implements Session {
 
   /** Attach a real CallSession to the prewarmed session and flush buffered audio. */
   async attach(callSession: CallSession): Promise<void> {
+    this._resyncTools();
     const prev = this._call;
     this._call = callSession;
     attachBuffered(prev, callSession);
@@ -264,15 +271,47 @@ export class OpenAIRealtime implements Session {
     }
   }
 
+  /** Current tool schemas: user tools + builtin tools (flat realtime format). */
+  private _currentToolSchemas(): Array<Record<string, unknown>> {
+    const toolSchemas: Array<Record<string, unknown>> = this._tools
+      ? this._tools.toOpenAITools().map((t) => ({ type: 'function' as const, ...t.function }))
+      : [];
+    toolSchemas.push(...getBuiltinToolSchemas(this._builtinTools, 'realtime'));
+    return toolSchemas;
+  }
+
+  /**
+   * prewarm 이후 도구가 바뀌었으면 session.update 로 재전송한다.
+   *
+   * MCP 도구는 통화 시작 시점에 registry 에 붙으므로 prewarm 시점의 스키마에는
+   * 없다. 여기서 맞춰주지 않으면 발신 통화에서 MCP 도구를 영영 못 쓴다.
+   */
+  private _resyncTools(): void {
+    if (!this._ws || this._ws.readyState !== 1) return;
+    const toolSchemas = this._currentToolSchemas();
+    const names = toolSchemas.map((t) => String(t['name'] ?? ''));
+    if (
+      this._sentToolNames &&
+      names.length === this._sentToolNames.length &&
+      names.every((n, i) => n === this._sentToolNames![i])
+    ) {
+      return;
+    }
+    this._send({
+      type: 'session.update',
+      session: { type: 'realtime', tools: toolSchemas },
+    });
+    this._sentToolNames = names;
+    this._log.info('Tool schema resynced after prewarm: %s', names.join(', '));
+  }
+
   private _sendSessionUpdate(): void {
     if (!this._ws || this._ws.readyState !== 1) return;
 
     // Build tool schemas: user tools + builtin tools
     // OpenAI Realtime API uses flat tool format: { type, name, description, parameters }
-    const toolSchemas: Array<Record<string, unknown>> = this._tools
-      ? this._tools.toOpenAITools().map((t) => ({ type: 'function' as const, ...t.function }))
-      : [];
-    toolSchemas.push(...getBuiltinToolSchemas(this._builtinTools, 'realtime'));
+    const toolSchemas = this._currentToolSchemas();
+    this._sentToolNames = toolSchemas.map((t) => String(t['name'] ?? ''));
 
     this._send({
       type: 'session.update',
@@ -466,6 +505,23 @@ export class OpenAIRealtime implements Session {
           this._send({ type: 'response.create' });
           return;
         }
+      }
+
+      // prewarm 창(=상대가 받기 전)에는 통화 제어 도구를 수행할 대상이 없다.
+      // 'Unknown tool' 로 뭉뚱그리지 말고 모델이 이해할 결과를 돌려준다.
+      if (BUILTIN_TOOL_NAMES.has(funcName) && this._call instanceof BufferingCall) {
+        this._log.warn('Builtin tool %s called before answer — deferring', funcName);
+        await this._waitForResponseDone();
+        this._send({
+          type: 'conversation.item.create',
+          item: {
+            type: 'function_call_output',
+            call_id: callId,
+            output: CALL_NOT_READY_RESULT,
+          },
+        });
+        this._send({ type: 'response.create' });
+        return;
       }
 
       if (!this._tools || !this._tools.has(funcName)) {

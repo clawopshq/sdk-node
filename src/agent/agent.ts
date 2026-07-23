@@ -486,10 +486,66 @@ export class ClawOpsAgent {
    * multiple times — only the first invocation starts the task. Failures are
    * recorded in _prewarmFailed so the call-session path can fall back to start().
    */
+  /**
+   * 세션에 콜별 의존성(도구·내장도구·hold audio·recorder·logger)을 주입한다.
+   *
+   * prewarm 과 _startCallSession 양쪽에서 부른다. prewarm 은 세션이 LLM 에 보낼
+   * tool 스키마를 그 시점에 확정하므로(OpenAI session.update / Gemini live connect
+   * config), prewarm **전에** 최소 한 번은 도구가 들어가 있어야 한다.
+   */
+  private _injectSessionDeps(tools: ToolRegistry, recorder?: AudioRecorder | null): void {
+    const sessionHandler = this._session;
+    if (
+      'setToolRegistry' in sessionHandler &&
+      typeof sessionHandler.setToolRegistry === 'function'
+    ) {
+      sessionHandler.setToolRegistry(tools);
+    }
+    if (
+      recorder &&
+      'setRecorder' in sessionHandler &&
+      typeof sessionHandler.setRecorder === 'function'
+    ) {
+      sessionHandler.setRecorder(recorder);
+    }
+    if ('setBuiltinTools' in sessionHandler && typeof sessionHandler.setBuiltinTools === 'function') {
+      (sessionHandler as any).setBuiltinTools(this._builtinTools);
+    }
+    if ('setLogger' in sessionHandler && typeof sessionHandler.setLogger === 'function') {
+      sessionHandler.setLogger(this._isPipelineSession ? this._pipelineLog : this._log);
+    }
+    if (
+      this._holdAudioChunks &&
+      'setHoldAudio' in sessionHandler &&
+      typeof sessionHandler.setHoldAudio === 'function'
+    ) {
+      sessionHandler.setHoldAudio(this._holdAudioChunks);
+    }
+  }
+
   private _startPrewarm(callId: string): void {
     if (this._prewarmTasks.has(callId)) return;
     const sessionHandler = this._session;
     if (typeof sessionHandler.prewarm !== 'function') return;
+
+    // MCP 도구는 통화 시작 시점(_startCallSession)에야 등록되는데, 연결 후 도구
+    // 변경이 불가능한 세션(Gemini Live)은 prewarm 하면 MCP 도구를 영영 못 쓴다.
+    // 그런 조합에서는 prewarm 을 건너뛰고 기존 start() 경로로 간다.
+    if (
+      this._mcpServers.length > 0 &&
+      (sessionHandler as { toolsFrozenAfterPrewarm?: boolean }).toolsFrozenAfterPrewarm
+    ) {
+      this._log.info(
+        { callId },
+        'Skipping prewarm — 세션이 연결 후 도구 변경을 지원하지 않아 MCP 도구가 누락된다.',
+      );
+      return;
+    }
+
+    // prewarm 은 tool 스키마를 LLM 에 확정 전송한다. 여기서 주입하지 않으면
+    // agent.tool() 로 등록한 도구가 통째로 빠진 채 세션이 시작된다 —
+    // _startCallSession 의 주입은 answer 이후라 이미 늦다.
+    this._injectSessionDeps(this._tools.fork());
 
     const PREWARM_TIMEOUT_MS = 10_000;
     const t0 = Date.now();
@@ -689,32 +745,7 @@ export class ClawOpsAgent {
         const sessionHandler = this._session;
 
         // Inject tools and recorder into session if supported
-        if (
-          'setToolRegistry' in sessionHandler &&
-          typeof sessionHandler.setToolRegistry === 'function'
-        ) {
-          sessionHandler.setToolRegistry(sessionTools);
-        }
-        if (
-          recorder &&
-          'setRecorder' in sessionHandler &&
-          typeof sessionHandler.setRecorder === 'function'
-        ) {
-          sessionHandler.setRecorder(recorder);
-        }
-        if ('setBuiltinTools' in sessionHandler && typeof sessionHandler.setBuiltinTools === 'function') {
-          (sessionHandler as any).setBuiltinTools(this._builtinTools);
-        }
-        if ('setLogger' in sessionHandler && typeof sessionHandler.setLogger === 'function') {
-          sessionHandler.setLogger(this._isPipelineSession ? this._pipelineLog : this._log);
-        }
-        if (
-          this._holdAudioChunks &&
-          'setHoldAudio' in sessionHandler &&
-          typeof sessionHandler.setHoldAudio === 'function'
-        ) {
-          sessionHandler.setHoldAudio(this._holdAudioChunks);
-        }
+        this._injectSessionDeps(sessionTools, recorder);
 
         // Save session handler for DTMF routing
         this._callSessions.set(session.callId, sessionHandler);

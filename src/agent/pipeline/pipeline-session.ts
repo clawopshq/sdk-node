@@ -19,7 +19,12 @@ import type { SessionTelemetry } from '../telemetry.js';
 import type { Logger } from 'pino';
 import { NOOP_LOGGER } from '../logger.js';
 import { HoldAudioPlayer } from '../hold-audio.js';
-import { BUILTIN_TOOL_NAMES, executeBuiltinTool, getBuiltinToolSchemas } from './builtin-tool-schemas.js';
+import {
+  BUILTIN_TOOL_NAMES,
+  CALL_NOT_READY_RESULT,
+  executeBuiltinTool,
+  getBuiltinToolSchemas,
+} from './builtin-tool-schemas.js';
 import { BufferingCall, attachBuffered } from './buffering-call.js';
 
 export interface PipelineSessionOptions {
@@ -316,6 +321,19 @@ export class PipelineSession implements Session {
           await this._respond();
           return;
         }
+      }
+
+      // prewarm 창(=상대가 받기 전)에는 통화 제어 도구를 수행할 대상이 없다.
+      if (BUILTIN_TOOL_NAMES.has(name) && this._callSession instanceof BufferingCall) {
+        this._log.warn('Builtin tool %s called before answer — deferring', name);
+        this._conversation.push({
+          role: 'tool',
+          content: CALL_NOT_READY_RESULT,
+          tool_call_id: id,
+          name,
+        });
+        await this._respond();
+        return;
       }
 
       if (!this._tools) return;

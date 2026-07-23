@@ -80,6 +80,10 @@ export const BUILTIN_TOOL_NAMES: Set<string> = new Set(
   Array.from(TOOL_MAP.values()).map((s) => s.name),
 );
 
+/** prewarm 창에서 통화 제어 도구가 호출됐을 때 모델에 돌려주는 결과. */
+export const CALL_NOT_READY_RESULT =
+  '통화가 아직 연결되지 않았습니다(발신 호출음 단계). 상대가 전화를 받은 뒤에 다시 시도하세요.';
+
 // ── 포맷 변환 ───────────────────────────────────────────────────────
 
 function toChatCompletions(schema: NeutralSchema): Record<string, unknown> {

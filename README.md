@@ -209,6 +209,19 @@ for await (const call of (await client.calls.list()).autoPagingIter()) {
 // 특정 통화 조회
 const detail = await client.calls.get('CAabcdef1234567890');
 
+// 연결 실패 사유 확인 — status가 'failed' 인 경우는 결번·망 오류·시스템 오류를 모두 포함하는
+// 대분류라, 다시 걸어도 소용없는 번호를 가려내려면 hangupCause 를 봅니다.
+const DO_NOT_RETRY = ['invalid_number', 'number_changed', 'incompatible_destination'];
+if (detail.status !== 'completed') {
+  if (DO_NOT_RETRY.includes(detail.hangupCause ?? '')) {
+    console.log(`결번 — 목록에서 제외: ${detail.to}`); // hangupCauseQ850=1, sipResponseCode=404
+  } else if (detail.hangupSource === 'app' || detail.hangupSource === 'system') {
+    console.log('ClawOps 측 오류 — 재시도');
+  } else {
+    console.log(`일시적 사유(${detail.hangupCause}) — 나중에 재시도`);
+  }
+}
+
 // 통화 종료
 await client.calls.update('CAabcdef1234567890', { status: 'completed' });
 

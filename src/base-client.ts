@@ -229,6 +229,20 @@ export class APIClient {
     return result!;
   }
 
+  async _patch<T>(
+    path: string,
+    options: {
+      body?: Record<string, unknown> | null;
+      castTo: z.ZodType<T>;
+      extraHeaders?: Record<string, string>;
+      extraQuery?: Record<string, unknown>;
+      timeout?: number;
+    },
+  ): Promise<T> {
+    const result = await this._request<T>('PATCH', path, options);
+    return result!;
+  }
+
   async _getRaw(
     path: string,
     options: {
@@ -239,6 +253,24 @@ export class APIClient {
     } = {},
   ): Promise<Response> {
     return this._send('GET', path, options);
+  }
+
+  /**
+   * 본문을 돌려주는 DELETE. 기존 `_delete` 는 void 라 응답을 버리는데, soft delete 처럼
+   * 삭제 결과 리소스를 그대로 반환하는 endpoint 가 있어서 따로 둔다.
+   */
+  async _deleteWithResponse<T>(
+    path: string,
+    options: {
+      body?: Record<string, unknown> | null;
+      castTo: z.ZodType<T>;
+      extraHeaders?: Record<string, string>;
+      extraQuery?: Record<string, unknown>;
+      timeout?: number;
+    },
+  ): Promise<T> {
+    const result = await this._request<T>('DELETE', path, options);
+    return result!;
   }
 
   async _delete(

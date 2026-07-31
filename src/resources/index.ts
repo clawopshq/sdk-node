@@ -6,4 +6,5 @@ export type { RecordingDownload } from './recordings.js';
 export { SipCredentials } from './sip-credentials.js';
 export { SipEndpoints } from './sip-endpoints.js';
 export { WebhookLogs } from './webhook-logs.js';
+export { BlockedRecipients } from './blocked-recipients.js';
 export { AccountContext } from './accounts.js';

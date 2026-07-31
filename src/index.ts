@@ -32,6 +32,7 @@ export { WebhookVerificationError, Webhooks } from './webhooks.js';
 export { Page } from './pagination.js';
 
 export { AssignmentLinks } from './resources/assignment-links.js';
+export { BlockedRecipients } from './resources/blocked-recipients.js';
 export { Calls } from './resources/calls.js';
 export { Messages } from './resources/messages.js';
 export { Numbers } from './resources/numbers.js';
@@ -64,4 +65,8 @@ export type {
   AssignmentLinkAssignment,
   AssignmentLinkCreateResponse,
   AssignmentLinkStatus,
+  BlockedRecipient,
+  BlockedChannel,
+  BlockedRecipientStatus,
+  BlockedRecipientSource,
 } from './types/index.js';

@@ -47,3 +47,11 @@ export {
   AssignmentLinkAssignmentSchema,
   AssignmentLinkCreateResponseSchema,
 } from './assignment-link.js';
+
+export type {
+  BlockedRecipient,
+  BlockedChannel,
+  BlockedRecipientStatus,
+  BlockedRecipientSource,
+} from './blocked-recipient.js';
+export { BlockedRecipientSchema } from './blocked-recipient.js';

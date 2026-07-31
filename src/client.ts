@@ -2,6 +2,7 @@ import { APIClient, type APIClientOptions } from './base-client.js';
 import { DEFAULT_BASE_URL } from './constants.js';
 import { ClawOpsError } from './error.js';
 import { AssignmentLinks } from './resources/assignment-links.js';
+import { BlockedRecipients } from './resources/blocked-recipients.js';
 import { Calls } from './resources/calls.js';
 import { Messages } from './resources/messages.js';
 import { Numbers } from './resources/numbers.js';
@@ -80,6 +81,10 @@ export class ClawOps extends APIClient {
 
   get assignmentLinks(): AssignmentLinks {
     return new AssignmentLinks(this, this._defaultAccountId);
+  }
+
+  get blockedRecipients(): BlockedRecipients {
+    return new BlockedRecipients(this, this._defaultAccountId);
   }
 
   get webhooks(): Webhooks {

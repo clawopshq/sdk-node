@@ -50,6 +50,59 @@ describe('CallSchema', () => {
     expect(result.duration).toBeNull();
   });
 
+  it('parses hangup cause fields on a failed call', () => {
+    const data = {
+      callId: 'CA14ad61795d28ba036a383f66565376b4',
+      status: 'failed',
+      to: '07080588491',
+      from: '07052361088',
+      direction: 'outbound',
+      duration: 0,
+      accountId: 'AC123',
+      dateCreated: '2026-07-30T17:18:15Z',
+      hangupCause: 'invalid_number',
+      hangupCauseQ850: 1,
+      sipResponseCode: 404,
+      hangupSource: 'carrier',
+    };
+    const result = CallSchema.parse(data);
+    expect(result.hangupCause).toBe('invalid_number');
+    expect(result.hangupCauseQ850).toBe(1);
+    expect(result.sipResponseCode).toBe(404);
+    expect(result.hangupSource).toBe('carrier');
+  });
+
+  it('allows hangup cause fields to be absent (진행 중이거나 사유 미상)', () => {
+    const data = {
+      callId: 'CA123',
+      status: 'in-progress',
+      to: '01012345678',
+      from: '07012341234',
+      direction: 'outbound',
+      accountId: 'AC123',
+      dateCreated: '2026-01-01T00:00:00Z',
+    };
+    const result = CallSchema.parse(data);
+    expect(result.hangupCause).toBeUndefined();
+    expect(result.hangupSource).toBeUndefined();
+  });
+
+  it('accepts an unknown hangupCause (서버가 cause 를 넓혀도 파싱 유지)', () => {
+    const data = {
+      callId: 'CA123',
+      status: 'failed',
+      to: '01012345678',
+      from: '07012341234',
+      direction: 'outbound',
+      accountId: 'AC123',
+      dateCreated: '2026-01-01T00:00:00Z',
+      hangupCause: 'some_future_cause',
+      hangupCauseQ850: 255,
+    };
+    const result = CallSchema.parse(data);
+    expect(result.hangupCause).toBe('some_future_cause');
+  });
+
   it('allows passthrough of extra fields', () => {
     const data = {
       callId: 'CA123',

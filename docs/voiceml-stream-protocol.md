@@ -96,6 +96,26 @@ WebSocket 연결 성공.
 }
 ```
 
+#### dtmf
+
+발신자가 통화 중 키패드를 누르면 전송됩니다. IVR/메뉴 선택, 본인 인증 코드 입력 등을 처리할 때 사용합니다.
+
+```json
+{
+  "event": "dtmf",
+  "sequenceNumber": "5",
+  "dtmf": {
+    "digit": "1",
+    "track": "inbound_track"
+  }
+}
+```
+
+| 필드 | 설명 |
+|------|------|
+| `digit` | 입력된 키 (`0`-`9`, `*`, `#`) |
+| `track` | 입력 트랙 식별자 (`inbound_track`) |
+
 #### stop
 
 스트림 종료.
@@ -103,7 +123,7 @@ WebSocket 연결 성공.
 ```json
 {
   "event": "stop",
-  "sequenceNumber": "5",
+  "sequenceNumber": "6",
   "stop": {
     "accountId": "AC...",
     "callId": "CA..."
@@ -148,6 +168,23 @@ WebSocket 연결 성공.
   "event": "clear"
 }
 ```
+
+#### dtmf
+
+발신자에게 DTMF 신호를 전송합니다. ARS 메뉴 탐색, 내선번호 입력 등 *발신자 측* 으로 키 톤을 보낼 때 사용합니다.
+
+```json
+{
+  "event": "dtmf",
+  "dtmf": {
+    "digit": "1"
+  }
+}
+```
+
+| 필드 | 설명 |
+|------|------|
+| `digit` | 보낼 키 (`0`-`9`, `*`, `#`) |
 
 ## 사용 패턴
 
@@ -202,5 +239,5 @@ WebSocket 연결 성공.
 |------|--------|---------|
 | 오디오 코덱 | mulaw 8kHz | mulaw 8kHz |
 | ID 필드명 | accountSid, callSid, streamSid | accountId, callId, streamId |
-| DTMF 이벤트 | 지원 | 미지원 |
+| DTMF 이벤트 | 서버 → 클라이언트만 | 양방향 (수신·송신) |
 | VoiceML verb | `<Stream>` (TwiML) | `<Stream>` (VoiceML) |

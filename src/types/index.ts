@@ -11,8 +11,8 @@ export { MessageSchema } from './message.js';
 
 export type { MessageCreateParams, MessageListParams } from './message-params.js';
 
-export type { PhoneNumber, NumberListItem, NumberUpdateResponse } from './number.js';
-export { PhoneNumberSchema } from './number.js';
+export type { PhoneNumber, NumberListItem, NumberUpdateResponse, RoutingType } from './number.js';
+export { PhoneNumberSchema, ROUTING_TYPES } from './number.js';
 
 export type { NumberCreateParams, NumberUpdateParams } from './number-params.js';
 

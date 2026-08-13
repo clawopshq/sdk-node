@@ -58,6 +58,7 @@ export type {
   NumberUpdateResponse,
   NumberCreateParams,
   NumberUpdateParams,
+  RoutingType,
   SipCredential,
   SipEndpoint,
   WebhookLog,

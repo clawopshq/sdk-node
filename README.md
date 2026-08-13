@@ -270,32 +270,63 @@ await client.recordings.delete('CAabcdef1234567890');
 ### 전화번호 (Numbers)
 
 ```typescript
-// 번호 구매
-const number = await client.numbers.create({ source: 'pool' });
-console.log(number.phoneNumber);
+// 번호 발급 — 풀에서 자동 배정되며 어떤 번호가 나올지는 지정할 수 없다
+const number = await client.numbers.create();
+console.log(number.number, number.routingType); // 07012340001 webhook
 
-// 번호 목록 조회
+// 번호 목록 조회 (페이지네이션 없음 — 보유한 번호가 전부 반환된다)
 const numbers = await client.numbers.list();
 
-// 웹훅 URL 변경
-await client.numbers.update('07012340001', { webhookUrl: 'https://my-app.com/webhook' });
+// 발급 직후에는 webhookUrl 이 비어 있어 걸려온 전화가 거절된다. 착신 라우팅을 지정한다.
 
-// 인바운드 소프트폰 착신으로 라우팅 변경 (sip_trunk 부가서비스 + 등록 단말 필요)
-// 1) 등록된 SIP 단말(credential) 목록에서 id 조회
+// 매니지드 에이전트가 받도록
+await client.numbers.update('07012340001', {
+  routingType: 'agent',
+  agentId: 'AG7c2f9b1e4a6d',
+});
+
+// 콜 플로우(ARS)가 받도록
+await client.numbers.update('07012340001', {
+  routingType: 'callflow',
+  callFlowId: 'CF41b8e07d9c25',
+});
+
+// 내 서버의 VoiceML 이 받도록
+await client.numbers.update('07012340001', {
+  routingType: 'webhook',
+  webhookUrl: 'https://my-app.com/voice',
+});
+
+// 보유한 다른 번호로 착신전환 (같은 계정의 번호만 가능)
+await client.numbers.update('07012340001', {
+  routingType: 'forward',
+  forwardTo: '07012340002',
+});
+
+// 소프트폰 단말 착신 (sip_trunk 부가서비스 + 등록 단말 필요)
 const creds = await client.sipCredentials.list({ status: 'active' });
-// 2) 그 id 로 라우팅 설정
 await client.numbers.update('07012340001', {
   routingType: 'softphone',
   sipCredentialId: creds[0].id,
 });
 
-// (sip 라우팅의 경우) SIP 엔드포인트 id 조회
+// 외부 PBX 로 (sip_trunk 부가서비스 + 활성 라우트 1개 이상 필요)
 const endpoints = await client.sipEndpoints.list({ status: 'active' });
 await client.numbers.update('07012340001', { routingType: 'sip', sipEndpointId: endpoints[0].id });
 
-// 번호 해제
+// 수신 통화 상태 통지
+await client.numbers.update('07012340001', {
+  statusCallback: 'https://my-app.com/call-status',
+  statusCallbackEvents: 'initiated ringing answered completed',
+});
+
+// 번호 반납 — 되돌릴 수 없고 같은 번호를 다시 받는다는 보장이 없다
 await client.numbers.delete('07012340001');
 ```
+
+라우팅을 바꾸면 다른 라우팅 필드는 서버에서 자동으로 비워집니다. `agent` 에서 `webhook` 으로
+되돌리면 `agentId` 가 `null` 이 되므로, 다시 `agent` 로 돌아갈 때 `agentId` 를 새로 지정해야
+합니다.
 
 ### 메시지 (Messages)
 

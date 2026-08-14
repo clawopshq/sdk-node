@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.32.0 (2026-08-15)
+
+### Added
+- **`CallSession.endedDuration` — 서버가 확정한 통화 시간.** Python SDK 0.46.0 과 mirror. 종료 이벤트가 실어 보내던 값을 지금까지 SDK 가 읽지 않아, 통화 기록을 자체 시스템에 적재하려면 REST 를 다시 조회하거나 로컬 시계로 잰 값을 써야 했습니다.
+  ```typescript
+  agent.on('call_end', (call) => {
+    console.log(call.endedStatus, call.endedDuration);  // completed 91
+  });
+  ```
+  - `duration` 은 그대로 둡니다 — 그쪽은 **SDK 가 로컬 시계로 재는 경과 시간**이라 통화 중에도 읽힙니다. 기록·정산에 쓸 값은 `endedDuration` 입니다.
+  - 서버가 값을 보내지 않으면 `null` 을 유지합니다. **서버 배포가 선행되어야** 실제 값이 들어옵니다.
+
 ## 0.31.0 (2026-08-14)
 
 ### Added

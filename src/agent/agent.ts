@@ -397,9 +397,13 @@ export class ClawOpsAgent {
     // failed). 예전에는 이 값을 버려서 상대가 받지 않은 통화를 성사된 통화와 구분할 수
     // 없었다.
     const status = (event['status'] as string) || 'completed';
+    // 서버가 확정한 통화 시간. 구 서버는 이 값을 안 보내거나 0 을 보내므로 그대로 둔다 —
+    // 없는 값을 로컬 계산으로 지어내면 어느 쪽인지 구분할 수 없게 된다.
+    const endedDuration = event['duration'];
     const session = this._activeSessions.get(callId);
     if (session) {
       this._log.info('Call ended (server): %s (status=%s)', callId, status);
+      if (typeof endedDuration === 'number') session._setEndedDuration(endedDuration);
       if (status !== 'completed') {
         // 미연결 종료. call_start 가 없었으므로 call_end 도 발화되지 않는다 —
         // 이 이벤트가 발신 실패를 알 수 있는 유일한 통로다.

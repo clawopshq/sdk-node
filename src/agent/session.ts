@@ -48,6 +48,7 @@ export class CallSession {
 
   private _status: CallStatus;
   private _endedStatus: string | null = null;
+  private _endedDuration: number | null = null;
   private _sendAudioFn: SendAudioFn | null = null;
   private _clearAudioFn: ClearAudioFn | null = null;
   private _hangupFn: HangupFn | null = null;
@@ -114,8 +115,23 @@ export class CallSession {
     return this._endedStatus;
   }
 
+  /**
+   * 서버가 확정한 통화 시간(초). 통화가 끝나기 전에는 `null`.
+   *
+   * ⚠️ `duration` 과 다르다 — 그쪽은 SDK 가 로컬 시계로 재는 **경과 시간**이라 통화 중에도
+   * 읽히고, 세션이 붙기 전후의 오차를 포함한다. 기록·정산에 쓸 값은 이쪽이다.
+   */
+  get endedDuration(): number | null {
+    return this._endedDuration;
+  }
+
   get duration(): number {
     return (Date.now() - this.startTime.getTime()) / 1000;
+  }
+
+  /** @internal 서버가 통보한 통화 시간을 확정한다. */
+  _setEndedDuration(seconds: number): void {
+    this._endedDuration = seconds;
   }
 
   get metrics(): Readonly<CallMetrics> { return this._metrics; }

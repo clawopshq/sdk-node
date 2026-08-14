@@ -27,6 +27,17 @@ import { createAgentLogger, createPipelineLogger } from './logger.js';
 
 export type AgentEventType = 'call_start' | 'call_end' | 'call_failed' | 'transcript' | 'dtmf';
 
+/**
+ * 미디어 정리 후 서버 종료 프레임을 기다리는 상한(ms). 정상 경로에서는 밀리초 안에 풀리고,
+ * 제어 연결이 죽어 프레임이 아예 안 올 때만 이 값을 다 쓴다.
+ *
+ * 🔴 이건 **임시 장치**다. 서버가 미디어 WS 를 먼저 닫고 정리를 마친 뒤에 종료 프레임을
+ *    보내기 때문에 클라이언트가 그 순서를 보정하고 있다. 서버가 종료 프레임을 미디어 WS
+ *    닫기 **전에** 보내게 되면 이 대기는 통째로 필요 없어진다. 다만 그때도 구 서버가 남아
+ *    있는 동안은 유지해야 한다 — 버전 협상이 없어 "모두 새 서버" 를 확신할 방법이 없다.
+ */
+const TERMINAL_FRAME_GRACE_MS = 2000;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentEventHandler = (...args: any[]) => void | Promise<void>;
 
@@ -101,6 +112,8 @@ export class ClawOpsAgent {
   private _recording: boolean;
   private _recordingPath: string;
   private _activeSessions: Map<string, CallSession> = new Map();
+  /** 미디어 정리를 마친 통화가 서버 종료 프레임을 기다리는 자리. callId → resolve. */
+  private _terminalWaiters = new Map<string, () => void>();
   private _builtinTools!: Set<BuiltinTool>;
   private _passiveDtmfDebounceMs: number;
   private _passiveDtmfBuffer: string[] = [];
@@ -278,6 +291,11 @@ export class ClawOpsAgent {
       this._controlWs = null;
     }
 
+    // 제어 연결이 닫힌 뒤엔 종료 프레임이 올 수 없다 — 기다리는 통화를 즉시 놓아주지 않으면
+    // 종료 중인 통화마다 상한(2초)을 통째로 헛쓴다. ControlWebSocket.close() 가 대기 중인
+    // 전환 resolver 를 정리하는 것과 같은 규율이다.
+    for (const wake of [...this._terminalWaiters.values()]) wake();
+
     for (const session of this._activeSessions.values()) {
       session._markEnded();
     }
@@ -391,15 +409,49 @@ export class ClawOpsAgent {
     }
   }
 
+  /**
+   * 서버 종료 프레임을 짧게 기다린다. 미디어 정리 직후에만 부른다.
+   *
+   * 왜 기다리나: `call_end` 는 인바운드 사용자가 통화 결과를 받는 **유일한 통로**인데, 서버는
+   * 미디어 WS 를 먼저 닫고 자원 정리를 마친 뒤에야 control 종료 프레임을 보낸다. 안 기다리면
+   * 그 핸들러 안에서 `endedDuration` 은 영영 null 이다.
+   *
+   * 상한을 다 쓰는 경우는 제어 연결이 죽어 프레임이 아예 안 오는 때뿐이다 — 그 프레임은
+   * 예전부터 늘 오던 것이고(이번에 바뀐 건 내용뿐), 정상 경로에서는 밀리초 안에 풀린다.
+   */
+  private async _awaitServerTerminal(session: CallSession): Promise<void> {
+    if (session.endedDuration !== null) return;
+    await new Promise<void>((resolve) => {
+      const done = (): void => {
+        clearTimeout(timer);
+        this._terminalWaiters.delete(session.callId);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        this._log.debug(
+          '서버 종료 프레임이 %dms 안에 오지 않았다 — endedDuration 없이 진행: %s',
+          TERMINAL_FRAME_GRACE_MS,
+          session.callId,
+        );
+        done();
+      }, TERMINAL_FRAME_GRACE_MS);
+      this._terminalWaiters.set(session.callId, done);
+    });
+  }
+
   private _handleEnded(event: ControlEvent): void {
     const callId = event['callId'] as string;
     // 서버는 종료 사유를 status 로 싣는다(completed/no-answer/busy/rejected/canceled/
     // failed). 예전에는 이 값을 버려서 상대가 받지 않은 통화를 성사된 통화와 구분할 수
     // 없었다.
     const status = (event['status'] as string) || 'completed';
+    // 서버가 확정한 통화 시간. 구 서버는 이 값을 안 보내거나 0 을 보내므로 그대로 둔다 —
+    // 없는 값을 로컬 계산으로 지어내면 어느 쪽인지 구분할 수 없게 된다.
+    const endedDuration = event['duration'];
     const session = this._activeSessions.get(callId);
     if (session) {
       this._log.info('Call ended (server): %s (status=%s)', callId, status);
+      if (typeof endedDuration === 'number') session._setEndedDuration(endedDuration);
       if (status !== 'completed') {
         // 미연결 종료. call_start 가 없었으므로 call_end 도 발화되지 않는다 —
         // 이 이벤트가 발신 실패를 알 수 있는 유일한 통로다.
@@ -409,6 +461,8 @@ export class ClawOpsAgent {
       session._markEnded(status);
       this._activeSessions.delete(callId);
     }
+    // 미디어 정리를 마치고 이 프레임을 기다리는 통화가 있으면 깨운다(awaitServerTerminal).
+    this._terminalWaiters.get(callId)?.();
     void this._cleanupPrewarm(callId);
   }
 
@@ -858,6 +912,12 @@ export class ClawOpsAgent {
           try {
             this._controlWs?.send({ event: 'call.metrics', callId: session.callId, metrics: session.metrics });
           } catch { /* best-effort */ }
+
+          // 서버가 확정한 통화 시간을 call_end 핸들러가 읽을 수 있게 잠깐 기다린다.
+          // 서버는 미디어 WS 를 먼저 닫고 자원 정리 뒤에 control 종료 프레임을 보내므로,
+          // 안 기다리면 endedDuration 은 인바운드 사용자에게 **영영 null** 이다 —
+          // call_end 가 그들의 유일한 통로다.
+          await this._awaitServerTerminal(session);
 
           // Emit call_end
           session._emit('call_end');

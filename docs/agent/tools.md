@@ -239,7 +239,7 @@ await call.transfer('sip:agent@sip.example.com', {
 await call.transfer('01012345678', {
   mode: 'warm',
   whisper: 'VIP 고객입니다.',
-  holdMedia: 'moh',        // 고객 대기 음악 ('moh' 또는 'silence')
+  holdMedia: 'moh',        // 전환 중 고객에게 ('moh' | 'ringback' | 'silence')
   context: {
     customerName: '홍길동',
     orderId: 'ORD-20260325-001',
@@ -256,7 +256,7 @@ await call.transfer('01012345678', {
 | `destinationType` | `string` | `'pstn'` | `'pstn'`: 통신사 경유 전화번호 전환, `'sip'`: SIP 엔드포인트 직접 전환 (**`sip_trunk` 부가서비스 필요**) |
 | `mode` | `string` | `'blind'` | `'blind'`: 즉시 전환, `'warm'`: whisper 후 전환 |
 | `afterTransfer` | `string` | `'terminate'` | `'terminate'`: AI 세션 종료, `'return'`: 전환 통화 종료 후 AI가 다시 대화를 이어감 |
-| `holdMedia` | `string` | `'moh'` | 전환 중 고객에게 재생할 대기 음원. `'moh'`: 대기 음악, `'silence'`: 무음 |
+| `holdMedia` | `string` | `'ringback'` | 전환 중 고객에게 재생할 대기 음원. `'moh'`: 대기 음악, `'ringback'`: 통화 연결음, `'silence'`: 무음 |
 | `whisper` | `string` | `undefined` | Warm 모드에서 대상이 전화를 받았을 때 전달할 안내 메시지 (TTS). 고객에게는 들리지 않음 |
 | `context` | `object` | `undefined` | 전환 대상에게 webhook으로 전달할 구조화 데이터 (예: 고객 정보, 주문 번호 등) |
 | `callerId` | `string` | `undefined` | 전환 발신 시 표시할 발신자 번호 오버라이드 |

@@ -146,3 +146,22 @@ describe('종료 프레임 grace', () => {
     expect(flat.indexOf('_awaitServerTerminal')).toBeLessThan(endIdx);
   });
 });
+
+describe('종료 대기와 disconnect', () => {
+  it('disconnect 가 기다리는 통화를 즉시 놓아준다', async () => {
+    // 제어 연결이 닫히면 종료 프레임은 올 수 없다. 안 깨우면 종료 중인 통화마다 상한을
+    // 통째로 헛쓴다 — 빠른 종료가 가장 중요한 경로다.
+    const { agent, call } = makeAgentWithCall();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const waiting = (agent as any)._awaitServerTerminal(call) as Promise<void>;
+    await new Promise((r) => setTimeout(r, 0));
+
+    const started = Date.now();
+    await agent.disconnect();
+    await waiting;
+
+    expect(Date.now() - started).toBeLessThan(500);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((agent as any)._terminalWaiters.size).toBe(0);
+  });
+});

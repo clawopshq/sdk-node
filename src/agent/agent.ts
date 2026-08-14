@@ -30,6 +30,11 @@ export type AgentEventType = 'call_start' | 'call_end' | 'call_failed' | 'transc
 /**
  * 미디어 정리 후 서버 종료 프레임을 기다리는 상한(ms). 정상 경로에서는 밀리초 안에 풀리고,
  * 제어 연결이 죽어 프레임이 아예 안 올 때만 이 값을 다 쓴다.
+ *
+ * 🔴 이건 **임시 장치**다. 서버가 미디어 WS 를 먼저 닫고 정리를 마친 뒤에 종료 프레임을
+ *    보내기 때문에 클라이언트가 그 순서를 보정하고 있다. 서버가 종료 프레임을 미디어 WS
+ *    닫기 **전에** 보내게 되면 이 대기는 통째로 필요 없어진다. 다만 그때도 구 서버가 남아
+ *    있는 동안은 유지해야 한다 — 버전 협상이 없어 "모두 새 서버" 를 확신할 방법이 없다.
  */
 const TERMINAL_FRAME_GRACE_MS = 2000;
 
@@ -285,6 +290,11 @@ export class ClawOpsAgent {
       this._controlWs.close();
       this._controlWs = null;
     }
+
+    // 제어 연결이 닫힌 뒤엔 종료 프레임이 올 수 없다 — 기다리는 통화를 즉시 놓아주지 않으면
+    // 종료 중인 통화마다 상한(2초)을 통째로 헛쓴다. ControlWebSocket.close() 가 대기 중인
+    // 전환 resolver 를 정리하는 것과 같은 규율이다.
+    for (const wake of [...this._terminalWaiters.values()]) wake();
 
     for (const session of this._activeSessions.values()) {
       session._markEnded();

@@ -93,3 +93,56 @@ describe('CallSession.endedDuration', () => {
     expect(call.endedDuration).toBeNull();
   });
 });
+
+describe('종료 프레임 grace', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const awaitTerminal = (agent: ClawOpsAgent, call: CallSession) =>
+    (agent as any)._awaitServerTerminal(call) as Promise<void>;
+
+  it('프레임이 오면 즉시 풀리고 call_end 가 값을 본다', async () => {
+    const { agent, call } = makeAgentWithCall();
+    const seen: (number | null)[] = [];
+    call.on('call_end', (c: CallSession) => {
+      seen.push(c.endedDuration);
+    });
+
+    setTimeout(() => {
+      handleEnded(agent, { callId: 'CA_x', status: 'completed', duration: 91 });
+    }, 20);
+
+    const started = Date.now();
+    await awaitTerminal(agent, call);
+    const elapsed = Date.now() - started;
+    call._emit('call_end');
+
+    expect(seen).toEqual([91]);
+    // 프레임이 왔는데 상한을 다 쓰면 모든 통화의 call_end 가 그만큼 늦어진다.
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  it('값이 이미 있으면 기다리지 않는다', async () => {
+    const { agent, call } = makeAgentWithCall();
+    call._setEndedDuration(42);
+
+    const started = Date.now();
+    await awaitTerminal(agent, call);
+
+    expect(Date.now() - started).toBeLessThan(100);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((agent as any)._terminalWaiters.size).toBe(0);
+  });
+
+  it('미디어 정리 경로가 grace 를 call_end 전에 부른다 — 배선 검사', () => {
+    // grace 를 만들어 놓고 정리 경로에서 안 부르면 아무 효과가 없다. 파이썬 쪽에서
+    // 실제로 그 상태였고 테스트가 전부 통과했다(테스트가 helper 를 직접 불렀으니까).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const src = (ClawOpsAgent.prototype as any)._startCallSession.toString();
+    const flat = src.split(/\s+/).join(' ');
+
+    // 따옴표 스타일은 트랜스파일마다 다르므로 이벤트 이름만 앵커로 쓴다.
+    expect(flat).toContain('_awaitServerTerminal');
+    const endIdx = flat.indexOf('call_end');
+    expect(endIdx).toBeGreaterThan(-1);
+    expect(flat.indexOf('_awaitServerTerminal')).toBeLessThan(endIdx);
+  });
+});

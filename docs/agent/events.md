@@ -63,7 +63,7 @@ agent.on('call_failed', async (call, reason) => {
 | `direction` | `string` | `"inbound"` 또는 `"outbound"` |
 | `status` | `CallStatus` | 수명주기 상태. 아래 표 참고 |
 | `endedStatus` | `string \| null` | 종료 사유. 통화가 끝나기 전에는 `null` |
-| `endedDuration` | `number \| null` | **서버가 확정한 통화 시간(초).** 통화가 끝나기 전에는 `null` |
+| `endedDuration` | `number \| null` | **서버가 확정한 통화 시간(초).** `call_end` 핸들러에서 읽을 수 있습니다. 서버가 값을 주지 않으면 `null` |
 | `startTime` | `Date` | 통화 시작 시간 |
 | `duration` | `number` | SDK 가 로컬 시계로 재는 경과 시간 (초). 통화 중에도 읽힙니다 |
 | `metadata` | `Record<string, unknown>` | 사용자 정의 메타데이터 |

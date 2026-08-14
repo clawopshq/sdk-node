@@ -3,7 +3,11 @@ import { stripNotGiven } from '../util.js';
 import { Page, PageSchema } from '../pagination.js';
 import { CallSchema, CallControlResponseSchema } from '../types/call.js';
 import type { Call, CallControlResponse } from '../types/call.js';
-import type { CallCreateParams, CallListParams } from '../types/call-params.js';
+import type {
+  CallContextParam,
+  CallCreateParams,
+  CallListParams,
+} from '../types/call-params.js';
 import {
   TranscriptStatusSchema,
   TranscriptRequestAcceptedSchema,
@@ -11,6 +15,22 @@ import {
 import type { TranscriptStatus, TranscriptRequestAccepted } from '../types/transcript.js';
 import { SummaryStatusSchema } from '../types/summary.js';
 import type { SummaryStatus } from '../types/summary.js';
+
+/**
+ * `callContext` 를 REST 본문의 PascalCase 로 옮긴다.
+ *
+ * 파라미터는 camelCase(`instruction`/`variables`)로 받지만 서버는 PascalCase 만 받는다
+ * (스펙상 `additionalProperties: false` 라 camelCase 를 그대로 보내면 400).
+ * `stripNotGiven` 은 최상위 키만 훑으므로 중첩 객체는 여기서 직접 정리한다.
+ */
+function callContextBody(
+  ctx: CallContextParam | undefined,
+): Record<string, unknown> | undefined {
+  if (!ctx) return undefined;
+  const body: Record<string, unknown> = { Instruction: ctx.instruction };
+  if (ctx.variables !== undefined) body.Variables = ctx.variables;
+  return body;
+}
 
 export class Calls extends APIResource {
   async create(
@@ -25,6 +45,10 @@ export class Calls extends APIResource {
       To: params.to,
       From: params.from,
       Url: params.url,
+      AgentId: params.agentId,
+      CallContext: callContextBody(params.callContext),
+      CallFlowId: params.callFlowId,
+      Variables: params.variables,
       StatusCallback: params.statusCallback,
       StatusCallbackEvent: params.statusCallbackEvent,
       Timeout: params.timeout,

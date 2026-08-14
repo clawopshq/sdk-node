@@ -4,7 +4,12 @@ export { PaginationMetaSchema } from './shared.js';
 export type { Call, CallControlResponse } from './call.js';
 export { CallSchema, CallControlResponseSchema } from './call.js';
 
-export type { CallCreateParams, CallListParams, CallUpdateParams } from './call-params.js';
+export type {
+  CallContextParam,
+  CallCreateParams,
+  CallListParams,
+  CallUpdateParams,
+} from './call-params.js';
 
 export type { Message } from './message.js';
 export { MessageSchema } from './message.js';

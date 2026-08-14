@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.30.0 (2026-08-14)
+
+### Added
+- **`calls.create({ agentId })` — 매니지드 에이전트로 발신.** Python SDK 0.42.0 과 mirror. 콘솔에서 만든 AI 에이전트에게 아웃바운드 통화를 맡긴다. REST 는 `AgentId` 를 계속 지원해 왔는데 SDK 에만 파라미터가 없어, AI Completion 모드를 걷어낸 뒤로 **SDK 로 AI 통화를 거는 방법이 `url`(VoiceML 서버 직접 구현)뿐**이었다. 그 공백을 메운다.
+  - `callContext: { instruction, variables }` — **이번 통화에만** 적용되는 지시. 에이전트 자체 설정은 그대로 두고 이 통화만 다르게 행동시킨다. 같은 에이전트로 동시에 거는 다른 통화에는 영향이 없다. 파라미터는 camelCase 로 받고 본문은 PascalCase 로 보낸다(스펙이 `additionalProperties: false` 라 camelCase 를 그대로 흘리면 400).
+- **`calls.create({ callFlowId, variables })` — 콜 플로우로 발신.** 콘솔 빌더로 만든 결정적 ARS 플로우가 통화를 진행한다. `variables` 는 멘트·URL·본문의 `{{이름}}` 을 치환하며 `callFlowId` 와 함께일 때만 쓸 수 있다(단독 지정 시 400). `caller`·`callee`·`recording_url`·`recording_duration`·`http_status` 는 통화 중 자동으로 채워지는 예약 변수라 지정할 수 없다.
+- `url`·`agentId`·`callFlowId` 는 서로 배타적이고, **셋 다 생략하면 Agent SDK 모드**로 From 번호에 연결된 세션이 받는다.
+- `CallContextParam` 타입을 export 에 추가.
+
 ## 0.28.0 (2026-07-31)
 
 ### Added

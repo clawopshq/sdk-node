@@ -6,7 +6,10 @@
  */
 
 import { BuiltinTool } from '../builtin-tool.js';
+import { createAgentLogger } from '../logger.js';
 import type { CallSession } from '../session.js';
+
+const log = createAgentLogger();
 
 // ── 정규 스키마 (neutral 포맷) ──────────────────────────────────────
 
@@ -60,7 +63,8 @@ const TRANSFER_CALL = {
       mode: { type: 'string' as const, enum: ['blind', 'warm'], description: 'blind: direct transfer (default), warm: play whisper to target first' },
       after_transfer: { type: 'string' as const, enum: ['terminate', 'return'], description: 'terminate: end AI session (default), return: AI resumes after transfer ends' },
       whisper: { type: 'string' as const, description: 'Message to speak to transfer target before connecting customer (warm mode only)' },
-      caller_id: { type: 'string' as const, description: 'Override caller ID for the transfer leg' },
+      caller_id_mode: { type: 'string' as const, enum: ['account', 'original'], description: "What the transfer target sees as the caller. account: the account's own number (default). original: prefer the inbound caller's number, falling back to the account number when it cannot be inherited. Prefer this over caller_id." },
+      caller_id: { type: 'string' as const, description: 'Exact caller ID for the transfer leg. Must be a number the account owns, or the original inbound caller. Anything else fails the transfer outright — use caller_id_mode unless a specific number is required.' },
       timeout: { type: 'integer' as const, description: 'Seconds to wait for transfer target to answer (default 30)' },
     },
     required: ['to'] as string[],
@@ -189,8 +193,13 @@ export async function executeBuiltinTool(
         afterTransfer: (args['after_transfer'] as 'terminate' | 'return') ?? undefined,
         whisper: args['whisper'] as string ?? undefined,
         callerId: args['caller_id'] as string ?? undefined,
+        callerIdMode: (args['caller_id_mode'] as 'account' | 'original') ?? undefined,
         timeout: args['timeout'] as number ?? undefined,
-      }).catch(() => {});
+        // 결과를 안 기다리므로 실패가 통째로 조용하다 — 모델은 "시작됨" 을 받고, 예외는
+        // 프로미스 안에 갇힌다. 최소한 로그에는 남긴다.
+      }).catch((e: unknown) => {
+        log.error({ err: e }, 'transfer_call 도구가 건 전환이 실패했다');
+      });
       return JSON.stringify({ status: 'transfer_initiated' });
     } catch (e) {
       return `Error: ${e}`;

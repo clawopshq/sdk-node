@@ -261,6 +261,16 @@ export class CallSession {
    * directly to a SIP endpoint without going through the PSTN carrier. Requires the
    * account to have an active `sip_trunk` add-on; otherwise the transfer fails and
    * the call continues with the AI (result `{ status: 'failed', ... }`).
+   *
+   * 전환받는 쪽에 표시되는 발신번호는 기본이 **계정 보유번호**(인바운드면 착신 070)다.
+   *
+   * `callerIdMode: 'original'` 은 인바운드 통화의 **원 발신자 번호를 승계하려는 선호**다.
+   * 승계할 수 없는 통화(KCT 직결 인입이 아니거나 국내 번호로 정규화되지 않는 발신번호)면
+   * 조용히 계정 보유번호로 내려앉고 **전환은 그대로 성사된다**.
+   *
+   * `callerId` 는 번호를 직접 주는 **지시**라 성격이 다르다. 허용 범위(계정 보유번호 또는
+   * KCT 직결 인입의 원 발신자)를 벗어나면 전환 자체가 실패한다. 둘 다 주면 `callerId` 가
+   * 이기고 `callerIdMode` 는 무시된다 — 우선순위 판단은 서버가 한다.
    */
   async transfer(
     to: string,
@@ -272,11 +282,20 @@ export class CallSession {
       whisper?: string;
       context?: Record<string, unknown>;
       callerId?: string;
+      callerIdMode?: 'account' | 'original';
       timeout?: number;
     },
   ): Promise<Record<string, unknown>> {
     if (!this._transferFn) {
       throw new Error('transfer not available');
+    }
+    // 서버는 'original' 만 특별 취급하고 나머지 값은 조용히 무시한다. 오타를 그대로
+    // 흘려보내면 아무 에러 없이 계정 번호가 나가고, 개발자는 켰다고 믿는다 — 여기서 막는다.
+    const callerIdMode = options?.callerIdMode;
+    if (callerIdMode !== undefined && callerIdMode !== 'account' && callerIdMode !== 'original') {
+      throw new Error(
+        `callerIdMode must be 'account' or 'original', got ${JSON.stringify(callerIdMode)}`,
+      );
     }
     return this._transferFn({
       to,
@@ -288,6 +307,8 @@ export class CallSession {
       context: options?.context ?? null,
       callerId: options?.callerId ?? null,
       timeout: options?.timeout ?? 30,
+      // 안 주면 키를 붙이지 않는다 — 구 서버와 기존 동작을 그대로 둔다(additive).
+      ...(callerIdMode !== undefined ? { callerIdMode } : {}),
     });
   }
 

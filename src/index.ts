@@ -47,6 +47,7 @@ export type {
   PaginationMeta,
   Call,
   CallControlResponse,
+  CallContextParam,
   CallCreateParams,
   CallListParams,
   CallUpdateParams,

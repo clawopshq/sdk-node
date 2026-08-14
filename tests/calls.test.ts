@@ -59,6 +59,94 @@ describe('Calls resource', () => {
       expect(result.callId).toBe('CA_123');
     });
 
+    it('sends AgentId and omits mutually exclusive routing fields', async () => {
+      const fetchFn = mockResponse(sampleCall);
+      const client = createClient(fetchFn);
+
+      await client.calls.create({
+        to: '+15551234567',
+        from: '+15559876543',
+        agentId: 'cmagent123',
+      });
+
+      const [, init] = fetchFn.mock.calls[0];
+      const body = JSON.parse(init!.body as string);
+      // 배타 필드는 보내지 않은 채로 남아야 한다 — 빈 값이라도 실리면 서버가 400 으로 막는다.
+      expect(body).toEqual({
+        To: '+15551234567',
+        From: '+15559876543',
+        AgentId: 'cmagent123',
+      });
+    });
+
+    it('converts callContext to PascalCase', async () => {
+      // 서버 스펙이 CallContext 에 additionalProperties:false 라, camelCase 를 그대로
+      // 흘려보내면 400 이 난다. 변환이 빠지면 이 테스트가 먼저 깨진다.
+      const fetchFn = mockResponse(sampleCall);
+      const client = createClient(fetchFn);
+
+      await client.calls.create({
+        to: '+15551234567',
+        from: '+15559876543',
+        agentId: 'cmagent123',
+        callContext: {
+          instruction: '예약 확인만 하고 끊어라',
+          variables: { orderId: 'A-1234' },
+        },
+      });
+
+      const [, init] = fetchFn.mock.calls[0];
+      const body = JSON.parse(init!.body as string);
+      expect(body.CallContext).toEqual({
+        Instruction: '예약 확인만 하고 끊어라',
+        Variables: { orderId: 'A-1234' },
+      });
+    });
+
+    it('omits Variables when callContext has none', async () => {
+      const fetchFn = mockResponse(sampleCall);
+      const client = createClient(fetchFn);
+
+      await client.calls.create({
+        to: '+15551234567',
+        from: '+15559876543',
+        agentId: 'cmagent123',
+        callContext: { instruction: '본인확인만 하라' },
+      });
+
+      const [, init] = fetchFn.mock.calls[0];
+      const body = JSON.parse(init!.body as string);
+      expect(body.CallContext).toEqual({ Instruction: '본인확인만 하라' });
+    });
+
+    it('sends CallFlowId with start Variables', async () => {
+      const fetchFn = mockResponse(sampleCall);
+      const client = createClient(fetchFn);
+
+      await client.calls.create({
+        to: '+15551234567',
+        from: '+15559876543',
+        callFlowId: 'cmryw3ycm000001s6on0kp9a8',
+        variables: { name: '홍길동', orderId: 'A-1234' },
+      });
+
+      const [, init] = fetchFn.mock.calls[0];
+      const body = JSON.parse(init!.body as string);
+      expect(body.CallFlowId).toBe('cmryw3ycm000001s6on0kp9a8');
+      expect(body.Variables).toEqual({ name: '홍길동', orderId: 'A-1234' });
+    });
+
+    it('sends no routing field in Agent SDK mode', async () => {
+      const fetchFn = mockResponse(sampleCall);
+      const client = createClient(fetchFn);
+
+      await client.calls.create({ to: '+15551234567', from: '+15559876543' });
+
+      const [, init] = fetchFn.mock.calls[0];
+      const body = JSON.parse(init!.body as string);
+      expect(body).toEqual({ To: '+15551234567', From: '+15559876543' });
+    });
+
     it('includes optional StatusCallback and StatusCallbackEvent', async () => {
       const fetchFn = mockResponse(sampleCall);
       const client = createClient(fetchFn);

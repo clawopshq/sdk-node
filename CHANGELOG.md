@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.32.1 (2026-08-24)
+
+### Changed
+- **저장소가 [`clawopshq/sdk-node`](https://github.com/clawopshq/sdk-node) 로 옮겨졌습니다.** 패키지 이름(`@teamlearners/clawops`)도, API 도 그대로입니다 — 설치 명령과 코드에 바꿀 것은 없습니다. 구 주소(`learners-superpumped/clawops-node`)는 GitHub 리다이렉트로 계속 열립니다.
+
 ## 0.32.0 (2026-08-15)
 
 ### Added

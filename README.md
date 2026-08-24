@@ -480,7 +480,7 @@ const client = new ClawOps({
 
 | 언어 | 패키지 | 저장소 |
 |------|--------|--------|
-| Python | [`clawops`](https://pypi.org/project/clawops/) | [clawops-python](https://github.com/learners-superpumped/clawops-python) |
+| Python | [`clawops`](https://pypi.org/project/clawops/) | [sdk-python](https://github.com/clawopshq/sdk-python) |
 
 ## 요구사항
 

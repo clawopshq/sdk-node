@@ -103,6 +103,6 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/learners-superpumped/clawops-node"
+    "url": "https://github.com/clawopshq/sdk-node"
   }
 }

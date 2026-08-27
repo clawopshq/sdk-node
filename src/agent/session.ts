@@ -164,7 +164,12 @@ export class CallSession {
     this._status = 'active';
   }
 
-  /** Send PCM16 or ulaw audio to the caller. */
+  /**
+   * Send G.711 μ-law audio (8kHz, mono) to the caller.
+   *
+   * NOT PCM16. The transport applies μ-law gain and forwards the bytes as-is,
+   * so PCM16 input is reinterpreted as μ-law and plays as noise. Convert first.
+   */
   sendAudio(audio: Buffer): void {
     if (this._sendAudioFn) {
       this._sendAudioFn(audio);

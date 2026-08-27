@@ -122,13 +122,18 @@ if (session.endedStatus !== 'completed') {
 agent.on('call_start', async (call) => {
   call.metadata.customerId = 'CUST_123';
 
-  await call.sendAudio(pcm16Bytes);   // 오디오 전송
+  await call.sendAudio(ulawBytes);    // 오디오 전송 (G.711 μ-law, 8kHz)
   await call.clearAudio();            // 오디오 큐 초기화 (인터럽트 시)
   await call.hangup();                // 통화 종료
   await call.transfer('01012345678'); // 다른 번호로 통화 전환
   await call.wait();                  // 통화 종료까지 대기 (아웃바운드 시 유용)
 });
 ```
+
+> **`sendAudio()` 는 G.711 μ-law (8kHz, mono) 를 받습니다. PCM16 이 아닙니다.**
+> 전송 계층이 받은 바이트를 μ-law 로 그대로 해석하므로, PCM16 을 넣으면 예외 없이
+> **잡음으로 재생**됩니다. 직접 오디오를 만들어 넣을 때는 먼저 μ-law 로 변환하세요.
+> Pipeline 모드를 쓰면 SDK 가 변환을 대신하므로 이 규격을 다룰 필요가 없습니다.
 
 > `await call.wait()`는 통화가 종료될 때까지 대기합니다. 주로 아웃바운드 단건 발신 시 통화가 끝나기를 기다리는 데 사용합니다.
 > 상대가 받지 않아도(무응답) 발신 취소 시점에 리턴하므로, **성사 여부는 리턴 후 `call.endedStatus` 로 확인**하세요.

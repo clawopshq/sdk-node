@@ -25,6 +25,7 @@ export {
   ServiceUnavailableError,
   AgentError,
   AgentConnectionError,
+  SolapiBridgeError,
 } from './error.js';
 
 export { WebhookVerificationError, Webhooks } from './webhooks.js';

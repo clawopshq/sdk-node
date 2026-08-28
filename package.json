@@ -18,6 +18,11 @@
       "types": "./dist/agent/livekit/index.d.ts",
       "import": "./dist/agent/livekit/index.js",
       "require": "./dist/agent/livekit/index.cjs"
+    },
+    "./solapi": {
+      "types": "./dist/solapi/index.d.ts",
+      "import": "./dist/solapi/index.js",
+      "require": "./dist/solapi/index.cjs"
     }
   },
   "main": "./dist/index.cjs",
@@ -51,7 +56,8 @@
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@opentelemetry/api": ">=1.20.0",
     "elevenlabs": ">=1.0.0",
-    "openai": ">=4.0.0"
+    "openai": ">=4.0.0",
+    "solapi": "^6"
   },
   "peerDependenciesMeta": {
     "openai": {
@@ -80,6 +86,9 @@
     },
     "@livekit/rtc-node": {
       "optional": true
+    },
+    "solapi": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -87,6 +96,7 @@
     "@types/node": "^20.0.0",
     "@types/ws": "^8.0.0",
     "prettier": "^3.2.0",
+    "solapi": "^6.0.1",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
     "vitest": "^3.0.0",

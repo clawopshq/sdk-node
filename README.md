@@ -372,6 +372,128 @@ for await (const m of (await client.messages.list()).autoPagingIter()) {
 const detail = await client.messages.get('MG0123456789abcdef');
 ```
 
+### 솔라피(SOLAPI) 호환 — 문자만 ClawOps 로
+
+이미 솔라피 SDK 로 작성된 코드를 **그대로 두고** 문자(SMS/LMS/MMS)만 ClawOps 로 보냅니다.
+알림톡·친구톡·RCS 는 기존 솔라피 계정으로 계속 나갑니다.
+
+```bash
+npm install @teamlearners/clawops solapi
+```
+
+바꾸는 곳은 **인스턴스를 만드는 한 줄**뿐입니다.
+
+```typescript
+import { ClawOps } from '@teamlearners/clawops';
+import { ClawOpsMessageService } from '@teamlearners/clawops/solapi';
+import { SolapiMessageService } from 'solapi';
+
+const messageService = new ClawOpsMessageService({
+  clawops: new ClawOps({ apiKey: process.env.CLAWOPS_API_KEY, accountId: process.env.CLAWOPS_ACCOUNT_ID }),
+  solapi: new SolapiMessageService(SOLAPI_KEY, SOLAPI_SECRET), // 알림톡을 계속 쓸 때만
+  from: '07052358010',                                          // ClawOps 에 등록된 번호
+});
+
+// 이 아래 호출부는 기존 코드 그대로입니다
+await messageService.send({ to: '01012345678', from: '07052358010', text: '인증번호는 123456 입니다' });
+```
+
+`messageService` 의 타입은 `SolapiMessageService` 와 동일해서 기존 코드의 타입 자리에 그대로 들어갑니다.
+`send` 만 가로채고 `getBalance()`·`getKakaoChannels()` 같은 나머지 메서드는 주입한 솔라피 인스턴스로 그대로 전달합니다.
+원본 인스턴스는 수정하지 않습니다.
+
+| 메시지 | 어디로 |
+|---|---|
+| `SMS` / `LMS` / `MMS`, 또는 `type` 미지정 | **ClawOps** |
+| `ATA`(알림톡) · `CTA`/`CTI`(친구톡) · `RCS_*` · `NSA` · `FAX` · `VOICE` · `BMS_*` | 솔라피 (요청을 손대지 않고 그대로 전달) |
+
+`type` 을 `SMS`/`LMS` 로 지정하면 그대로 따르고, 지정하지 않으면 서버와 같은 규칙으로 고릅니다 —
+`subject` 가 있으면 `lms`, 본문이 200 byte(UTF-8)를 넘으면 `lms`, 아니면 `sms`.
+
+`imageId` 는 솔라피에 업로드된 파일 ID 라 ClawOps 로 옮길 수 없습니다. 이미지가 붙은 메시지는
+조용히 텍스트만 보내지 않고 **에러를 던집니다**. 첨부가 필요하면 `client.messages.create` 의
+`mediaUrl` 로 직접 발송하십시오. 첨부 없는 `MMS` 는 위 규칙에 따라 `sms`/`lms` 로 나갑니다.
+
+거절은 모두 `SolapiBridgeError`(`ClawOpsError` 하위)로 던지므로 SDK 의 다른 에러와 함께 잡을 수 있습니다.
+
+#### 알림톡 실패 시 문자로 대체발송
+
+솔라피의 대체발송은 **솔라피에 등록된 발신번호**가 있어야 동작합니다. 그 번호가 없으면
+알림톡이 실패해도 문자가 나가지 않습니다. 이때 대체발송을 ClawOps 가 대신합니다.
+
+의도는 솔라피 API 의 값 그대로 읽습니다 — 별도 옵션이 필요 없습니다.
+
+| 보낸 값 | 동작 |
+|---|---|
+| `from` 있음 + `disableSms` 생략/`false` | 알림톡 실패 시 **ClawOps 문자로 대체발송** |
+| `disableSms: true` | 대체발송하지 않음 |
+| `from` 없음 | 대체발송하지 않음 (솔라피 규칙과 동일) |
+
+솔라피로 요청을 넘길 때 두 가지를 조정합니다.
+
+- `from` 을 **제외**합니다. 솔라피에 등록되지 않은 번호가 실리면 알림톡 자체가 접수 거부됩니다.
+- `disableSms` 를 `true` 로 보냅니다. 솔라피가 중복으로 문자를 발송하지 않도록.
+
+대체발송 문구는 다음 순서로 정해집니다.
+
+1. `customFields` 에 지정한 문구 (기본 키 `clawopsFallbackText`) — 문자 전용 문구를 직접 넣을 때
+2. **카카오 알림톡 템플릿을 조회할 수 있는 타입**(`ATA`)은 템플릿 본문을 받아 `variables` 로 치환 — 알림톡은 보통 `text` 없이 보내므로 기본 경로입니다
+3. 그 밖의 타입은 `text` 가 본문입니다
+
+```typescript
+await messageService.send({
+  to: '01012345678',
+  from: '07052358010',
+  type: 'ATA',
+  kakaoOptions: { pfId: 'KA01PF...', templateId: 'TPL_001', variables: { 고객명: '홍길동', 주문번호: 'A-1024' } },
+  // 문자로 나갈 때만 다른 문구를 쓰고 싶다면
+  customFields: { clawopsFallbackText: '[상점명] 홍길동님 주문 A-1024 가 접수되었습니다.' },
+});
+```
+
+치환되지 않은 변수(`#{...}`)가 남으면 **발송하지 않고** `onBlocked` 로 알립니다.
+`#{주문번호}` 가 그대로 찍힌 문자가 나가는 것을 막기 위해서입니다.
+
+```typescript
+const messageService = new ClawOpsMessageService({
+  clawops, solapi, from: '07052358010',
+  onFallback: (e) => logger.info({ to: e.to, source: e.source }, '문자로 대체발송'),
+  onBlocked:  (e) => logger.warn({ to: e.to, reason: e.reason }, '대체발송 못 함'),
+  fallback: true,                          // 기본 true. false 면 대체발송하지 않는다
+  fallbackField: 'clawopsFallbackText',    // customFields 키를 바꾸고 싶을 때
+});
+```
+
+대체발송된 건은 솔라피와 같은 의미로 `groupInfo.count.sentReplacement` 에 집계됩니다.
+
+#### 문자 전용 모드
+
+솔라피를 아예 쓰지 않는다면 `solapi` 를 넘기지 않아도 됩니다.
+이때는 타입에서도 `send` 만 노출되어, 솔라피 전용 메서드를 부르면 **컴파일 단계에서** 막힙니다.
+
+```typescript
+const messageService = new ClawOpsMessageService({ clawops, from: '07052358010' });
+await messageService.send({ to: '01012345678', text: '문자' });
+```
+
+#### 알아두어야 할 것
+
+- **대체발송은 현재 접수 단계 실패에 대해 동작합니다.** 접수 후 통신사 리포트에서 판명되는
+  실패(카카오톡 미사용자 등)는 아직 처리하지 않습니다.
+- **예약 발송·중복 제거는 지원하지 않습니다.** ClawOps 로 가는 메시지가 있는데 `scheduledDate`
+  또는 `allowDuplicates: false` 가 오면 조용히 무시하지 않고 에러를 던집니다.
+- 문자 발송이 개별적으로 실패하면 나머지 건은 그대로 접수되고, 실패 건만
+  `failedMessageList` 에 `statusCode: 'CLAWOPS'` 로 담깁니다. 솔라피 상태 코드가 아닙니다.
+- 문자만 보낸 요청의 `groupInfo` 중 `balance`·`point`·`price`·`countForCharge` 는 ClawOps 에
+  대응 개념이 없어 **0/빈 값**이고, `groupId` 는 `CLAWOPS-` 로 시작하는 자체 값이라
+  `getGroupMessages()` 로 조회되지 않습니다.
+- 알림톡이 포함된 요청은 솔라피가 준 `groupInfo` 를 이어받되, 접수 집계
+  (`total`·`registeredSuccess`·`registeredFailed`)는 우리가 보낸 문자까지 합쳐 다시 셉니다.
+  발송 단계 집계(`sentSuccess` 등)는 솔라피 값 그대로입니다.
+- 전화번호는 하이픈 유무와 무관하게 처리합니다(`010-1111-2222` 로 보내도 됩니다).
+- 광고성 알림톡을 문자로 대체발송하면 광고 문자에 요구되는 표기·수신거부 안내·야간 발송 제한이
+  적용됩니다. 해당 템플릿은 `disableSms: true` 로 두거나 `customFields` 로 문구를 조정하십시오.
+
 ### 멀티 계정 접근
 
 ```typescript

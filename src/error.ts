@@ -181,6 +181,17 @@ export class APIResponseValidationError extends APIError {
   }
 }
 
+/**
+ * 솔라피 호환 레이어가 호출을 거절할 때 쓴다.
+ * 조용히 다르게 동작하느니 여기서 멈추는 편이 낫다고 판단한 경우들이다.
+ */
+export class SolapiBridgeError extends ClawOpsError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SolapiBridgeError';
+  }
+}
+
 export class AgentError extends ClawOpsError {
   constructor(message: string) {
     super(message);

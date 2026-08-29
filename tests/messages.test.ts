@@ -37,6 +37,31 @@ const sampleMessage = {
 
 describe('Messages resource', () => {
   describe('create', () => {
+    it('idempotencyKey 를 IdempotencyKey 로 실어 보낸다', async () => {
+      const mockFetch = mockResponse(sampleMessage, 201);
+      const client = createClient(mockFetch);
+
+      await client.messages.create({
+        to: '01012345678',
+        from: '07052358010',
+        body: '안녕하세요',
+        idempotencyKey: 'solapi:M4V2026',
+      });
+
+      const body = JSON.parse(String(mockFetch.mock.calls[0]![1]!.body));
+      expect(body.IdempotencyKey).toBe('solapi:M4V2026');
+    });
+
+    it('idempotencyKey 미지정이면 본문에 넣지 않는다', async () => {
+      const mockFetch = mockResponse(sampleMessage, 201);
+      const client = createClient(mockFetch);
+
+      await client.messages.create({ to: '01012345678', from: '07052358010', body: '안녕하세요' });
+
+      const body = JSON.parse(String(mockFetch.mock.calls[0]![1]!.body));
+      expect('IdempotencyKey' in body).toBe(false);
+    });
+
     it('sends POST with PascalCase body', async () => {
       const fetchFn = mockResponse(sampleMessage);
       const client = createClient(fetchFn);

@@ -21,6 +21,7 @@ export class Messages extends APIResource {
       Type: params.type,
       Subject: params.subject,
       MediaUrl: params.mediaUrl,
+      IdempotencyKey: params.idempotencyKey,
     });
     return this._client._post(`${this._basePath}/messages`, {
       body,

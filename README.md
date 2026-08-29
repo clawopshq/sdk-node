@@ -497,8 +497,29 @@ const messageService = new ClawOpsMessageService({
     types: ['ATA'],                // 훑을 타입. 친구톡까지 보려면 ['ATA','CTA','CTI']
     onFallback: (e) => logger.info({ messageId: e.messageId, statusCode: e.statusCode }, '대체발송'),
     onBlocked:  (e) => logger.warn({ messageId: e.messageId, reason: e.reason }, '대체발송 못 함'),
+    onError:    (e) => logger.error({ err: e }, '스윕 실패'),  // ← 지정하지 않으면 조용히 넘어갑니다
   },
 });
+```
+
+⚠️ **`onError` 를 지정하지 않으면 스윕이 통째로 실패해도 아무 소리가 나지 않습니다.** 솔라피
+조회가 막히거나 자격증명이 만료되면 다음 주기에 다시 시도할 뿐이고, 그동안 대체발송은
+한 건도 나가지 않습니다. 실패가 계속되면 **문자가 안 나가는데 로그도 조용한** 상태가 되므로,
+운영에 올리실 때는 반드시 지정하십시오.
+
+`onError` 는 스윕 **전체**가 실패했을 때만 불립니다. 개별 건의 실패는 `onBlocked` 로 갑니다
+(문구를 만들지 못했거나 ClawOps 가 거절한 경우) — 한 건이 실패해도 나머지는 그대로 진행됩니다.
+
+커서를 프로세스 밖에 보관하시려면 `initialCursor` 로 넣고 `onCursor` 로 받으십시오. 재시작 후
+같은 구간을 다시 훑는 것을 줄여 줍니다(멱등키가 있어 중복 발송은 어차피 막히지만, 요청은 아낍니다).
+
+```typescript
+fallback: {
+  enabled: true,
+  mode: 'sweep',
+  initialCursor: await loadCursor(),   // 없으면 lookbackMs 만큼 거슬러 본다
+  onCursor: (cursor) => saveCursor(cursor),  // 직렬화 가능한 값만 담겨 있습니다
+}
 ```
 
 **켜기만 하면 됩니다.** 커서·저장소·크론이 필요 없습니다. 발송할 때 `customFields` 에 마커를

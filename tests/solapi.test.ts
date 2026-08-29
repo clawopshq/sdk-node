@@ -6,6 +6,7 @@ import { ClawOps } from '../src/client.js';
 import { ClawOpsMessageService, SolapiBridgeError } from '../src/solapi/index.js';
 import { ClawOpsError } from '../src/error.js';
 import { render, leftovers, resolveFallbackText } from '../src/solapi/fallback-text.js';
+import { clawopsType, euckrByteLength } from '../src/solapi/_message-type.js';
 
 type GroupInfo = DetailGroupMessageResponse['groupInfo'];
 
@@ -162,6 +163,36 @@ describe('render / leftovers', () => {
   it('치환되지 않은 변수를 찾아낸다', () => {
     expect(leftovers('주문 #{번호} 금액 #{금액}')).toEqual(['#{번호}', '#{금액}']);
     expect(leftovers('완성된 문구')).toEqual([]);
+  });
+});
+
+describe('SMS/LMS 경계 — 서버와 같아야 한다', () => {
+  // 서버(app/src/services/messages.ts 의 SMS_MAX_EUCKR_BYTES)와 어긋나면 우리가 sms 로 보낸
+  // 건이 곧바로 400 body_too_long 이 된다. 상한은 UTF-8 이 아니라 **EUC-KR 90byte** 다 —
+  // 통신사는 초과분을 거절하지 않고 90byte 에서 잘라 보내고 '전송성공'으로 리포트한다.
+  it('EUC-KR 90byte 는 sms, 92byte 는 lms', () => {
+    expect(euckrByteLength('가'.repeat(45))).toBe(90);
+    expect(clawopsType({ text: '가'.repeat(45) })).toBe('sms');
+    expect(clawopsType({ text: '가'.repeat(46) })).toBe('lms');
+  });
+
+  it('UTF-8 로는 200byte 이하여도 한글 45자를 넘으면 lms', () => {
+    const text = '가'.repeat(46); // UTF-8 138byte — 옛 기준(200)에서는 sms 였다
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThan(200);
+    expect(clawopsType({ text })).toBe('lms');
+  });
+
+  it('EUC-KR 밖 문자는 2byte 로 센다 (과대평가 = 안전)', () => {
+    expect(euckrByteLength('a⸻')).toBe(3);
+    expect(euckrByteLength('a😀')).toBe(3);
+  });
+
+  it('subject 가 있으면 짧아도 lms', () => {
+    expect(clawopsType({ text: '짧음', subject: '제목' })).toBe('lms');
+  });
+
+  it('명시한 타입은 길이와 무관하게 존중한다', () => {
+    expect(clawopsType({ type: 'SMS', text: '가'.repeat(46) })).toBe('sms');
   });
 });
 

@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.33.0 (2026-08-29)
+
+### Added
+- **`@teamlearners/clawops/solapi` — 솔라피 코드를 그대로 두고 문자만 ClawOps 로.** 이미 솔라피 SDK 로 작성된 코드에서 바꾸는 곳은 **인스턴스를 만드는 한 줄**뿐입니다. 알림톡·친구톡·RCS 는 기존 솔라피 계정으로 계속 나갑니다.
+  ```typescript
+  import { ClawOpsMessageService } from '@teamlearners/clawops/solapi';
+
+  const messageService = new ClawOpsMessageService({
+    clawops, from: '07052358010',
+    solapi: new SolapiMessageService(KEY, SECRET),  // 알림톡을 계속 쓸 때만
+  });
+  // 이 아래 호출부는 기존 코드 그대로
+  await messageService.send({ to: '01012345678', from: '07052358010', text: '인증번호는 123456' });
+  ```
+  - 타입이 `SolapiMessageService` 와 **동일**해서 기존 코드의 타입 자리에 그대로 들어갑니다. `send` 만 가로채고 나머지 메서드는 주입한 솔라피 인스턴스로 전달하며, **원본 인스턴스는 수정하지 않습니다.**
+  - `solapi` 는 **optional peerDependency** 이고 런타임에 require 하지 않습니다(타입 전용). 솔라피를 쓰지 않는 기존 사용자에게는 아무 영향이 없습니다.
+  - **알림톡 실패 시 문자로 대체발송.** 솔라피의 대체발송은 솔라피에 등록된 발신번호가 있어야 동작하는데, 그 번호가 없는 계정은 알림톡이 실패해도 문자가 나가지 않습니다. 이때 ClawOps 가 대신 보냅니다. 별도 옵션 없이 `from`·`disableSms` 값을 솔라피 규칙 그대로 읽습니다.
+  - **`fallback: { enabled: true, mode: 'sweep' }`** 을 켜면 접수 이후에 판명되는 실패(`3104` 카카오톡 미사용자 · `3107` 알림톡 차단)까지 잡습니다. 커서·저장소·크론이 필요 없습니다. 상주 프로세스가 없는 환경에서는 `sweepFailedAlimtalk()` 를 크론에서 직접 부르십시오.
+  - 설정 오류(`3101`·`3105`·`3106`)와 야간(`3108`)은 **기본 대상이 아닙니다** — 문자로 덮으면 알림톡이 깨진 걸 모르게 되고, 야간 대체는 규제에 걸립니다. `onBlocked` 로 알리기만 합니다.
+  - `imageId`·`scheduledDate`·`allowDuplicates: false` 는 옮길 수 없어 **조용히 무시하지 않고 에러를 던집니다**(`SolapiBridgeError`).
+
+- **`messages.create({ idempotencyKey })` — 발송 멱등키.** 같은 계정에서 같은 키로 다시 요청하면 발송하지 않고 1회차 결과를 돌려줍니다. 재시도·재실행 경로가 있는 호출자만 채우십시오.
+  ```typescript
+  await client.messages.create({ to, from, body, idempotencyKey: 'order-1024-접수' });
+  ```
+  - ⚠️ **순차** 재시도를 막는 용도입니다. 같은 키로 동시에 두 요청이 들어오면 둘 다 발송될 수 있습니다.
+  - ⚠️ 본문이 달라도 검사하지 않고 만료도 없습니다. 키는 *메시지 한 건* 단위로 만드십시오.
+  - 서버 배포가 선행되어야 합니다(2026-08-29 반영 완료).
+
 ## 0.32.1 (2026-08-24)
 
 ### Changed

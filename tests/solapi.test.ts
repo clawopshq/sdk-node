@@ -194,6 +194,22 @@ describe('resolveFallbackText', () => {
     expect(result).toEqual({ ok: true, text: '권지혜님 주문 A1', source: 'template' });
   });
 
+  // solapi 의 `type` 은 optional 이고 서버가 vendor 옵션으로 추론한다. 실제 고객 코드는
+  // `send({ to, from, kakaoOptions })` 처럼 type 을 생략하는데, 타입 문자열로 판정하던 시절엔
+  // 이 경우가 템플릿 경로를 건너뛰고 `no_text` 로 떨어져 **대체발송이 통째로 안 나갔다**.
+  // 실호출(2026-08-29)에서 잡혔고 스텁 테스트는 전부 type 을 명시해 못 잡았다.
+  it('type 을 생략해도 templateId 가 있으면 템플릿을 조회한다', async () => {
+    const { service } = solapiStub({ templates: { T1: '#{이름}님 환영합니다' } });
+    const result = await resolveFallbackText(
+      {
+        to: '01011112222',
+        kakaoOptions: { pfId: 'PF', templateId: 'T1', variables: { '#{이름}': '권혁' } },
+      },
+      service,
+    );
+    expect(result).toEqual({ ok: true, text: '권혁님 환영합니다', source: 'template' });
+  });
+
   it('변수를 빠뜨리면 ok:false 로 막는다', async () => {
     const { service } = solapiStub({ templates: { T1: '#{고객명}님 주문 #{번호}' } });
     const result = await resolveFallbackText(

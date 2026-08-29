@@ -1,5 +1,4 @@
 import type { SolapiMessageService, RequestSendMessagesSchema } from 'solapi';
-import { upperType } from './_message-type.js';
 
 /** 제네릭을 거쳐야 유니온(단건 | 배열)에 분배된다 */
 type Elem<T> = T extends readonly (infer U)[] ? U : T;
@@ -21,14 +20,6 @@ export function render(content: string, variables: Record<string, string> = {}):
 
 /** 치환되지 않고 남은 변수. 하나라도 있으면 발송하지 않는다 */
 export const leftovers = (text: string): string[] => text.match(LEFTOVER) ?? [];
-
-/**
- * 본문을 카카오 템플릿에서 만드는 타입.
- *
- * NSA(네이버 스마트알림)는 제외한다 — templateId 가 `naverOptions` 에 있고
- * 조회도 `getKakaoAlimtalkTemplate` 이 아닌 다른 API 라, 여기서 다루면 항상 실패한다.
- */
-const KAKAO_TEMPLATE_TYPES = new Set(['ATA']);
 
 export type FallbackSource = 'customFields' | 'template' | 'text';
 
@@ -101,11 +92,14 @@ export async function resolveFallbackText(
   const explicit = message.customFields?.[field];
   if (explicit !== undefined) return finish(explicit, 'customFields');
 
-  // 그 외에는 메시지 타입이 출처를 정한다
-  // 템플릿 참조가 있으면 그쪽이 우선이다. 조회 결과의 kakaoOptions 는 서버 정규화 포맷이라
-  // templateId 가 없을 수도 있는데, 그때는 아래 text 경로로 내려간다
+  // 그 외에는 `kakaoOptions.templateId` 의 **존재**가 출처를 정한다. `type` 으로 판정하면 안 된다 —
+  // solapi 의 `type` 은 optional 이고 서버가 vendor 옵션으로 추론하므로, 생략한 알림톡이
+  // 템플릿 경로를 건너뛰고 `no_text` 로 떨어진다(실호출로 확인).
+  //
+  // NSA(네이버 스마트알림)는 자연히 빠진다 — templateId 가 `naverOptions` 에 있어
+  // `kakaoOptions` 만 보는 templateRef 에 걸리지 않는다. 조회 API 도 달라서 여기서 다루면 항상 실패한다.
   const { templateId, variables } = templateRef(message.kakaoOptions);
-  if (KAKAO_TEMPLATE_TYPES.has(upperType(message)) && templateId !== undefined) {
+  if (templateId !== undefined) {
     const cache = options.cache;
     let pending = cache?.get(templateId);
     if (pending === undefined) {

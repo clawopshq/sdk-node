@@ -404,11 +404,16 @@ await messageService.send({ to: '01012345678', from: '07052358010', text: '인�
 
 | 메시지 | 어디로 |
 |---|---|
-| `SMS` / `LMS` / `MMS`, 또는 `type` 미지정 | **ClawOps** |
+| `SMS` / `LMS` / `MMS` | **ClawOps** |
 | `ATA`(알림톡) · `CTA`/`CTI`(친구톡) · `RCS_*` · `NSA` · `FAX` · `VOICE` · `BMS_*` | 솔라피 (요청을 손대지 않고 그대로 전달) |
+| `type` 미지정 | `kakaoOptions`·`rcsOptions` 같은 **vendor 옵션이 있으면 솔라피**, 없으면 ClawOps |
 
-`type` 을 `SMS`/`LMS` 로 지정하면 그대로 따르고, 지정하지 않으면 서버와 같은 규칙으로 고릅니다 —
-`subject` 가 있으면 `lms`, 본문이 200 byte(UTF-8)를 넘으면 `lms`, 아니면 `sms`.
+솔라피는 `type` 을 필수로 요구하지 않고 vendor 옵션으로 추론합니다. 그래서 우리도 타입 문자열이
+아니라 **실제로 실린 옵션**으로 가릅니다 — `send({ to, from, kakaoOptions })` 처럼 `type` 을 생략한
+알림톡도 솔라피로 갑니다.
+
+`type` 을 `SMS`/`LMS` 로 지정하면 그대로 따르고, 지정하지 않고 vendor 옵션도 없으면 서버와 같은
+규칙으로 고릅니다 — `subject` 가 있으면 `lms`, 본문이 200 byte(UTF-8)를 넘으면 `lms`, 아니면 `sms`.
 
 `imageId` 는 솔라피에 업로드된 파일 ID 라 ClawOps 로 옮길 수 없습니다. 이미지가 붙은 메시지는
 조용히 텍스트만 보내지 않고 **에러를 던집니다**. 첨부가 필요하면 `client.messages.create` 의
@@ -437,8 +442,8 @@ await messageService.send({ to: '01012345678', from: '07052358010', text: '인�
 대체발송 문구는 다음 순서로 정해집니다.
 
 1. `customFields` 에 지정한 문구 (기본 키 `clawopsFallbackText`) — 문자 전용 문구를 직접 넣을 때
-2. **카카오 알림톡 템플릿을 조회할 수 있는 타입**(`ATA`)은 템플릿 본문을 받아 `variables` 로 치환 — 알림톡은 보통 `text` 없이 보내므로 기본 경로입니다
-3. 그 밖의 타입은 `text` 가 본문입니다
+2. **`kakaoOptions.templateId` 가 있으면** 그 템플릿 본문을 조회해 `variables` 로 치환 — 알림톡은 보통 `text` 없이 보내므로 기본 경로입니다. `type` 을 생략해도 동작합니다
+3. 그 밖에는 `text` 가 본문입니다
 
 ```typescript
 await messageService.send({

@@ -1,4 +1,5 @@
 import type { SolapiMessageService, RequestSendMessagesSchema } from 'solapi';
+import { upperType } from './_message-type.js';
 
 /** 제네릭을 거쳐야 유니온(단건 | 배열)에 분배된다 */
 type Elem<T> = T extends readonly (infer U)[] ? U : T;
@@ -21,10 +22,6 @@ export function render(content: string, variables: Record<string, string> = {}):
 /** 치환되지 않고 남은 변수. 하나라도 있으면 발송하지 않는다 */
 export const leftovers = (text: string): string[] => text.match(LEFTOVER) ?? [];
 
-/** 메시지 타입을 한 가지 표기로 통일한다. 없으면 빈 문자열 */
-export const upperType = (message: { type?: unknown }): string =>
-  message.type === undefined ? '' : String(message.type).toUpperCase();
-
 /**
  * 본문을 카카오 템플릿에서 만드는 타입.
  *
@@ -34,6 +31,39 @@ export const upperType = (message: { type?: unknown }): string =>
 const KAKAO_TEMPLATE_TYPES = new Set(['ATA']);
 
 export type FallbackSource = 'customFields' | 'template' | 'text';
+
+/**
+ * 문구 복원에 필요한 최소 모양.
+ *
+ * 발송 요청(`SolapiMessage`)과 조회 결과(`storedMessage`)를 둘 다 받는다 —
+ * 조회 결과의 `kakaoOptions` 는 서버 정규화 포맷이라 `Record<string, unknown>` 으로 온다.
+ */
+export interface FallbackInput {
+  type?: unknown;
+  text?: string | null;
+  customFields?: Record<string, string> | null;
+  kakaoOptions?: Record<string, unknown> | null;
+}
+
+/** 정규화 포맷이든 요청 포맷이든 템플릿 참조를 안전하게 꺼낸다 */
+function templateRef(kakaoOptions: unknown): {
+  templateId?: string;
+  variables?: Record<string, string>;
+} {
+  if (kakaoOptions === null || typeof kakaoOptions !== 'object') return {};
+  const options = kakaoOptions as Record<string, unknown>;
+  const templateId = typeof options.templateId === 'string' ? options.templateId : undefined;
+
+  let variables: Record<string, string> | undefined;
+  const raw = options.variables;
+  if (raw !== null && typeof raw === 'object') {
+    const entries = Object.entries(raw as Record<string, unknown>).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string',
+    );
+    if (entries.length > 0) variables = Object.fromEntries(entries);
+  }
+  return { templateId, variables };
+}
 
 export type FallbackText =
   | { ok: true; text: string; source: FallbackSource }
@@ -61,7 +91,7 @@ export const DEFAULT_FALLBACK_FIELD = 'clawopsFallbackText';
  * 알림톡은 대개 `text` 없이 `variables` 만 보내므로 템플릿 본문을 조회해 직접 치환한다.
  */
 export async function resolveFallbackText(
-  message: SolapiMessage,
+  message: FallbackInput,
   solapi: SolapiMessageService,
   options: ResolveOptions = {},
 ): Promise<FallbackText> {
@@ -72,13 +102,10 @@ export async function resolveFallbackText(
   if (explicit !== undefined) return finish(explicit, 'customFields');
 
   // 그 외에는 메시지 타입이 출처를 정한다
-  if (KAKAO_TEMPLATE_TYPES.has(upperType(message))) {
-    const templateId = message.kakaoOptions?.templateId;
-    // ATA 는 templateId 없이 접수될 수 없다. 여기 오면 요청 자체가 잘못된 것이다
-    if (templateId === undefined) {
-      return { ok: false, reason: 'no_template_content', source: 'template' };
-    }
-
+  // 템플릿 참조가 있으면 그쪽이 우선이다. 조회 결과의 kakaoOptions 는 서버 정규화 포맷이라
+  // templateId 가 없을 수도 있는데, 그때는 아래 text 경로로 내려간다
+  const { templateId, variables } = templateRef(message.kakaoOptions);
+  if (KAKAO_TEMPLATE_TYPES.has(upperType(message)) && templateId !== undefined) {
     const cache = options.cache;
     let pending = cache?.get(templateId);
     if (pending === undefined) {
@@ -92,10 +119,12 @@ export async function resolveFallbackText(
     if (content === undefined) {
       return { ok: false, reason: 'no_template_content', source: 'template' };
     }
-    return finish(render(content, message.kakaoOptions?.variables), 'template');
+    return finish(render(content, variables), 'template');
   }
 
-  if (message.text === undefined) return { ok: false, reason: 'no_text', source: 'text' };
+  if (message.text === undefined || message.text === null) {
+    return { ok: false, reason: 'no_text', source: 'text' };
+  }
   return finish(message.text, 'text');
 }
 

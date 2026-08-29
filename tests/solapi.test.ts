@@ -78,6 +78,11 @@ interface SolapiStubOptions {
   failFor?: string[];
   throwOnAllFailed?: boolean;
   templates?: Record<string, string | undefined>;
+  /** 실제 솔라피는 showMessageList: true 일 때만 messageList 를 준다 */
+  omitMessageList?: boolean;
+  /** 솔라피가 접수했다고 보고할 건수. 우리 집계가 이걸 덮는지 본다 */
+  acceptedCount?: number;
+  templateThrows?: boolean;
 }
 
 function solapiStub(options: SolapiStubOptions = {}) {
@@ -124,10 +129,20 @@ function solapiStub(options: SolapiStubOptions = {}) {
       if (options.throwOnAllFailed && messageList.length === 0 && failedMessageList.length > 0) {
         throw Object.assign(new Error('접수 실패'), { failedMessageList });
       }
-      return { groupInfo: groupInfo(), messageList, failedMessageList };
+      const info = groupInfo();
+      if (options.acceptedCount !== undefined) {
+        (info.count as { total: number; registeredSuccess: number }).total = options.acceptedCount;
+        (info.count as { registeredSuccess: number }).registeredSuccess = options.acceptedCount;
+      }
+      return {
+        groupInfo: info,
+        messageList: options.omitMessageList ? undefined : messageList,
+        failedMessageList,
+      };
     },
     async getKakaoAlimtalkTemplate(templateId: string) {
       templateCalls.push(templateId);
+      if (options.templateThrows) throw new Error('일시적 서버 오류');
       return { content: options.templates?.[templateId] };
     },
     async getBalance() {
@@ -273,7 +288,7 @@ describe('ClawOpsMessageService', () => {
       clawops: clawops(seen),
       solapi: service,
       from: '07052753934',
-      onFallback: (event) => events.push(event),
+      fallback: { enabled: true, onFallback: (event) => events.push(event) },
     });
 
     const response = await messageService.send({
@@ -309,7 +324,7 @@ describe('ClawOpsMessageService', () => {
       clawops: clawops(seen),
       solapi: service,
       from: '07052753934',
-      onBlocked: (event) => blocked.push(event),
+      fallback: { enabled: true, onBlocked: (event) => blocked.push(event) },
     });
 
     const response = await messageService.send({
@@ -435,7 +450,7 @@ describe('ClawOpsMessageService', () => {
   });
 });
 
-describe('ClawOpsMessageService — 코드 리뷰에서 드러난 결함', () => {
+describe('전화번호 정규화와 실패 짝짓기', () => {
   it('하이픈이 든 번호도 대체발송된다 (solapi 는 하이픈을 지워 돌려준다)', async () => {
     const seen: Array<Record<string, unknown>> = [];
     const { service } = solapiStub({
@@ -645,7 +660,7 @@ describe('솔라피 응답 계약', () => {
   });
 });
 
-describe('코드 품질 리뷰에서 드러난 것', () => {
+describe('에러 계약과 JS 규약', () => {
   it('던지는 에러가 모두 ClawOpsError 를 상속한다', async () => {
     const seen: Array<Record<string, unknown>> = [];
     const messageService = new ClawOpsMessageService({
@@ -712,5 +727,250 @@ describe('코드 품질 리뷰에서 드러난 것', () => {
 
     await messageService.send({ to: '01011112222', text: '문자' });
     expect(seen).toHaveLength(1);
+  });
+});
+
+describe('라우팅 경계와 집계', () => {
+  it('fallback 을 끄면 솔라피 요청을 손대지 않는다 — 저쪽 대체발송을 죽이면 안 된다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const { service, outgoing } = solapiStub();
+    const messageService = new ClawOpsMessageService({
+      clawops: clawops(seen),
+      solapi: service,
+      from: '07052753934',
+      fallback: false,
+    });
+
+    await messageService.send({
+      to: '01011112222',
+      from: '07052753934',
+      type: 'ATA',
+      kakaoOptions: { pfId: 'PF', templateId: 'T1' },
+    });
+
+    // from 이 그대로 남고 disableSms 도 건드리지 않아야 솔라피가 자기 대체발송을 한다
+    expect(outgoing[0]).toMatchObject({ from: '07052753934' });
+    expect(outgoing[0]!.kakaoOptions).not.toHaveProperty('disableSms');
+  });
+
+  it('type 없이 kakaoOptions 만 있어도 솔라피로 간다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const { service, outgoing } = solapiStub();
+    const messageService = new ClawOpsMessageService({
+      clawops: clawops(seen),
+      solapi: service,
+      from: '07052753934',
+    });
+
+    // solapi 의 type 은 optional 이고 서버가 옵션으로 종류를 추론한다.
+    // type 만 보고 가르면 이 알림톡이 빈 본문 문자로 나간다
+    await messageService.send({
+      to: '01011112222',
+      from: '07052753934',
+      kakaoOptions: { pfId: 'PF', templateId: 'T1', variables: { 고객명: '홍길동' } },
+    });
+
+    expect(seen).toEqual([]);
+    expect(outgoing).toHaveLength(1);
+  });
+
+  it('솔라피 집계를 덮지 않고 우리 몫을 더한다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    // messageList 는 showMessageList: true 일 때만 오므로 기본 호출에서는 비어 있다
+    const { service } = solapiStub({ omitMessageList: true, acceptedCount: 50 });
+    const messageService = new ClawOpsMessageService({
+      clawops: clawops(seen),
+      solapi: service,
+      from: '07052753934',
+    });
+
+    const response = await messageService.send([
+      {
+        to: '01011112222',
+        from: '07052753934',
+        type: 'ATA',
+        kakaoOptions: { pfId: 'PF', templateId: 'T1' },
+      },
+      { to: '01022223333', from: '07052753934', text: '문자' },
+    ]);
+
+    // 솔라피가 접수한 50건이 사라지지 않아야 한다
+    expect(response.groupInfo.count.registeredSuccess).toBe(51);
+    expect(response.groupInfo.count.total).toBe(51);
+  });
+
+  it('알림톡만 보내도 예약 발송은 막는다 — 대체 문자가 지금 나가버린다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const { service } = solapiStub();
+    const messageService = new ClawOpsMessageService({
+      clawops: clawops(seen),
+      solapi: service,
+      from: '07052753934',
+    });
+
+    await expect(
+      messageService.send(
+        {
+          to: '01011112222',
+          from: '07052753934',
+          type: 'ATA',
+          kakaoOptions: { pfId: 'PF', templateId: 'T1' },
+        },
+        { scheduledDate: new Date('2030-01-01') },
+      ),
+    ).rejects.toThrow(/scheduledDate/);
+  });
+
+  it('mode 를 안 켜도 마커는 심는다 — 크론에서 스윕을 부르는 구성이 있다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const { service, outgoing } = solapiStub();
+    const messageService = new ClawOpsMessageService({
+      clawops: clawops(seen),
+      solapi: service,
+      from: '07052753934',
+    });
+
+    await messageService.send({
+      to: '01011112222',
+      from: '07052753934',
+      type: 'ATA',
+      kakaoOptions: { pfId: 'PF', templateId: 'T1' },
+    });
+
+    expect(outgoing[0]!.customFields).toMatchObject({ clawopsFallback: '1' });
+  });
+
+  it('템플릿 조회가 실패해도 send() 전체를 죽이지 않는다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const { service } = solapiStub({ failFor: ['01011112222'], templateThrows: true });
+    const blocked: Array<{ reason: string }> = [];
+    const messageService = new ClawOpsMessageService({
+      clawops: clawops(seen),
+      solapi: service,
+      from: '07052753934',
+      fallback: { enabled: true, onBlocked: (event) => blocked.push(event) },
+    });
+
+    const response = await messageService.send({
+      to: '01011112222',
+      from: '07052753934',
+      type: 'ATA',
+      kakaoOptions: { pfId: 'PF', templateId: 'T1' },
+    });
+
+    expect(response.failedMessageList).toHaveLength(1);
+    expect(blocked[0]!.reason).toBe('no_template_content');
+  });
+
+  it('대체발송이 실패하면 onFallback 을 부르지 않는다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const events: unknown[] = [];
+    const rejecting = new ClawOps({
+      apiKey: 'sk_test',
+      accountId: 'AC_test',
+      baseURL: 'http://localhost:3000',
+      maxRetries: 0,
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(JSON.stringify({ error: '수신거부 번호입니다' }), {
+          status: 422,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    });
+    const { service } = solapiStub({ failFor: ['01011112222'], templates: { T1: '주문 접수' } });
+    const messageService = new ClawOpsMessageService({
+      clawops: rejecting,
+      solapi: service,
+      from: '07052753934',
+      fallback: { enabled: true, onFallback: (event) => events.push(event) },
+    });
+
+    const response = await messageService.send({
+      to: '01011112222',
+      from: '07052753934',
+      type: 'ATA',
+      kakaoOptions: { pfId: 'PF', templateId: 'T1' },
+    });
+
+    expect(events).toEqual([]); // 도달했다고 오해할 로그를 남기지 않는다
+    expect(response.failedMessageList).toHaveLength(1);
+  });
+
+  it("mode: 'sweep' 인데 solapi 가 없으면 조용히 넘기지 않는다", () => {
+    expect(
+      () =>
+        new ClawOpsMessageService({
+          clawops: clawops([]),
+          from: '07052753934',
+          fallback: { enabled: true, mode: 'sweep' },
+        }),
+    ).toThrow(/solapi 인스턴스/);
+  });
+});
+
+describe('손댈 수 없으면 원본을 그대로 넘긴다', () => {
+  it('브랜드메시지(kakaoOptions.bms)는 건드리지 않는다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const { service, outgoing } = solapiStub();
+    const messageService = new ClawOpsMessageService({
+      clawops: clawops(seen),
+      solapi: service,
+      from: '07052753934',
+    });
+
+    await messageService.send({
+      to: '01011112222',
+      from: '07052753934',
+      type: 'BMS_TEXT',
+      kakaoOptions: { pfId: 'PF', bms: { targeting: 'M' } },
+    });
+
+    // 같은 필드를 쓰는 다른 제품이라 대체발송 규칙이 다르다. 손대면 저쪽 기능을 죽인다
+    expect(outgoing[0]).toMatchObject({ from: '07052753934' });
+    expect(outgoing[0]!.kakaoOptions).not.toHaveProperty('disableSms');
+    expect(outgoing[0]!.customFields).toBeUndefined();
+  });
+
+  it('customFields 가 10개면 마커를 심지 못하므로 손대지 않는다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const { service, outgoing } = solapiStub();
+    const messageService = new ClawOpsMessageService({
+      clawops: clawops(seen),
+      solapi: service,
+      from: '07052753934',
+    });
+
+    const full = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`f${i}`, 'v']));
+    await messageService.send({
+      to: '01011112222',
+      from: '07052753934',
+      type: 'ATA',
+      kakaoOptions: { pfId: 'PF', templateId: 'T1' },
+      customFields: full,
+    });
+
+    // 마커 없이 disableSms 만 켜면 우리도 저쪽도 대체발송을 못 한다
+    expect(outgoing[0]).toMatchObject({ from: '07052753934' });
+    expect(outgoing[0]!.kakaoOptions).not.toHaveProperty('disableSms');
+    expect(outgoing[0]!.customFields).toEqual(full);
+  });
+
+  it('disableSms: true 면 마커도 심지 않는다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const { service, outgoing } = solapiStub();
+    const messageService = new ClawOpsMessageService({
+      clawops: clawops(seen),
+      solapi: service,
+      from: '07052753934',
+    });
+
+    await messageService.send({
+      to: '01011112222',
+      from: '07052753934',
+      type: 'ATA',
+      kakaoOptions: { pfId: 'PF', templateId: 'T1', disableSms: true },
+    });
+
+    expect(outgoing[0]!.customFields).toBeUndefined();
   });
 });

@@ -457,14 +457,67 @@ await messageService.send({
 ```typescript
 const messageService = new ClawOpsMessageService({
   clawops, solapi, from: '07052358010',
-  onFallback: (e) => logger.info({ to: e.to, source: e.source }, '문자로 대체발송'),
-  onBlocked:  (e) => logger.warn({ to: e.to, reason: e.reason }, '대체발송 못 함'),
-  fallback: true,                          // 기본 true. false 면 대체발송하지 않는다
-  fallbackField: 'clawopsFallbackText',    // customFields 키를 바꾸고 싶을 때
+  fallback: {
+    enabled: true,                         // 기본 true. false 면 대체발송하지 않는다
+    field: 'clawopsFallbackText',          // customFields 키를 바꾸고 싶을 때
+    onFallback: (e) => logger.info({ to: e.to, source: e.source }, '문자로 대체발송'),
+    onBlocked:  (e) => logger.warn({ to: e.to, reason: e.reason }, '대체발송 못 함'),
+  },
 });
 ```
 
 대체발송된 건은 솔라피와 같은 의미로 `groupInfo.count.sentReplacement` 에 집계됩니다.
+
+#### 발송 실패(3XXX)까지 대체발송 — `mode: 'sweep'`
+
+위까지는 **접수 실패**만 다룹니다. 그런데 실제로 대체발송이 필요한 건 대부분 접수 이후에
+판명됩니다 — 수신자가 카카오톡을 쓰지 않거나(`3104`) 알림톡을 차단한 경우(`3107`)는
+접수가 성공하고 **이통사 리포트에서만** 드러납니다.
+
+```typescript
+const messageService = new ClawOpsMessageService({
+  clawops, solapi, from: '07052358010',
+  fallback: {
+    enabled: true,
+    mode: 'sweep',                 // 리포트를 주기적으로 훑는다
+    intervalMs: 5 * 60_000,        // 기본 5분
+    lookbackMs: 60 * 60_000,       // 커서가 없을 때 거슬러 볼 구간. 기본 1시간
+    on: ['3104', '3107', '3102'],  // 기본값 (수신자 사유만)
+    types: ['ATA'],                // 훑을 타입. 친구톡까지 보려면 ['ATA','CTA','CTI']
+    onFallback: (e) => logger.info({ messageId: e.messageId, statusCode: e.statusCode }, '대체발송'),
+    onBlocked:  (e) => logger.warn({ messageId: e.messageId, reason: e.reason }, '대체발송 못 함'),
+  },
+});
+```
+
+**켜기만 하면 됩니다.** 커서·저장소·크론이 필요 없습니다. 발송할 때 `customFields` 에 마커를
+심어 두고, 스윕이 그 마커가 있는 실패 건만 골라 문자를 보냅니다. 고객이 솔라피로 직접 보낸
+알림톡은 마커가 없어 건드리지 않습니다.
+
+같은 건을 두 번 보내지 않도록 두 장치가 다르게 동작합니다 — **커서와 처리 집합**이 재조회를
+막고(정상 운영 중에는 요청이 아예 안 나갑니다), **멱등키**가 프로세스 재시작처럼 커서가 비는
+순간의 안전망입니다.
+
+알림톡 실패는 `3XXX` 로만 판정합니다 — 모르는 코드가 오면 실패로 단정하지 않고 다음 스윕에서 다시 봅니다.
+ClawOps 가 대체 문자를 거절하면 `onBlocked` 에 `reason: 'send_rejected'` 로 알리고, 다음 스윕이
+다시 시도합니다(멱등키가 같아 중복 발송은 되지 않습니다).
+
+기본 대상은 **수신자 사유만**입니다. 설정 오류(`3101` 발신프로필 무효 · `3105` 미등록 템플릿 ·
+`3106` 유효하지 않은 채널)를 문자로 덮으면 알림톡이 깨진 걸 모르게 되고, `3108`(발송 가능 시간
+아님)을 대체하면 21시 이후 발송이 되어 야간 규제에 걸립니다. 이런 건은 보내지 않고
+`onBlocked` 에 `reason: 'code_not_eligible'` 로 **알리기만** 합니다.
+
+**상주 프로세스가 없다면**(서버리스·크론) 같은 일을 하는 함수를 직접 부르십시오.
+
+```typescript
+import { sweepFailedAlimtalk } from '@teamlearners/clawops/solapi';
+
+const result = await sweepFailedAlimtalk({
+  clawops, solapi, from: '07052358010',
+  cursor: await loadCursor(),      // 없으면 lookback 만큼 거슬러 본다
+});
+await saveCursor(result.cursor);   // 직렬화 가능한 값만 담겨 있다
+```
 
 #### 문자 전용 모드
 
@@ -478,8 +531,14 @@ await messageService.send({ to: '01012345678', text: '문자' });
 
 #### 알아두어야 할 것
 
-- **대체발송은 현재 접수 단계 실패에 대해 동작합니다.** 접수 후 통신사 리포트에서 판명되는
-  실패(카카오톡 미사용자 등)는 아직 처리하지 않습니다.
+- **다음 경우에는 요청을 그대로 솔라피에 넘깁니다** — 대체발송 마커를 심지 않고 `from`·`disableSms`
+  도 건드리지 않으므로, 솔라피 자체 대체발송이 그대로 동작합니다: `fallback` 을 껐을 때,
+  브랜드메시지(`kakaoOptions.bms`), 그리고 `customFields` 가 이미 10개(솔라피 상한)를 다 썼을 때.
+- **`mode: 'sweep'` 은 한 인스턴스에서만 켜십시오.** 여러 프로세스가 동시에 스윕하면 같은 건을
+  함께 집어 문자가 두 번 나갈 수 있습니다 — 멱등키는 순차 재시도를 막을 뿐, 완전히 동시에 들어온
+  두 요청은 통과합니다. 다중 인스턴스라면 크론에서 `sweepFailedAlimtalk()` 를 한 번만 부르십시오.
+- 스윕은 알림톡 리포트가 확정된 뒤에 동작하므로 **대체발송에 지연이 있습니다**(스윕 주기 + 리포트
+  확정 시간). 즉시 도달해야 하는 메시지는 처음부터 문자로 보내십시오.
 - **예약 발송·중복 제거는 지원하지 않습니다.** ClawOps 로 가는 메시지가 있는데 `scheduledDate`
   또는 `allowDuplicates: false` 가 오면 조용히 무시하지 않고 에러를 던집니다.
 - 문자 발송이 개별적으로 실패하면 나머지 건은 그대로 접수되고, 실패 건만

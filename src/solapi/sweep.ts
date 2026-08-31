@@ -9,13 +9,35 @@ export const FALLBACK_MARKER_FIELD = 'clawopsFallback';
 export const FALLBACK_MARKER_VALUE = '1';
 
 /**
- * 기본 대상 코드 — **수신자 사유만**.
+ * 기본은 **모든 발송 실패(3XXX)** 다. `on` 을 주지 않으면 3XXX 를 전부 대체발송한다.
  *
- * 설정 오류(3101 발신프로필 무효·3105 미등록 템플릿·3106 유효하지 않은 채널)를 문자로 덮으면
- * 알림톡이 깨진 걸 고객이 몇 달간 모른다. 3108(발송 가능 시간 아님)은 문자로 대체하면
- * 21시 이후 발송이 되어 야간 규제에 걸린다. 둘 다 `onBlocked` 로 알리기만 한다.
+ * 코드를 골라 담지 않는다. 알림톡이라고 31xx 만 오는 게 아니기 때문이다 — 실측에서
+ * 알림톡 건에 `3058`(전송경로 없음)이 돌아왔다. 목록을 추리면 그렇게 새는 코드가
+ * 조용히 미발송이 된다. 놓치는 쪽보다 보내는 쪽을 기본으로 둔다.
+ *
+ * 대신 **덮으면 안 되는 코드가 섞여 있다.** 아래를 `except` 로 빼는 것을 권한다.
  */
-export const DEFAULT_FALLBACK_CODES = ['3104', '3107', '3102'] as const;
+export const RECOMMENDED_EXCLUDED_CODES = [
+  // 수신거부 — 문자로 대체하면 거부한 사람에게 보내는 것이 된다
+  '3061',
+  // 스팸·발신번호 변작 차단 — 막힌 발송을 문자로 우회하는 셈이 된다
+  '3054',
+  '3055',
+  '3059',
+  '3112',
+  '3113',
+  // 설정 오류 — 전건이 실패한다. 문자가 덮으면 알림톡이 깨진 걸 몇 달간 모르고,
+  // 단가도 알림톡에서 문자로 조용히 올라간다
+  '3013',
+  '3101',
+  '3103',
+  '3105',
+  '3106',
+  '3109',
+  '3117',
+  // 발송 가능 시간이 아님 — 문자로 대체하면 야간 발송이 된다
+  '3108',
+] as const;
 
 /**
  * 훑을 메시지 타입. 기본은 알림톡만이다.
@@ -76,8 +98,13 @@ export interface SweepOptions {
   /** 없으면 `lookbackMs` 만큼 거슬러 본다 */
   cursor?: SweepCursor;
   lookbackMs?: number;
-  /** 대체발송할 상태코드. 기본 `DEFAULT_FALLBACK_CODES` */
+  /** 대체발송할 상태코드. 주지 않으면 **모든 3XXX** 가 대상이다 */
   on?: readonly string[];
+  /**
+   * 대상에서 뺄 상태코드. `on` 으로 좁힌 뒤 여기서 다시 뺀다.
+   * 빼려는 코드는 `RECOMMENDED_EXCLUDED_CODES` 를 그대로 넘기면 된다.
+   */
+  except?: readonly string[];
   /** 훑을 메시지 타입. 기본 `DEFAULT_SWEEP_TYPES` (알림톡만) */
   types?: readonly SweepMessageType[];
   fallbackField?: string;
@@ -142,7 +169,9 @@ const timeOf = (row: StoredMessage): string | undefined => row.dateUpdated ?? ro
  * 발송 시 심은 마커가 있는 건만 대상이라, 고객이 솔라피로 직접 보낸 알림톡은 건드리지 않는다.
  */
 export async function sweepFailedAlimtalk(options: SweepOptions): Promise<SweepResult> {
-  const targets = new Set<string>(options.on ?? DEFAULT_FALLBACK_CODES);
+  // null 이면 3XXX 전부가 대상이다. 빈 Set 과 구별해야 한다 — `on: []` 는 '아무것도 안 함' 이다
+  const targets = options.on ? new Set<string>(options.on) : null;
+  const excluded = new Set<string>(options.except ?? []);
   const boundary = new Set(options.cursor?.seen ?? []);
   const templateCache = options.templateCache ?? new Map<string, Promise<string | undefined>>();
 
@@ -206,7 +235,7 @@ export async function sweepFailedAlimtalk(options: SweepOptions): Promise<SweepR
         // 실패했는데 대체발송 대상이 아니면 조용히 넘기지 않는다.
         // auto 를 켠 고객은 "실패하면 문자가 간다"고 믿고 있고, 3105(미등록 템플릿) 같은
         // 설정 오류로 안 나갔다는 사실은 알아야 고칠 수 있다
-        if (!targets.has(code)) {
+        if ((targets !== null && !targets.has(code)) || excluded.has(code)) {
           ineligible.push(row);
           continue;
         }

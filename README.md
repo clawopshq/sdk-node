@@ -493,7 +493,7 @@ const messageService = new ClawOpsMessageService({
     mode: 'sweep',                 // 리포트를 주기적으로 훑는다
     intervalMs: 5 * 60_000,        // 기본 5분
     lookbackMs: 60 * 60_000,       // 커서가 없을 때 거슬러 볼 구간. 기본 1시간
-    on: ['3104', '3107', '3102'],  // 기본값 (수신자 사유만)
+    except: RECOMMENDED_EXCLUDED_CODES,  // 기본은 3XXX 전부. 덮으면 안 되는 것만 뺀다
     types: ['ATA'],                // 훑을 타입. 친구톡까지 보려면 ['ATA','CTA','CTI']
     onFallback: (e) => logger.info({ messageId: e.messageId, statusCode: e.statusCode }, '대체발송'),
     onBlocked:  (e) => logger.warn({ messageId: e.messageId, reason: e.reason }, '대체발송 못 함'),
@@ -534,10 +534,37 @@ fallback: {
 ClawOps 가 대체 문자를 거절하면 `onBlocked` 에 `reason: 'send_rejected'` 로 알리고, 다음 스윕이
 다시 시도합니다(멱등키가 같아 중복 발송은 되지 않습니다).
 
-기본 대상은 **수신자 사유만**입니다. 설정 오류(`3101` 발신프로필 무효 · `3105` 미등록 템플릿 ·
-`3106` 유효하지 않은 채널)를 문자로 덮으면 알림톡이 깨진 걸 모르게 되고, `3108`(발송 가능 시간
-아님)을 대체하면 21시 이후 발송이 되어 야간 규제에 걸립니다. 이런 건은 보내지 않고
-`onBlocked` 에 `reason: 'code_not_eligible'` 로 **알리기만** 합니다.
+##### 어떤 코드를 대체발송할지
+
+**기본은 3XXX 전부입니다.** 코드를 골라 담지 않았습니다 — 알림톡이라고 `31xx` 만 오는 게
+아니기 때문입니다. 실측에서 알림톡 건에 `3058`(전송경로 없음)이 돌아왔습니다. 목록을 추리면
+그렇게 새는 코드가 조용히 미발송이 됩니다.
+
+대신 **문자로 덮으면 안 되는 코드가 섞여 있습니다.** `RECOMMENDED_EXCLUDED_CODES` 를
+`except` 로 넘겨 빼시는 것을 권합니다.
+
+| 군 | 코드 | 덮으면 생기는 일 |
+|---|---|---|
+| 수신거부 | `3061` | 080 수신거부한 분께 문자가 나갑니다 |
+| 스팸·발신번호 변작 차단 | `3054` `3055` `3059` `3112` `3113` | 막힌 발송을 문자로 우회하는 셈이 됩니다 |
+| 설정 오류 | `3013` `3101` `3103` `3105` `3106` `3109` `3117` | 전건이 실패하는데 문자가 덮어, 알림톡이 깨진 걸 오래 모르게 됩니다. 단가도 조용히 올라갑니다 |
+| 시간 규제 | `3108` | 발송 가능 시간이 아닌데 문자로 나갑니다 |
+
+```typescript
+import { RECOMMENDED_EXCLUDED_CODES } from '@teamlearners/clawops/solapi';
+
+fallback: {
+  enabled: true,
+  mode: 'sweep',
+  except: RECOMMENDED_EXCLUDED_CODES,          // 권장 제외
+  // except: [...RECOMMENDED_EXCLUDED_CODES, '3032'],  // 더 빼려면 이어 붙이십시오
+}
+```
+
+`on` 은 반대로 **대상을 좁힙니다** — 주시면 그 코드만 나갑니다. `on` 으로 좁힌 뒤 `except` 로
+다시 뺄 수도 있습니다. `on: []` 는 아무것도 보내지 않는다는 뜻이라 기본(전부)과 구별됩니다.
+
+빠진 코드는 조용히 사라지지 않고 `onBlocked` 에 `reason: 'code_not_eligible'` 로 **알립니다.**
 
 **상주 프로세스가 없다면**(서버리스·크론) 같은 일을 하는 함수를 직접 부르십시오.
 

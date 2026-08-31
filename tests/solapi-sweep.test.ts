@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { SolapiMessageService } from 'solapi';
 import { ClawOps } from '../src/client.js';
-import { sweepFailedAlimtalk, type SweepCursor } from '../src/solapi/index.js';
+import {
+  sweepFailedAlimtalk,
+  RECOMMENDED_EXCLUDED_CODES,
+  type SweepCursor,
+} from '../src/solapi/index.js';
 
 const FROM = '07052753934';
 const MARKER = { clawopsFallback: '1' };
@@ -153,22 +157,43 @@ describe('sweepFailedAlimtalk — 무엇을 집는가', () => {
     expect(result.blocked).toBe(0);
   });
 
-  it('실패했지만 대상 코드가 아니면 조용히 넘기지 않고 알린다', async () => {
+  it('기본은 3XXX 를 전부 대체발송한다 — 알림톡에 31xx 만 오는 게 아니다', async () => {
     const seen: Array<Record<string, unknown>> = [];
-    const blocked: unknown[] = [];
     const { service } = solapiStub([
-      row({ messageId: 'MK1', statusCode: '3105', text: 'x' }), // 미등록 템플릿 = 설정 오류
-      row({ messageId: 'MK2', statusCode: '3108', text: 'x' }), // 야간 = 규제
+      row({ messageId: 'MK1', statusCode: '3058', text: '전송경로 없음' }), // 실측에서 알림톡에 온 코드
+      row({ messageId: 'MK2', statusCode: '3105', text: '미등록 템플릿' }),
+      row({ messageId: 'MK3', statusCode: '3108', text: '야간' }),
     ]);
 
     const result = await sweepFailedAlimtalk({
       clawops: clawops(seen),
       solapi: service,
       from: FROM,
+    });
+
+    expect(result.sent).toBe(3);
+    expect(result.blocked).toBe(0);
+  });
+
+  it('except 로 뺀 코드는 대체발송하지 않고 알린다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const blocked: unknown[] = [];
+    const { service } = solapiStub([
+      row({ messageId: 'MK1', statusCode: '3105', text: 'x' }), // 미등록 템플릿 = 설정 오류
+      row({ messageId: 'MK2', statusCode: '3108', text: 'x' }), // 야간 = 규제
+      row({ messageId: 'MK3', statusCode: '3104', text: '주문' }), // 수신자 사유 = 그대로 나간다
+    ]);
+
+    const result = await sweepFailedAlimtalk({
+      clawops: clawops(seen),
+      solapi: service,
+      from: FROM,
+      except: RECOMMENDED_EXCLUDED_CODES,
       onBlocked: (event) => blocked.push(event),
     });
 
-    expect(seen).toEqual([]);
+    expect(seen).toHaveLength(1);
+    expect(result.sent).toBe(1);
     expect(result.blocked).toBe(2);
     expect(blocked).toEqual([
       {
@@ -188,11 +213,53 @@ describe('sweepFailedAlimtalk — 무엇을 집는가', () => {
     ]);
   });
 
-  it('대상 코드는 on 으로 바꿀 수 있다', async () => {
-    const seen: Array<Record<string, unknown>> = [];
-    const { service } = solapiStub([row({ messageId: 'MK1', statusCode: '3108', text: '야간' })]);
+  it('수신거부(3061)는 RECOMMENDED_EXCLUDED_CODES 에 들어 있다', () => {
+    expect(RECOMMENDED_EXCLUDED_CODES).toContain('3061');
+  });
 
-    await sweepFailedAlimtalk({
+  it('on 으로 좁힌 뒤 except 로 다시 뺄 수 있다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const { service } = solapiStub([
+      row({ messageId: 'MK1', statusCode: '3104', text: 'a' }),
+      row({ messageId: 'MK2', statusCode: '3107', text: 'b' }),
+    ]);
+
+    const result = await sweepFailedAlimtalk({
+      clawops: clawops(seen),
+      solapi: service,
+      from: FROM,
+      on: ['3104', '3107'],
+      except: ['3107'],
+    });
+
+    expect(result.sent).toBe(1);
+    expect(result.blocked).toBe(1);
+  });
+
+  it('on: [] 은 아무것도 보내지 않는다 — 기본(전부)과 구별된다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const { service } = solapiStub([row({ messageId: 'MK1', statusCode: '3104', text: 'a' })]);
+
+    const result = await sweepFailedAlimtalk({
+      clawops: clawops(seen),
+      solapi: service,
+      from: FROM,
+      on: [],
+    });
+
+    expect(seen).toEqual([]);
+    expect(result.sent).toBe(0);
+    expect(result.blocked).toBe(1);
+  });
+
+  it('on 은 대상을 좁힌다 — 준 코드만 나간다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const { service } = solapiStub([
+      row({ messageId: 'MK1', statusCode: '3108', text: '야간' }),
+      row({ messageId: 'MK2', statusCode: '3104', text: '카톡 미사용' }),
+    ]);
+
+    const result = await sweepFailedAlimtalk({
       clawops: clawops(seen),
       solapi: service,
       from: FROM,
@@ -200,6 +267,8 @@ describe('sweepFailedAlimtalk — 무엇을 집는가', () => {
     });
 
     expect(seen).toHaveLength(1);
+    expect(result.sent).toBe(1);
+    expect(result.blocked).toBe(1);
   });
 });
 

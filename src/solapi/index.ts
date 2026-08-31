@@ -28,7 +28,7 @@ export {
 export { SolapiBridgeError } from '../error.js';
 export {
   sweepFailedAlimtalk,
-  DEFAULT_FALLBACK_CODES,
+  RECOMMENDED_EXCLUDED_CODES,
   FALLBACK_MARKER_FIELD,
   type SweepCursor,
   type SweepOptions,
@@ -123,6 +123,7 @@ export type FallbackTracking =
       intervalMs?: never;
       lookbackMs?: never;
       on?: never;
+      except?: never;
       initialCursor?: never;
       onCursor?: never;
       onError?: never;
@@ -137,8 +138,13 @@ export type FallbackTracking =
       intervalMs?: number;
       /** 커서가 없을 때 거슬러 볼 구간. 기본 1시간 */
       lookbackMs?: number;
-      /** 대체발송할 상태코드. 기본 3104·3107·3102 */
+      /** 대체발송할 상태코드. 주지 않으면 **모든 3XXX** 가 대상이다 */
       on?: readonly string[];
+      /**
+       * 대상에서 뺄 상태코드. 수신거부·스팸 차단·설정 오류처럼 문자로 덮으면 안 되는 것은
+       * `RECOMMENDED_EXCLUDED_CODES` 를 그대로 넘겨 뺄 수 있다
+       */
+      except?: readonly string[];
       /** 훑을 메시지 타입. 기본은 알림톡만 — 친구톡까지 보려면 넓힌다 */
       types?: SweepOptions['types'];
       /** 프로세스 밖에 커서를 저장했다가 넘길 때 */
@@ -639,6 +645,7 @@ function startSweepLoop(
         cursor,
         lookbackMs: sweep.lookbackMs,
         on: sweep.on,
+        except: sweep.except,
         types: sweep.types,
         fallbackField: sweep.field,
         concurrency: options.concurrency,

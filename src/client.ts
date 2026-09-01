@@ -4,6 +4,7 @@ import { ClawOpsError } from './error.js';
 import { AssignmentLinks } from './resources/assignment-links.js';
 import { BlockedRecipients } from './resources/blocked-recipients.js';
 import { Calls } from './resources/calls.js';
+import { Kakao } from './resources/kakao.js';
 import { Messages } from './resources/messages.js';
 import { Numbers } from './resources/numbers.js';
 import { Recordings } from './resources/recordings.js';
@@ -85,6 +86,11 @@ export class ClawOps extends APIClient {
 
   get blockedRecipients(): BlockedRecipients {
     return new BlockedRecipients(this, this._defaultAccountId);
+  }
+
+  /** 카카오 채널·알림톡 템플릿. 발송은 `messages.create({ kakao: … })` 다. */
+  get kakao(): Kakao {
+    return new Kakao(this, this._defaultAccountId);
   }
 
   get webhooks(): Webhooks {

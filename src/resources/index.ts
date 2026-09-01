@@ -7,4 +7,5 @@ export { SipCredentials } from './sip-credentials.js';
 export { SipEndpoints } from './sip-endpoints.js';
 export { WebhookLogs } from './webhook-logs.js';
 export { BlockedRecipients } from './blocked-recipients.js';
+export { Kakao, KakaoChannels, KakaoTemplates } from './kakao.js';
 export { AccountContext } from './accounts.js';

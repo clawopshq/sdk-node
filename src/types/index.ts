@@ -67,3 +67,26 @@ export type {
   BlockedRecipientSource,
 } from './blocked-recipient.js';
 export { BlockedRecipientSchema } from './blocked-recipient.js';
+
+export type {
+  KakaoChannel,
+  KakaoChannelStatus,
+  KakaoTemplate,
+  KakaoChannelCategory,
+  KakaoChannelCategoryList,
+  KakaoTokenRequest,
+} from './kakao.js';
+export {
+  KakaoChannelSchema,
+  KakaoTemplateSchema,
+  KakaoChannelCategorySchema,
+  KakaoChannelCategoryListSchema,
+  KakaoTokenRequestSchema,
+} from './kakao.js';
+
+export type {
+  KakaoChannelListParams,
+  KakaoChannelConnectParams,
+  KakaoTemplateListParams,
+  KakaoTokenRequestParams,
+} from './kakao-params.js';

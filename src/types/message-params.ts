@@ -1,3 +1,6 @@
+/** 문자 타입. 발송·대체발송·목록 필터가 같은 어휘를 쓴다. */
+export type TextMessageType = 'sms' | 'lms' | 'mms';
+
 /** 문자·알림톡 공통 필드. */
 interface MessageCreateBaseParams {
   to: string;
@@ -21,7 +24,7 @@ export interface TextMessageCreateParams extends MessageCreateBaseParams {
    * `'sms'` 로 명시한 본문이 90byte 를 넘으면 `400 body_too_long` 이다. 길이가 런타임에
    * 정해지는 경우(템플릿 치환 등)에는 생략하는 편이 안전하다.
    */
-  type?: 'sms' | 'lms' | 'mms';
+  type?: TextMessageType;
   subject?: string;
   /** MMS 첨부 (최대 3개). jpg·jpeg·png·bmp, 장당 300KB 이하. */
   mediaUrl?: string[];
@@ -52,7 +55,7 @@ export interface KakaoFallbackParams {
   body?: string;
   subject?: string;
   /** 생략하면 본문 길이에 맞춰 서버가 고른다. */
-  type?: 'sms' | 'lms' | 'mms';
+  type?: TextMessageType;
   /** `true` 면 알림톡이 실패해도 문자를 보내지 않는다 — 실패가 그대로 실패로 남는다. */
   disabled?: boolean;
 }
@@ -81,10 +84,33 @@ export interface KakaoMessageCreateParams extends MessageCreateBaseParams {
 export type MessageCreateParams = TextMessageCreateParams | KakaoMessageCreateParams;
 
 export interface MessageListParams {
-  type?: 'sms' | 'lms' | 'mms' | 'ata';
+  type?: TextMessageType | 'ata';
   status?: 'queued' | 'sent' | 'failed' | 'received';
   /** 발신 또는 수신 번호. 하이픈 유무를 모두 매칭한다. */
   number?: string;
   page?: number;
   pageSize?: number;
 }
+
+// ─── 컴파일 타임 검증 ────────────────────────────────────────────────────────
+// 문자와 알림톡이 섞이지 않는지 tsc 가 확인한다. 타입 전용이라 런타임 코드는 0바이트다.
+// ⚠️ `tests/` 는 tsconfig 의 exclude 에 있어 타입 검사를 받지 않는다 — 테스트 파일에
+//    `@ts-expect-error` 로 적으면 아무도 읽지 않는 주석이 된다. 그래서 여기에 둔다.
+type Rejected<T> = T extends MessageCreateParams ? false : true;
+type Assert<T extends true> = T;
+
+type _BodyWithKakaoIsRejected = Assert<
+  Rejected<{ to: string; from: string; body: string; kakao: KakaoSendParams }>
+>;
+type _MediaWithKakaoIsRejected = Assert<
+  Rejected<{ to: string; from: string; kakao: KakaoSendParams; mediaUrl: string[] }>
+>;
+type _SubjectWithKakaoIsRejected = Assert<
+  Rejected<{ to: string; from: string; kakao: KakaoSendParams; subject: string }>
+>;
+type _TextTypeWithKakaoIsRejected = Assert<
+  Rejected<{ to: string; from: string; kakao: KakaoSendParams; type: 'sms' }>
+>;
+type _FallbackWithoutKakaoIsRejected = Assert<
+  Rejected<{ to: string; from: string; body: string; fallback: KakaoFallbackParams }>
+>;

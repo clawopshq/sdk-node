@@ -301,30 +301,4 @@ describe('카카오 알림톡 (ata)', () => {
     await client.messages.list({ type: 'ata' });
     expect(String(fetchFn.mock.calls[0]![0])).toContain('type=ata');
   });
-
-  describe('타입 레벨 — 문자와 알림톡은 섞이지 않는다', () => {
-    it('컴파일 시점에 막힌다', () => {
-      const client = createClient(mockResponse(sampleAta, 201));
-      const kakao = { channelId: 'clx9kak0001', templateId: 'clx9tpl0001' };
-
-      // 실행하지 않는다 — tsc 의 @ts-expect-error 검사만 받으면 된다.
-      const rejected = () => {
-        // @ts-expect-error 알림톡에는 Body 를 실을 수 없다 (400 kakao_body_not_allowed)
-        client.messages.create({ to: '01012345678', from: '070', body: '안녕', kakao });
-        // @ts-expect-error 알림톡에는 첨부를 실을 수 없다
-        client.messages.create({
-          to: '01012345678',
-          from: '070',
-          kakao,
-          mediaUrl: ['https://x/a.jpg'],
-        });
-        // @ts-expect-error kakao 를 실으면 Type 은 'ata' 뿐이다 (400 kakao_type_conflict)
-        client.messages.create({ to: '01012345678', from: '070', kakao, type: 'sms' });
-        // @ts-expect-error 문자에는 fallback 이 없다 — 대체발송은 알림톡의 개념이다
-        client.messages.create({ to: '01012345678', from: '070', body: '안녕', fallback: {} });
-      };
-
-      expect(typeof rejected).toBe('function');
-    });
-  });
 });

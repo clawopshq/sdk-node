@@ -33,22 +33,6 @@ export class Messages extends APIResource {
       timeout?: number;
     } = {},
   ): Promise<Message> {
-    // 중첩 객체는 손으로 조립한다 — stripNotGiven 은 한 겹만 훑는다.
-    const kakao = params.kakao
-      ? stripNotGiven({
-          ChannelId: params.kakao.channelId,
-          TemplateId: params.kakao.templateId,
-          Variables: params.kakao.variables,
-        })
-      : undefined;
-    const fallback = params.fallback
-      ? stripNotGiven({
-          Type: params.fallback.type,
-          Subject: params.fallback.subject,
-          Body: params.fallback.body,
-          Disabled: params.fallback.disabled,
-        })
-      : undefined;
     const body = stripNotGiven({
       To: params.to,
       From: params.from,
@@ -57,8 +41,22 @@ export class Messages extends APIResource {
       Subject: params.subject,
       MediaUrl: params.mediaUrl,
       IdempotencyKey: params.idempotencyKey,
-      Kakao: kakao,
-      Fallback: fallback,
+      // 중첩 객체는 손으로 조립한다 — stripNotGiven 은 한 겹만 훑는다.
+      Kakao:
+        params.kakao &&
+        stripNotGiven({
+          ChannelId: params.kakao.channelId,
+          TemplateId: params.kakao.templateId,
+          Variables: params.kakao.variables,
+        }),
+      Fallback:
+        params.fallback &&
+        stripNotGiven({
+          Type: params.fallback.type,
+          Subject: params.fallback.subject,
+          Body: params.fallback.body,
+          Disabled: params.fallback.disabled,
+        }),
     });
     return this._client._post(`${this._basePath}/messages`, {
       body,

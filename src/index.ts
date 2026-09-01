@@ -27,6 +27,7 @@ export {
   AgentConnectionError,
   SolapiBridgeError,
 } from './error.js';
+export type { ClawOpsErrorCode } from './error.js';
 
 export { WebhookVerificationError, Webhooks } from './webhooks.js';
 

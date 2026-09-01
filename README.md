@@ -372,6 +372,77 @@ for await (const m of (await client.messages.list()).autoPagingIter()) {
 const detail = await client.messages.get('MG0123456789abcdef');
 ```
 
+### 카카오 알림톡 (Kakao)
+
+승인된 템플릿으로 알림톡을 보냅니다. 발송에 필요한 채널·템플릿 ID 는 SDK 로 조회합니다.
+
+```typescript
+// 1. 연결된 카카오 채널
+const channels = await client.kakao.channels.list({ status: 'connected' });
+const channel = channels.data[0];
+
+// 2. 그 채널의 템플릿 — sendable: true 인 것만 보낼 수 있습니다
+const templates = await client.kakao.templates.list({ channelId: channel.id });
+const template = templates.data.find((t) => t.sendable);
+console.log(template.variables); // ['#{고객명}'] — 이 목록을 모두 채워야 합니다
+
+// 3. 발송
+const msg = await client.messages.create({
+  to: '01012345678',
+  from: '07052358010',
+  kakao: {
+    channelId: channel.id,
+    templateId: template.id,
+    variables: { 고객명: '홍길동' }, // '#{고객명}' 표기도 받습니다
+  },
+  fallback: { body: '주문이 접수되었습니다.' },
+});
+console.log(msg.type); // 'ata'
+```
+
+**본문은 템플릿이 정합니다.** 알림톡에는 `body`·`subject`·`mediaUrl` 을 실을 수 없고(컴파일
+에러입니다), 버튼·아이템 리스트·강조 문구는 카카오 검수를 받은 그대로 나갑니다 — 발송 요청으로
+바꿀 수 없습니다. 요청에서 바꿀 수 있는 것은 `variables` 값뿐입니다.
+
+**대체발송(`fallback`)은 별도의 메시지 1건으로 기록되고 문자 단가로 청구됩니다.** 생략하면
+템플릿 본문이 그대로 문자로 나가고, `fallback: { disabled: true }` 면 알림톡 실패가 그대로
+실패로 남습니다.
+
+변수를 빠뜨리면 발송 전에 `400 kakao_variable_missing` 으로 막힙니다(카카오는 이런 요청도
+접수한 뒤 조용히 실패시키므로 ClawOps 가 미리 잡습니다). 사유는 `e.code` 로 분기하세요.
+
+#### 채널 연결
+
+채널 연결은 두 단계입니다 — 인증번호는 카카오 비즈니스에 등록된 **담당자 휴대전화로만** 갑니다.
+
+```typescript
+const categories = await client.kakao.channelCategories();
+
+const requested = await client.kakao.channels.requestToken({
+  searchId: '@example',
+  phoneNumber: '010-1234-5678',
+});
+console.log(requested.phoneNumberMasked); // '010-****-5678'
+
+// 담당자가 받은 인증번호로 완료 (이미 연결된 채널이면 인증번호를 쓰지 않고 기존 연결을 돌려줍니다)
+const channel = await client.kakao.channels.connect({
+  searchId: requested.searchId,
+  phoneNumber: '010-1234-5678',
+  categoryCode: categories.data[0].code,
+  token: '394812',
+});
+```
+
+⚠️ `connect()` 가 **타임아웃되면 재호출하지 마세요.** 이미 연결에 성공했을 수 있습니다 —
+`channels.retrieve(id)` 로 실제 등록 여부를 확인하세요(이 조회는 몇 번을 불러도 안전합니다).
+연결에 **실패해도 인증번호는 소모되므로** 원인을 해결한 뒤 `requestToken()` 부터 다시 시작해야 합니다.
+
+⚠️ `channels.disconnect(id)` 는 **되돌릴 수 없고 그 채널의 알림톡 템플릿까지 함께 삭제합니다.**
+템플릿은 카카오 검수를 다시 받아야 합니다.
+
+`channels.list()` 는 저장된 연결 정보를 그대로 돌려줍니다(빠릅니다). 카카오 쪽 상태까지 실제로
+확인하는 것은 `channels.retrieve()` 뿐이며, 이 호출이 `status` 를 갱신합니다.
+
 ### 솔라피(SOLAPI) 호환 — 문자만 ClawOps 로
 
 이미 솔라피 SDK 로 작성된 코드를 **그대로 두고** 문자(SMS/LMS/MMS)만 ClawOps 로 보냅니다.
@@ -646,16 +717,33 @@ try {
   const call = await client.calls.create({ to: '01012345678', from: '07052358010', url: 'https://...' });
 } catch (e) {
   if (e instanceof BadRequestError) {
-    console.log(`잘못된 요청: ${e.statusCode} - ${JSON.stringify(e.body)}`);
+    console.log(`잘못된 요청: ${e.status} - ${JSON.stringify(e.body)}`);
   } else if (e instanceof AuthenticationError) {
-    console.log(`유효하지 않은 API 키: ${e.statusCode}`);
+    console.log(`유효하지 않은 API 키: ${e.status}`);
   } else if (e instanceof NotFoundError) {
-    console.log(`리소스를 찾을 수 없음: ${e.statusCode}`);
+    console.log(`리소스를 찾을 수 없음: ${e.status}`);
   }
 }
 ```
 
-모든 에러는 `ClawOpsError`를 상속합니다. HTTP 에러는 `statusCode`, `body` 속성을 제공합니다.
+모든 에러는 `ClawOpsError`를 상속합니다. HTTP 에러는 `status`, `code`, `body` 속성을 제공합니다.
+
+**사유는 `code` 로 분기하세요** — 한 상태 코드가 서로 다른 사유를 담고, 한글 메시지는 바뀔 수
+있습니다. 서버가 `code` 를 싣지 않은 응답에서는 `undefined` 입니다.
+
+```typescript
+import { UnprocessableEntityError } from '@teamlearners/clawops';
+
+try {
+  await client.messages.create({ to, from, kakao: { channelId, templateId, variables } });
+} catch (e) {
+  if (e instanceof UnprocessableEntityError && e.code === 'recipient_blocked') {
+    // 수신거부 — 재시도하면 안 됩니다
+  } else if (e instanceof BadRequestError && e.code === 'kakao_variable_missing') {
+    // 템플릿 변수 누락 — templates.list() 의 variables 를 다시 확인하세요
+  }
+}
+```
 
 | 에러                       | 상태 코드 |
 | -------------------------- | --------- |

@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.36.0 (2026-09-01)
+
+### Fixed
+- 🔥 **알림톡을 조회하면 SDK 가 던지던 것.** 서버는 `type: 'ata'` 를 주는데 스키마는 `'kakao'` 를 기다렸습니다. 응답 검증에 실패하면 `APIResponseValidationError` 가 나므로, `messages.get()` 은 물론 **`messages.list()` 는 페이지에 알림톡이 한 건만 섞여도 목록 전체가 실패**했습니다. 콘솔로 알림톡을 보낸 계정이면 문자 조회까지 깨졌습니다. `'kakao'` 는 서버가 한 번도 보낸 적 없는 값입니다.
+- **목록 필터가 서버 계약과 어긋나던 것.** 서버가 받지 않는 `status: 'sending'` 을 제거했습니다(보내면 `400` 이었습니다).
+- README 의 에러 처리 예제가 존재하지 않는 `e.statusCode` 를 쓰고 있었습니다 — `e.status` 입니다.
+
+### Added
+- **카카오 알림톡 발송.** `messages.create({ kakao: { channelId, templateId, variables }, fallback })` 로 보냅니다.
+  ```typescript
+  await client.messages.create({
+    to: '01012345678',
+    from: '07052358010',
+    kakao: { channelId, templateId, variables: { 고객명: '홍길동' } },
+    fallback: { body: '주문이 접수되었습니다.' },
+  });
+  ```
+  문자와 알림톡은 **타입 레벨에서 배타적**입니다. 알림톡에 `body`·`subject`·`mediaUrl` 을 실으면 컴파일 에러입니다 — 서버가 `400` 으로 거절하는 조합이라 런타임까지 갈 이유가 없습니다. 본문·버튼·아이템 리스트·강조 문구는 카카오 검수를 받은 그대로 나가고, 요청에서 바꿀 수 있는 것은 `variables` 뿐입니다.
+  ⚠️ 대체발송된 문자는 **별도의 메시지 1건**으로 기록되고 문자 단가로 청구됩니다.
+- **`client.kakao.*`** — 채널·템플릿·카테고리. 발송에 필요한 ID 를 콘솔에서 옮겨 적지 않아도 됩니다.
+  ```typescript
+  const channels = await client.kakao.channels.list({ status: 'connected' });
+  const templates = await client.kakao.templates.list({ channelId: channels.data[0].id });
+  const sendable = templates.data.filter((t) => t.sendable);
+  ```
+  채널 연결(`requestToken`·`connect`)과 해제(`disconnect`)도 있습니다. ⚠️ `disconnect` 는 되돌릴 수 없고 **그 채널의 알림톡 템플릿까지 함께 삭제**합니다.
+- **`APIStatusError.code`** — 서버가 함께 보내는 기계 판독용 코드. 한 상태 코드가 서로 다른 사유를 담으므로(422 만 해도 `recipient_blocked` 와 `quota_exceeded` 가 갈립니다) 한글 문구 대신 이 값으로 분기하세요. `ClawOpsErrorCode` 는 열린 유니온이라 목록에 없는 코드도 그대로 실립니다.
+- **`messages.list({ number })`** — 발신·수신 번호 필터. 서버엔 있었는데 SDK 에 없었습니다.
+- 예제 `examples/kakao-ata-send.ts`.
+
+### Note
+- `messages.list({ type: 'ata' })` 는 서버가 목록 필터 enum 에 `ata` 를 받도록 배포된 뒤에 동작합니다.
+
 ## 0.35.0 (2026-08-31)
 
 ### Changed

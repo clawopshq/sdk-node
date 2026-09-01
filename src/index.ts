@@ -35,6 +35,7 @@ export { Page } from './pagination.js';
 export { AssignmentLinks } from './resources/assignment-links.js';
 export { BlockedRecipients } from './resources/blocked-recipients.js';
 export { Calls } from './resources/calls.js';
+export { Kakao, KakaoChannels, KakaoTemplates } from './resources/kakao.js';
 export { Messages } from './resources/messages.js';
 export { Numbers } from './resources/numbers.js';
 export { Recordings } from './resources/recordings.js';
@@ -76,4 +77,14 @@ export type {
   BlockedChannel,
   BlockedRecipientStatus,
   BlockedRecipientSource,
+  KakaoChannel,
+  KakaoChannelStatus,
+  KakaoTemplate,
+  KakaoChannelCategory,
+  KakaoChannelCategoryList,
+  KakaoTokenRequest,
+  KakaoChannelListParams,
+  KakaoChannelConnectParams,
+  KakaoTemplateListParams,
+  KakaoTokenRequestParams,
 } from './types/index.js';

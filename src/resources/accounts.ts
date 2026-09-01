@@ -2,6 +2,7 @@ import type { APIClient } from '../base-client.js';
 import { AssignmentLinks } from './assignment-links.js';
 import { BlockedRecipients } from './blocked-recipients.js';
 import { Calls } from './calls.js';
+import { Kakao } from './kakao.js';
 import { Messages } from './messages.js';
 import { Numbers } from './numbers.js';
 import { Recordings } from './recordings.js';
@@ -42,5 +43,9 @@ export class AccountContext {
 
   get blockedRecipients(): BlockedRecipients {
     return new BlockedRecipients(this._client, this._accountId);
+  }
+
+  get kakao(): Kakao {
+    return new Kakao(this._client, this._accountId);
   }
 }

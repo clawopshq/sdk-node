@@ -136,6 +136,7 @@ describe('Messages resource', () => {
       const page = await client.messages.list({
         type: 'sms',
         status: 'sent',
+        number: '07052358010',
         page: 1,
         pageSize: 10,
       });
@@ -145,6 +146,7 @@ describe('Messages resource', () => {
       expect(url).toContain('/v1/accounts/AC_test/messages');
       expect(url).toContain('type=sms');
       expect(url).toContain('status=sent');
+      expect(url).toContain('number=07052358010');
       expect(url).toContain('page=1');
       expect(url).toContain('pageSize=10');
 
@@ -193,6 +195,136 @@ describe('Messages resource', () => {
       expect(result.messageId).toBe('MSG_123');
       expect(result.body).toBe('Hello World');
       expect(result.type).toBe('sms');
+    });
+  });
+});
+
+describe('카카오 알림톡 (ata)', () => {
+  const sampleAta = {
+    ...sampleMessage,
+    messageId: 'MSG_ATA',
+    type: 'ata',
+    body: '홍길동님, 주문이 접수되었습니다.',
+  };
+
+  it('kakao 를 Kakao.ChannelId/TemplateId/Variables 로 실어 보낸다', async () => {
+    const fetchFn = mockResponse(sampleAta, 201);
+    const client = createClient(fetchFn);
+
+    await client.messages.create({
+      to: '01012345678',
+      from: '07052358010',
+      kakao: {
+        channelId: 'clx9kak0001',
+        templateId: 'clx9tpl0001',
+        variables: { 고객명: '홍길동', '#{금액}': '12,000' },
+      },
+    });
+
+    const body = JSON.parse(String(fetchFn.mock.calls[0]![1]!.body));
+    expect(body.Kakao).toEqual({
+      ChannelId: 'clx9kak0001',
+      TemplateId: 'clx9tpl0001',
+      Variables: { 고객명: '홍길동', '#{금액}': '12,000' },
+    });
+    // 본문은 템플릿이 정한다 — Body 를 지어내 실으면 서버가 400 이다.
+    expect(body).not.toHaveProperty('Body');
+  });
+
+  it('variables 미지정이면 Variables 키 자체를 넣지 않는다', async () => {
+    const fetchFn = mockResponse(sampleAta, 201);
+    const client = createClient(fetchFn);
+
+    await client.messages.create({
+      to: '01012345678',
+      from: '07052358010',
+      kakao: { channelId: 'clx9kak0001', templateId: 'clx9tpl0001' },
+    });
+
+    const body = JSON.parse(String(fetchFn.mock.calls[0]![1]!.body));
+    expect(body.Kakao).toEqual({ ChannelId: 'clx9kak0001', TemplateId: 'clx9tpl0001' });
+  });
+
+  it('fallback 을 Fallback 으로 실어 보낸다 — disabled: false 도 그대로 간다', async () => {
+    const fetchFn = mockResponse(sampleAta, 201);
+    const client = createClient(fetchFn);
+
+    await client.messages.create({
+      to: '01012345678',
+      from: '07052358010',
+      kakao: { channelId: 'clx9kak0001', templateId: 'clx9tpl0001' },
+      fallback: { body: '주문이 접수되었습니다.', type: 'sms', disabled: false },
+    });
+
+    const body = JSON.parse(String(fetchFn.mock.calls[0]![1]!.body));
+    expect(body.Fallback).toEqual({ Type: 'sms', Body: '주문이 접수되었습니다.', Disabled: false });
+  });
+
+  it('fallback 미지정이면 Fallback 키가 없다 — 서버가 템플릿 본문으로 대체발송한다', async () => {
+    const fetchFn = mockResponse(sampleAta, 201);
+    const client = createClient(fetchFn);
+
+    await client.messages.create({
+      to: '01012345678',
+      from: '07052358010',
+      kakao: { channelId: 'clx9kak0001', templateId: 'clx9tpl0001' },
+    });
+
+    const body = JSON.parse(String(fetchFn.mock.calls[0]![1]!.body));
+    expect(body).not.toHaveProperty('Fallback');
+  });
+
+  // 회귀: 스키마가 'kakao' 를 기다리고 서버는 'ata' 를 줘서 조회가 통째로 던지던 버그.
+  it("type: 'ata' 응답을 던지지 않고 파싱한다", async () => {
+    const fetchFn = mockResponse(sampleAta);
+    const client = createClient(fetchFn);
+
+    const result = await client.messages.get('MSG_ATA');
+    expect(result.type).toBe('ata');
+  });
+
+  it('알림톡이 섞인 목록이 통째로 실패하지 않는다', async () => {
+    const fetchFn = mockResponse({
+      data: [sampleMessage, sampleAta],
+      meta: { total: 2, page: 0, pageSize: 20 },
+    });
+    const client = createClient(fetchFn);
+
+    const page = await client.messages.list();
+    expect(page.data.map((m) => m.type)).toEqual(['sms', 'ata']);
+  });
+
+  it('type: ata 로 알림톡만 필터한다', async () => {
+    const fetchFn = mockResponse({ data: [sampleAta], meta: { total: 1, page: 0, pageSize: 20 } });
+    const client = createClient(fetchFn);
+
+    await client.messages.list({ type: 'ata' });
+    expect(String(fetchFn.mock.calls[0]![0])).toContain('type=ata');
+  });
+
+  describe('타입 레벨 — 문자와 알림톡은 섞이지 않는다', () => {
+    it('컴파일 시점에 막힌다', () => {
+      const client = createClient(mockResponse(sampleAta, 201));
+      const kakao = { channelId: 'clx9kak0001', templateId: 'clx9tpl0001' };
+
+      // 실행하지 않는다 — tsc 의 @ts-expect-error 검사만 받으면 된다.
+      const rejected = () => {
+        // @ts-expect-error 알림톡에는 Body 를 실을 수 없다 (400 kakao_body_not_allowed)
+        client.messages.create({ to: '01012345678', from: '070', body: '안녕', kakao });
+        // @ts-expect-error 알림톡에는 첨부를 실을 수 없다
+        client.messages.create({
+          to: '01012345678',
+          from: '070',
+          kakao,
+          mediaUrl: ['https://x/a.jpg'],
+        });
+        // @ts-expect-error kakao 를 실으면 Type 은 'ata' 뿐이다 (400 kakao_type_conflict)
+        client.messages.create({ to: '01012345678', from: '070', kakao, type: 'sms' });
+        // @ts-expect-error 문자에는 fallback 이 없다 — 대체발송은 알림톡의 개념이다
+        client.messages.create({ to: '01012345678', from: '070', body: '안녕', fallback: {} });
+      };
+
+      expect(typeof rejected).toBe('function');
     });
   });
 });

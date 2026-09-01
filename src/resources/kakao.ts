@@ -1,4 +1,3 @@
-import type { APIClient } from '../base-client.js';
 import { APIResource } from '../resource.js';
 import { stripNotGiven } from '../util.js';
 import { Page, PageSchema } from '../pagination.js';
@@ -35,6 +34,10 @@ type RequestOptions = {
  * `searchId` 와 `phoneNumber` 를 두 번 모두 보낸다.
  */
 export class KakaoChannels extends APIResource {
+  private get _path(): string {
+    return `${this._basePath}/kakao/channels`;
+  }
+
   /**
    * 연결된 채널 목록.
    *
@@ -50,7 +53,7 @@ export class KakaoChannels extends APIResource {
       page: params.page,
       pageSize: params.pageSize,
     });
-    const path = `${this._basePath}/kakao/channels`;
+    const path = this._path;
     const raw = await this._client._get(path, {
       castTo: PageSchema(KakaoChannelSchema),
       query: Object.keys(query).length ? query : undefined,
@@ -71,7 +74,7 @@ export class KakaoChannels extends APIResource {
    * `needs_attention` 으로 온다.
    */
   async retrieve(channelId: string, options: RequestOptions = {}): Promise<KakaoChannel> {
-    return this._client._get(`${this._basePath}/kakao/channels/${channelId}`, {
+    return this._client._get(`${this._path}/${channelId}`, {
       castTo: KakaoChannelSchema,
       ...options,
     });
@@ -88,7 +91,7 @@ export class KakaoChannels extends APIResource {
     params: KakaoTokenRequestParams,
     options: RequestOptions = {},
   ): Promise<KakaoTokenRequest> {
-    return this._client._post(`${this._basePath}/kakao/channels/token`, {
+    return this._client._post(`${this._path}/token`, {
       body: { searchId: params.searchId, phoneNumber: params.phoneNumber },
       castTo: KakaoTokenRequestSchema,
       ...options,
@@ -111,7 +114,7 @@ export class KakaoChannels extends APIResource {
     params: KakaoChannelConnectParams,
     options: RequestOptions = {},
   ): Promise<KakaoChannel> {
-    return this._client._post(`${this._basePath}/kakao/channels`, {
+    return this._client._post(this._path, {
       body: {
         searchId: params.searchId,
         phoneNumber: params.phoneNumber,
@@ -133,7 +136,7 @@ export class KakaoChannels extends APIResource {
    * 다시 시작하면 된다.
    */
   async disconnect(channelId: string, options: RequestOptions = {}): Promise<KakaoChannel> {
-    return this._client._deleteWithResponse(`${this._basePath}/kakao/channels/${channelId}`, {
+    return this._client._deleteWithResponse(`${this._path}/${channelId}`, {
       castTo: KakaoChannelSchema,
       ...options,
     });
@@ -161,7 +164,7 @@ export class KakaoTemplates extends APIResource {
     const path = `${this._basePath}/kakao/templates`;
     const raw = await this._client._get(path, {
       castTo: PageSchema(KakaoTemplateSchema),
-      query,
+      query: Object.keys(query).length ? query : undefined,
       ...options,
     });
     const page = new Page<KakaoTemplate>(raw.data, raw.meta);
@@ -175,15 +178,7 @@ export class KakaoTemplates extends APIResource {
  *
  * 발송 자체는 `client.messages.create({ kakao: … })` 다 — 여기서 얻은 채널·템플릿 ID 를 그대로 쓴다.
  */
-export class Kakao {
-  private _client: APIClient;
-  private _accountId: string;
-
-  constructor(client: APIClient, accountId: string) {
-    this._client = client;
-    this._accountId = accountId;
-  }
-
+export class Kakao extends APIResource {
   get channels(): KakaoChannels {
     return new KakaoChannels(this._client, this._accountId);
   }
@@ -202,7 +197,7 @@ export class Kakao {
    * 페이지네이션이 없어 `Page` 가 아니라 `{ data, meta }` 를 그대로 돌려준다.
    */
   async channelCategories(options: RequestOptions = {}): Promise<KakaoChannelCategoryList> {
-    return this._client._get(`/v1/accounts/${this._accountId}/kakao/channel-categories`, {
+    return this._client._get(`${this._basePath}/kakao/channel-categories`, {
       castTo: KakaoChannelCategoryListSchema,
       ...options,
     });

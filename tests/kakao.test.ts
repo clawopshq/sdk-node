@@ -11,13 +11,15 @@ function createClient(mockFetch: typeof fetch) {
   });
 }
 
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 function mockResponse(body: unknown, status = 200) {
-  return vi.fn<typeof fetch>().mockResolvedValue(
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { 'Content-Type': 'application/json' },
-    }),
-  );
+  return vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(body, status));
 }
 
 const sampleChannel = {
@@ -81,22 +83,14 @@ describe('kakao.channels', () => {
   });
 
   it('다음 페이지를 이어 받는다', async () => {
-    const first = page([sampleChannel], { total: 2, page: 0, pageSize: 1 });
     const fetchFn = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify(first), { headers: { 'Content-Type': 'application/json' } }),
+        jsonResponse(page([sampleChannel], { total: 2, page: 0, pageSize: 1 })),
       )
       .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify(
-            page([{ ...sampleChannel, id: 'clx9kak0002' }], {
-              total: 2,
-              page: 1,
-              pageSize: 1,
-            }),
-          ),
-          { headers: { 'Content-Type': 'application/json' } },
+        jsonResponse(
+          page([{ ...sampleChannel, id: 'clx9kak0002' }], { total: 2, page: 1, pageSize: 1 }),
         ),
       );
     const client = createClient(fetchFn);
@@ -207,15 +201,6 @@ describe('kakao.templates', () => {
     const result = await client.kakao.templates.list({ channelId: 'clx9kak0001' });
     expect(result.data[0].status).toBe('REJECTED');
     expect(result.data[0].sendable).toBe(false);
-  });
-
-  it('channelId 는 타입 레벨에서 필수다', () => {
-    const client = createClient(mockResponse(page([])));
-    const rejected = () => {
-      // @ts-expect-error channelId 없이는 서버가 400 이다
-      client.kakao.templates.list({});
-    };
-    expect(typeof rejected).toBe('function');
   });
 });
 

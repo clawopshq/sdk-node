@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
 /**
+ * 채널 연결 상태. 서버가 어휘를 소유하므로 **열린 유니온**이다 — 목록에 없는 값도 그대로
+ * 실리고, 낡는 것은 자동완성뿐이다.
+ */
+export type KakaoChannelStatus = 'connected' | 'needs_attention' | (string & {});
+
+/**
  * 이 계정에 연결된 카카오 비즈니스 채널.
  *
  * ⚠️ `searchId` 는 채널 소유자가 카카오 비즈니스에서 바꿀 수 있다. **연동 키로 쓰지 말 것** —
@@ -18,8 +24,12 @@ export const KakaoChannelSchema = z
      * `connected` = 연결 완료. `needs_attention` = 연결 기록은 있으나 카카오 채널 상태를
      * 확인하지 못한 상태다 — 실제로 끊겼을 수도, 일시적인 조회 실패일 수도 있다.
      * `channels.retrieve()` 를 다시 부르면 재확인한다.
+     *
+     * ⛔ **닫힌 enum 으로 두지 않는다.** 어휘는 서버가 소유하므로, 상태가 하나 늘면
+     * 닫힌 enum 은 조회를 통째로 실패시킨다(알림톡 `'ata'` 가 정확히 그렇게 터졌다).
+     * 열린 유니온이면 자동완성만 낡고 조회는 계속 산다.
      */
-    status: z.enum(['connected', 'needs_attention']),
+    status: z.string() as z.ZodType<KakaoChannelStatus>,
     /** 담당자 휴대전화번호(마스킹). 원문은 저장하지 않는다. */
     managerPhoneMasked: z.string().nullable().optional(),
     connectedAt: z.string(),
@@ -31,7 +41,6 @@ export const KakaoChannelSchema = z
   .passthrough();
 
 export type KakaoChannel = z.infer<typeof KakaoChannelSchema>;
-export type KakaoChannelStatus = KakaoChannel['status'];
 
 /**
  * 알림톡 템플릿.

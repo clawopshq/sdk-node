@@ -88,11 +88,3 @@ export type {
   KakaoTemplateListParams,
   KakaoTokenRequestParams,
 } from './types/index.js';
-
-export {
-  KakaoChannelSchema,
-  KakaoTemplateSchema,
-  KakaoChannelCategorySchema,
-  KakaoChannelCategoryListSchema,
-  KakaoTokenRequestSchema,
-} from './types/index.js';

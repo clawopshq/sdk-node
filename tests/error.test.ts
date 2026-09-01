@@ -206,4 +206,39 @@ describe('makeStatusError', () => {
     expect(err.body).toEqual(body);
     expect(err.headers).toBe(headers);
   });
+
+  it('body.code 를 code 로 꺼낸다 — 문구가 아니라 이 값으로 분기한다', () => {
+    const err = makeStatusError(
+      400,
+      { error: '템플릿 변수가 누락되었습니다.', code: 'kakao_variable_missing' },
+      headers,
+      dummyRequest,
+    );
+    expect(err.code).toBe('kakao_variable_missing');
+  });
+
+  it('code 가 없는 응답이면 undefined 다', () => {
+    expect(makeStatusError(400, { error: 'test' }, headers, dummyRequest).code).toBeUndefined();
+    expect(makeStatusError(400, null, headers, dummyRequest).code).toBeUndefined();
+  });
+
+  it('code 가 문자열이 아니면 없는 것으로 본다', () => {
+    expect(
+      makeStatusError(400, { error: 'x', code: 42 }, headers, dummyRequest).code,
+    ).toBeUndefined();
+    expect(
+      makeStatusError(400, { error: 'x', code: '' }, headers, dummyRequest).code,
+    ).toBeUndefined();
+  });
+
+  it('서브클래스에도 실린다', () => {
+    const err = makeStatusError(
+      422,
+      { error: '수신거부된 번호입니다.', code: 'recipient_blocked' },
+      headers,
+      dummyRequest,
+    );
+    expect(err).toBeInstanceOf(UnprocessableEntityError);
+    expect(err.code).toBe('recipient_blocked');
+  });
 });

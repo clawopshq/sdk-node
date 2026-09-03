@@ -7,7 +7,7 @@ export { ClawOpsAgent } from './agent.js';
 export type { ClawOpsAgentOptions, AgentEventType, ToolConfig } from './agent.js';
 
 // Session
-export { CallSession } from './session.js';
+export { CallSession, DtmfCollectorBusyError } from './session.js';
 export type { CallDirection, CallStatus } from './session.js';
 
 // Control WebSocket — account-wide call event stream. Useful for multi-tenant

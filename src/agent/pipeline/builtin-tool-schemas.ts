@@ -8,6 +8,7 @@
 import { BuiltinTool } from '../builtin-tool.js';
 import { createAgentLogger } from '../logger.js';
 import type { CallSession } from '../session.js';
+import { DtmfCollectorBusyError } from '../session.js';
 
 const log = createAgentLogger();
 
@@ -171,6 +172,11 @@ export async function executeBuiltinTool(
       });
       return result || '(타임아웃 - 입력 없음)';
     } catch (e) {
+      // 중복 호출은 고장이 아니다 — "Error" 로 돌려주면 모델이 도구가 망가진 줄 알고 다시
+      // 부르지 않고, 그때부터 발신자가 누르는 키는 아무도 받지 않는다.
+      if (e instanceof DtmfCollectorBusyError) {
+        return '(이미 입력을 받는 중입니다. 결과를 기다리세요.)';
+      }
       return `Error: ${e}`;
     }
   }

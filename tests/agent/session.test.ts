@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { CallSession } from '../../src/agent/session.js';
+import { CallSession, DtmfCollectorBusyError } from '../../src/agent/session.js';
 
 describe('CallSession', () => {
   function makeSession() {
@@ -175,6 +175,73 @@ describe('CallSession DTMF', () => {
       session._routeDtmf('3');
       session._routeDtmf('4');
       await p;
+    });
+
+    it('중복 호출은 busy 예외로 구분된다', async () => {
+      // 맨 Error 로 던지면 도구 래퍼가 "Error: ..." 로 감싸 모델에게 돌려주고, 모델은
+      // 도구가 망가진 줄 알고 그 뒤로 다시 부르지 않는다 — 그때부터 키가 유실된다.
+      const session = makeSession();
+      const p = session.collectDtmf({ maxDigits: 3, timeout: 1 });
+
+      await expect(session.collectDtmf({ maxDigits: 3, timeout: 1 })).rejects.toBeInstanceOf(
+        DtmfCollectorBusyError,
+      );
+
+      session._routeDtmf('1');
+      session._routeDtmf('2');
+      session._routeDtmf('3');
+      expect(await p).toBe('123');
+    });
+
+    it('수집값을 로그에 쓰지 않는다', async () => {
+      // 키패드로 받는 값은 카드번호일 수 있다 — 자릿수만 남아야 한다.
+      const logged: unknown[][] = [];
+      const session = makeSession();
+      session.setLogger({
+        info: (...args: unknown[]) => logged.push(args),
+        error: () => {},
+        warn: () => {},
+        debug: () => {},
+      } as never);
+
+      setTimeout(() => '4111'.split('').forEach((d) => session._routeDtmf(d)), 20);
+      expect(await session.collectDtmf({ maxDigits: 4, timeout: 1 })).toBe('4111');
+
+      const flat = JSON.stringify(logged);
+      expect(flat).not.toContain('4111');
+      expect(flat).toContain('4');
+    });
+
+    it('전체 상한이 자리마다 리셋되는 타이머를 끊는다', async () => {
+      // inter-digit 타이머만 있으면 maxDigits × timeout 만큼 산다(11자리·5초 = 55초).
+      const session = makeSession();
+      const started = Date.now();
+
+      // 자리 사이 간격(150ms)은 timeout(10초) 안이라 inter-digit 만으로는 안 끝난다.
+      setTimeout(() => session._routeDtmf('1'), 150);
+      setTimeout(() => session._routeDtmf('2'), 300);
+
+      const result = await session.collectDtmf({
+        maxDigits: 11,
+        timeout: 10,
+        maxWait: 0.5,
+      });
+
+      expect(result).toBe('12');
+      expect(Date.now() - started).toBeLessThan(2000);
+    });
+
+    it('진 타이머를 지운다 — 이벤트 루프를 붙잡지 않는다', async () => {
+      // Promise.race 는 진 promise 를 취소하지 않는다. clearTimeout 이 없으면 자리마다
+      // 타이머가 살아남아 최대 timeout 초 동안 프로세스가 종료되지 않는다.
+      const session = makeSession();
+      const before = process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length;
+
+      setTimeout(() => '123'.split('').forEach((d) => session._routeDtmf(d)), 20);
+      expect(await session.collectDtmf({ maxDigits: 3, timeout: 30 })).toBe('123');
+
+      const after = process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length;
+      expect(after).toBeLessThanOrEqual(before);
     });
   });
 });

@@ -2,18 +2,21 @@ import { APIResource } from '../resource.js';
 import { stripNotGiven } from '../util.js';
 import { Page, PageSchema } from '../pagination.js';
 import {
+  KakaoBrandTemplateSchema,
   KakaoChannelSchema,
   KakaoChannelCategoryListSchema,
   KakaoTemplateSchema,
   KakaoTokenRequestSchema,
 } from '../types/kakao.js';
 import type {
+  KakaoBrandTemplate,
   KakaoChannel,
   KakaoChannelCategoryList,
   KakaoTemplate,
   KakaoTokenRequest,
 } from '../types/kakao.js';
 import type {
+  KakaoBrandTemplateListParams,
   KakaoChannelConnectParams,
   KakaoChannelListParams,
   KakaoTemplateListParams,
@@ -173,10 +176,41 @@ export class KakaoTemplates extends APIResource {
   }
 }
 
+export class KakaoBrandTemplates extends APIResource {
+  /**
+   * 한 채널의 브랜드 메시지 템플릿 목록.
+   *
+   * 응답의 `data[].id` 를 발송의 `brand.templateId` 로, `data[].channelId` 를
+   * `brand.channelId` 로 쓴다. `variables` 의 모든 항목을 `brand.variables` 에 채워야 한다.
+   *
+   * ⭐ **알림톡과 달리 검수가 없어** `sendable` 같은 칸이 없다 — 목록에 있으면 곧 보낼 수 있다.
+   */
+  async list(
+    params: KakaoBrandTemplateListParams,
+    options: RequestOptions = {},
+  ): Promise<Page<KakaoBrandTemplate>> {
+    const query = stripNotGiven({
+      channelId: params.channelId,
+      page: params.page,
+      pageSize: params.pageSize,
+    });
+    const path = `${this._basePath}/kakao/brand-templates`;
+    const raw = await this._client._get(path, {
+      castTo: PageSchema(KakaoBrandTemplateSchema),
+      query: Object.keys(query).length ? query : undefined,
+      ...options,
+    });
+    const page = new Page<KakaoBrandTemplate>(raw.data, raw.meta);
+    page._setClient(this._client, path, KakaoBrandTemplateSchema, query);
+    return page;
+  }
+}
+
 /**
- * 카카오 알림톡 관련 리소스.
+ * 카카오 알림톡·브랜드 메시지 관련 리소스.
  *
- * 발송 자체는 `client.messages.create({ kakao: … })` 다 — 여기서 얻은 채널·템플릿 ID 를 그대로 쓴다.
+ * 발송 자체는 `client.messages.create({ kakao: … })` 또는 `({ brand: … })` 다 —
+ * 여기서 얻은 채널·템플릿 ID 를 그대로 쓴다.
  */
 export class Kakao extends APIResource {
   get channels(): KakaoChannels {
@@ -185,6 +219,11 @@ export class Kakao extends APIResource {
 
   get templates(): KakaoTemplates {
     return new KakaoTemplates(this._client, this._accountId);
+  }
+
+  /** 브랜드 메시지 템플릿. 알림톡 템플릿(`templates`)과 **다른 표**다. */
+  get brandTemplates(): KakaoBrandTemplates {
+    return new KakaoBrandTemplates(this._client, this._accountId);
   }
 
   /**

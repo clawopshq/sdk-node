@@ -82,6 +82,55 @@ export const KakaoTemplateSchema = z
 
 export type KakaoTemplate = z.infer<typeof KakaoTemplateSchema>;
 
+/**
+ * 브랜드 메시지 말풍선 유형. **이 값이 단가를 정한다** — 텍스트형이 가장 싸고
+ * 와이드리스트·캐러셀·커머스가 가장 비싸다.
+ *
+ * `MessageType` 과 같은 이유로 열어 둔 유니온이다.
+ */
+export type BrandBubbleType =
+  | 'TEXT'
+  | 'IMAGE'
+  | 'WIDE'
+  | 'WIDE_ITEM_LIST'
+  | 'CAROUSEL_FEED'
+  | 'COMMERCE'
+  | 'CAROUSEL_COMMERCE'
+  // ⚠️ `PREMIUM_VIDEO` 는 카카오TV 종료로 등록 경로가 막혀 알려진 값에서 뺐다.
+  | (string & {});
+
+/**
+ * 브랜드 메시지 템플릿.
+ *
+ * ⭐ **알림톡과 달리 검수가 없다** — `status`·`dormant`·`sendable` 이 없는 이유이고,
+ * 목록에 있으면 곧 발송할 수 있다.
+ */
+export const KakaoBrandTemplateSchema = z
+  .object({
+    /** ClawOps 템플릿 리소스 ID. 발송의 `brand.templateId` 에 이 값을 쓴다. */
+    id: z.string(),
+    /** ClawOps 채널 리소스 ID. 발송의 `brand.channelId` 와 같은 값이다. */
+    channelId: z.string(),
+    name: z.string(),
+    chatBubbleType: z.string() as z.ZodType<BrandBubbleType>,
+    /**
+     * 말풍선 본문.
+     *
+     * ⚠️ **유형에 따라 `null` 이다.** 본문이 담기는 자리가 유형마다 달라 `TEXT`·`IMAGE`·
+     * `WIDE` 에만 채워진다 — 나머지는 헤더·카드·상품명이 그 자리를 대신한다.
+     */
+    content: z.string().nullable(),
+    /** 와이드리스트형의 머리말. 다른 유형에서는 `null`. */
+    header: z.string().nullable(),
+    /** 발송 시 `brand.variables` 에 모두 채워야 하는 변수 이름. */
+    variables: z.array(z.string()),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+  })
+  .passthrough();
+
+export type KakaoBrandTemplate = z.infer<typeof KakaoBrandTemplateSchema>;
+
 /** 채널 업종 카테고리. **열린 집합이므로 코드에 하드코딩하지 말 것** — 이 응답이 정본이다. */
 export const KakaoChannelCategorySchema = z
   .object({

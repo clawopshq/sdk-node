@@ -36,7 +36,7 @@ export { Page } from './pagination.js';
 export { AssignmentLinks } from './resources/assignment-links.js';
 export { BlockedRecipients } from './resources/blocked-recipients.js';
 export { Calls } from './resources/calls.js';
-export { Kakao, KakaoChannels, KakaoTemplates } from './resources/kakao.js';
+export { Kakao, KakaoChannels, KakaoTemplates, KakaoBrandTemplates } from './resources/kakao.js';
 export { Messages } from './resources/messages.js';
 export { Numbers } from './resources/numbers.js';
 export { Recordings } from './resources/recordings.js';
@@ -60,6 +60,8 @@ export type {
   TextMessageCreateParams,
   KakaoMessageCreateParams,
   KakaoSendParams,
+  BrandMessageCreateParams,
+  BrandSendParams,
   KakaoFallbackParams,
   PhoneNumber,
   NumberListItem,
@@ -81,11 +83,14 @@ export type {
   KakaoChannel,
   KakaoChannelStatus,
   KakaoTemplate,
+  KakaoBrandTemplate,
+  BrandBubbleType,
   KakaoChannelCategory,
   KakaoChannelCategoryList,
   KakaoTokenRequest,
   KakaoChannelListParams,
   KakaoChannelConnectParams,
   KakaoTemplateListParams,
+  KakaoBrandTemplateListParams,
   KakaoTokenRequestParams,
 } from './types/index.js';

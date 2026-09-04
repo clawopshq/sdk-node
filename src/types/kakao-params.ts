@@ -34,3 +34,11 @@ export interface KakaoTemplateListParams {
   page?: number;
   pageSize?: number;
 }
+
+/** 브랜드 메시지 템플릿 목록. 알림톡과 같은 축(채널 필수)이다. */
+export interface KakaoBrandTemplateListParams {
+  /** ClawOps 채널 리소스 ID. **필수다** — 없으면 `400` 이다. */
+  channelId: string;
+  page?: number;
+  pageSize?: number;
+}

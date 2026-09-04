@@ -443,6 +443,42 @@ const channel = await client.kakao.channels.connect({
 `channels.list()` 는 저장된 연결 정보를 그대로 돌려줍니다(빠릅니다). 카카오 쪽 상태까지 실제로
 확인하는 것은 `channels.retrieve()` 뿐이며, 이 호출이 `status` 를 갱신합니다.
 
+### 카카오 브랜드 메시지 (Brand)
+
+채널을 **추가한 친구**에게 나가는 광고성 메시지입니다. 등록한 템플릿으로 보냅니다.
+
+```typescript
+const channels = await client.kakao.channels.list({ status: 'connected' });
+const templates = await client.kakao.brandTemplates.list({ channelId: channels.data[0].id });
+
+const msg = await client.messages.create({
+  to: '01012345678',
+  from: '07052358010',
+  brand: {
+    channelId: channels.data[0].id,
+    templateId: templates.data[0].id,
+    variables: { 고객명: '홍길동' },
+  },
+});
+console.log(msg.type); // 'bms'
+```
+
+⭐ **알림톡과 달리 검수가 없습니다** — `brandTemplates.list()` 가 돌려준 템플릿은 전부 바로
+쓸 수 있어 `sendable` 같은 칸이 없습니다. 알림톡 템플릿과는 **다른 표**라 `templates` 가 아닌
+`brandTemplates` 로 조회합니다.
+
+알림톡과 갈리는 점 둘:
+
+- **야간에 보낼 수 없습니다.** 오후 8시 50분 ~ 다음 날 오전 8시(KST)는
+  `422 kakao_brand_night_blocked` 입니다. 접수 전에 막으므로 예약되지 않습니다.
+- **대체발송이 없습니다.** 카카오톡을 쓰지 않는 수신자에게 문자로 대신 나가지 않습니다.
+  `fallback` 은 컴파일 에러입니다.
+
+`(광고)` 표기와 수신거부 안내는 **카카오가 자동으로 붙이므로** 본문에 넣지 마십시오.
+
+⚠️ 단가가 알림톡보다 훨씬 높고 **말풍선 유형에 따라 갈립니다** — 템플릿의 `chatBubbleType`
+이 그 축입니다. `content` 는 유형에 따라 `null` 일 수 있습니다(본문이 담기는 자리가 다릅니다).
+
 ### 솔라피(SOLAPI) 호환 — 문자만 ClawOps 로
 
 이미 솔라피 SDK 로 작성된 코드를 **그대로 두고** 문자(SMS/LMS/MMS)만 ClawOps 로 보냅니다.

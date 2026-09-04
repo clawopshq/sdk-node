@@ -20,6 +20,8 @@ export type {
   TextMessageCreateParams,
   KakaoMessageCreateParams,
   KakaoSendParams,
+  BrandMessageCreateParams,
+  BrandSendParams,
   KakaoFallbackParams,
 } from './message-params.js';
 
@@ -74,6 +76,8 @@ export type {
   KakaoChannel,
   KakaoChannelStatus,
   KakaoTemplate,
+  KakaoBrandTemplate,
+  BrandBubbleType,
   KakaoChannelCategory,
   KakaoChannelCategoryList,
   KakaoTokenRequest,
@@ -81,6 +85,7 @@ export type {
 export {
   KakaoChannelSchema,
   KakaoTemplateSchema,
+  KakaoBrandTemplateSchema,
   KakaoChannelCategorySchema,
   KakaoChannelCategoryListSchema,
   KakaoTokenRequestSchema,
@@ -90,5 +95,6 @@ export type {
   KakaoChannelListParams,
   KakaoChannelConnectParams,
   KakaoTemplateListParams,
+  KakaoBrandTemplateListParams,
   KakaoTokenRequestParams,
 } from './kakao-params.js';

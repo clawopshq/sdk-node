@@ -180,6 +180,24 @@ describe('Messages resource', () => {
       expect(page.meta.total).toBe(100);
       expect(page.hasNextPage()).toBe(true);
     });
+
+    // 회귀: 닫힌 enum 이라 모르는 type 한 건이 페이지 **전체**를 던지게 만들던 버그.
+    // 'ata' 때 한 번, 'bms' 때 또 한 번 그렇게 터졌다.
+    it('모르는 type 이 섞여도 페이지 전체가 살아 있다', async () => {
+      const listResponse = {
+        data: [
+          { ...sampleMessage, messageId: 'MSG_BMS', type: 'bms' },
+          { ...sampleMessage, messageId: 'MSG_FUTURE', type: '아직-없는-유형' },
+          sampleMessage,
+        ],
+        meta: { total: 3, page: 0, pageSize: 20 },
+      };
+      const client = createClient(mockResponse(listResponse));
+
+      const page = await client.messages.list();
+
+      expect(page.data.map((m) => m.type)).toEqual(['bms', '아직-없는-유형', 'sms']);
+    });
   });
 
   describe('get', () => {

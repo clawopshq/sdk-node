@@ -304,6 +304,26 @@ describe('Calls resource', () => {
       expect(r.segments?.[0].speaker).toBe('AGENT');
     });
 
+    // 회귀: 2026-08 이후 전사는 `speaker_0`·`speaker_1`… 을 보내는데 speaker 가 닫힌 enum 이라
+    // **최근 전사가 전부** 던지고 있었다. segments 는 배열이라 한 조각이 응답 전체를 죽인다.
+    it('speaker_N 형식과 옛 AGENT/CUSTOMER 가 한 응답에 섞여도 파싱한다', async () => {
+      const body = {
+        status: 'completed',
+        callId: 'CA_123',
+        segmentCount: 3,
+        segments: [
+          { speaker: 'speaker_0', start: 0, end: 1.2, text: '안녕하세요.' },
+          { speaker: 'speaker_1', start: 1.5, end: 2.8, text: '네.' },
+          { speaker: 'AGENT', start: 3, end: 4, text: '옛 전사입니다.' },
+        ],
+      };
+      const client = createClient(mockResponse(body));
+
+      const r = await client.calls.getTranscript('CA_123');
+
+      expect(r.segments?.map((s) => s.speaker)).toEqual(['speaker_0', 'speaker_1', 'AGENT']);
+    });
+
     it('returns pending with startedAt', async () => {
       const body = { status: 'pending', startedAt: '2026-04-23T08:33:00Z' };
       const fetchFn = mockResponse(body);

@@ -1,8 +1,19 @@
 import { z } from 'zod';
 
+/**
+ * 화자 식별자. **2026-08 이후 전사는 `speaker_0`·`speaker_1`… 형식**이고, 전환 통화처럼
+ * 참여자가 셋 이상이면 그만큼 늘어난다. 그 이전 전사에는 `AGENT`·`CUSTOMER` 가 그대로
+ * 남아 있으므로 **두 형식을 모두 받아야 한다.** 화자와 역할의 연결은 보장되지 않는다.
+ */
+export type TranscriptSpeaker = 'CUSTOMER' | 'AGENT' | (string & {});
+
 export const TranscriptSegmentSchema = z
   .object({
-    speaker: z.enum(['CUSTOMER', 'AGENT']),
+    /**
+     * ⛔ **닫힌 enum 으로 두지 않는다.** 서버는 이미 `speaker_0` 을 보내고 있고, 세그먼트
+     * 하나가 어긋나면 `segments` 배열 때문에 **전사 응답 전체**가 실패한다.
+     */
+    speaker: z.string() as z.ZodType<TranscriptSpeaker>,
     start: z.number(),
     end: z.number(),
     text: z.string(),

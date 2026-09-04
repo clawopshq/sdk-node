@@ -11,7 +11,7 @@ export type {
   CallUpdateParams,
 } from './call-params.js';
 
-export type { Message } from './message.js';
+export type { Message, MessageStatus, MessageType } from './message.js';
 export { MessageSchema } from './message.js';
 
 export type {
@@ -36,6 +36,7 @@ export { WebhookLogSchema } from './webhook-log.js';
 
 export type {
   TranscriptSegment,
+  TranscriptSpeaker,
   TranscriptStatus,
   TranscriptRequestAccepted,
 } from './transcript.js';

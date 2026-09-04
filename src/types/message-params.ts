@@ -29,6 +29,7 @@ export interface TextMessageCreateParams extends MessageCreateBaseParams {
   /** MMS 첨부 (최대 3개). jpg·jpeg·png·bmp, 장당 300KB 이하. */
   mediaUrl?: string[];
   kakao?: never;
+  brand?: never;
   fallback?: never;
 }
 
@@ -70,6 +71,7 @@ export interface KakaoFallbackParams {
  */
 export interface KakaoMessageCreateParams extends MessageCreateBaseParams {
   kakao: KakaoSendParams;
+  brand?: never;
   fallback?: KakaoFallbackParams;
   /** `kakao` 를 실으면 알림톡이다. 명시할 필요가 없고, 명시한다면 `'ata'` 뿐이다. */
   type?: 'ata';
@@ -78,13 +80,55 @@ export interface KakaoMessageCreateParams extends MessageCreateBaseParams {
   mediaUrl?: never;
 }
 
+/** 브랜드 메시지 템플릿 지정. 구조(본문·버튼·이미지)는 등록한 템플릿이 정한다. */
+export interface BrandSendParams {
+  /** `kakao.channels.list()` 의 `data[].id` (ClawOps 리소스 ID). */
+  channelId: string;
+  /**
+   * `kakao.brandTemplates.list()` 의 `data[].id` (ClawOps 리소스 ID).
+   */
+  templateId: string;
+  /**
+   * 템플릿 변수. 키는 `고객명` 과 `#{고객명}` 을 모두 받는다.
+   *
+   * 채워야 할 이름은 `kakao.brandTemplates.list()` 응답의 `variables` 가 알려준다.
+   */
+  variables?: Record<string, string>;
+}
+
 /**
- * 발송 파라미터. 문자와 알림톡은 **서로 배타적**이다 — 서버 규칙이 그렇고, 섞으면 컴파일 에러다.
+ * 카카오 브랜드 메시지 발송 파라미터.
+ *
+ * 채널을 **추가한 친구**에게 나가는 광고성 메시지다. 알림톡과 갈리는 점 둘:
+ *
+ * - **야간에 못 보낸다.** 20:50~08:00(KST)은 `422 kakao_brand_night_blocked` 다.
+ * - **대체발송이 없다.** `fallback` 을 실으면 `400 kakao_fallback_not_allowed` 라서
+ *   타입에서도 막는다.
+ *
+ * `(광고)` 표기와 수신거부 안내는 카카오가 붙이므로 본문에 넣지 않는다.
  */
-export type MessageCreateParams = TextMessageCreateParams | KakaoMessageCreateParams;
+export interface BrandMessageCreateParams extends MessageCreateBaseParams {
+  brand: BrandSendParams;
+  /** `brand` 를 실으면 브랜드 메시지다. 명시할 필요가 없고, 명시한다면 `'bms'` 뿐이다. */
+  type?: 'bms';
+  body?: never;
+  subject?: never;
+  mediaUrl?: never;
+  kakao?: never;
+  fallback?: never;
+}
+
+/**
+ * 발송 파라미터. 문자·알림톡·브랜드 메시지는 **서로 배타적**이다 — 서버 규칙이 그렇고,
+ * 섞으면 컴파일 에러다.
+ */
+export type MessageCreateParams =
+  | TextMessageCreateParams
+  | KakaoMessageCreateParams
+  | BrandMessageCreateParams;
 
 export interface MessageListParams {
-  type?: TextMessageType | 'ata';
+  type?: TextMessageType | 'ata' | 'bms';
   status?: 'queued' | 'sent' | 'failed' | 'received';
   /** 발신 또는 수신 번호. 하이픈 유무를 모두 매칭한다. */
   number?: string;
@@ -93,7 +137,7 @@ export interface MessageListParams {
 }
 
 // ─── 컴파일 타임 검증 ────────────────────────────────────────────────────────
-// 문자와 알림톡이 섞이지 않는지 tsc 가 확인한다. 타입 전용이라 런타임 코드는 0바이트다.
+// 문자·알림톡·브랜드가 섞이지 않는지 tsc 가 확인한다. 타입 전용이라 런타임 코드는 0바이트다.
 // ⚠️ `tests/` 는 tsconfig 의 exclude 에 있어 타입 검사를 받지 않는다 — 테스트 파일에
 //    `@ts-expect-error` 로 적으면 아무도 읽지 않는 주석이 된다. 그래서 여기에 둔다.
 type Rejected<T> = T extends MessageCreateParams ? false : true;
@@ -114,3 +158,26 @@ type _TextTypeWithKakaoIsRejected = Assert<
 type _FallbackWithoutKakaoIsRejected = Assert<
   Rejected<{ to: string; from: string; body: string; fallback: KakaoFallbackParams }>
 >;
+
+type _BodyWithBrandIsRejected = Assert<
+  Rejected<{ to: string; from: string; body: string; brand: BrandSendParams }>
+>;
+type _MediaWithBrandIsRejected = Assert<
+  Rejected<{ to: string; from: string; brand: BrandSendParams; mediaUrl: string[] }>
+>;
+type _TextTypeWithBrandIsRejected = Assert<
+  Rejected<{ to: string; from: string; brand: BrandSendParams; type: 'sms' }>
+>;
+type _FallbackWithBrandIsRejected = Assert<
+  Rejected<{ to: string; from: string; brand: BrandSendParams; fallback: KakaoFallbackParams }>
+>;
+// ⛔ 둘을 같이 실으면 서버가 `kakao_type_conflict` 로 거절한다 — 어느 쪽으로 나갈지 정해 줄 수 없다.
+type _KakaoWithBrandIsRejected = Assert<
+  Rejected<{ to: string; from: string; kakao: KakaoSendParams; brand: BrandSendParams }>
+>;
+type _SubjectWithBrandIsRejected = Assert<
+  Rejected<{ to: string; from: string; brand: BrandSendParams; subject: string }>
+>;
+
+// 목록 필터 어휘. 발송과 달리 유니온 갈래가 없어 스탬프가 못 막으므로 여기서 직접 못박는다.
+type _BmsIsFilterable = Assert<'bms' extends NonNullable<MessageListParams['type']> ? true : false>;

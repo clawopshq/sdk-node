@@ -232,3 +232,60 @@ describe('멀티 계정', () => {
     expect(String(fetchFn.mock.calls[0]![0])).toContain('/v1/accounts/AC_other/kakao/templates');
   });
 });
+
+describe('kakao.brandTemplates', () => {
+  const brandTemplate = {
+    id: 'clx9bms0001',
+    channelId: 'clx9kak0001',
+    name: '9월 신상품 안내',
+    chatBubbleType: 'TEXT',
+    content: '#{고객명}님, 9월 신상품이 도착했습니다.',
+    header: null,
+    variables: ['#{고객명}'],
+    createdAt: '2026-09-01T00:00:00.000Z',
+    updatedAt: '2026-09-01T00:00:00.000Z',
+  };
+
+  it('알림톡 템플릿과 다른 경로를 쓴다', async () => {
+    const fetchFn = mockResponse(page([brandTemplate]));
+    const client = createClient(fetchFn);
+
+    const result = await client.kakao.brandTemplates.list({ channelId: 'clx9kak0001' });
+
+    const url = String(fetchFn.mock.calls[0]![0]);
+    expect(url).toContain('/v1/accounts/AC_test/kakao/brand-templates');
+    expect(url).toContain('channelId=clx9kak0001');
+    expect(result.data[0].id).toBe('clx9bms0001');
+  });
+
+  /**
+   * ⚠️ 본문이 담기는 자리가 버블 타입마다 다르다 — `TEXT`·`IMAGE`·`WIDE` 만 `content` 가 차고
+   * 나머지는 `header`·카드·상품명이 그 자리를 대신한다. 둘 다 nullable 이어야 한다.
+   */
+  it('content·header 가 null 인 유형도 파싱한다', async () => {
+    const wide = {
+      ...brandTemplate,
+      id: 'clx9bms0002',
+      chatBubbleType: 'WIDE_ITEM_LIST',
+      content: null,
+      header: '가을 기획전',
+    };
+    const client = createClient(mockResponse(page([wide])));
+
+    const result = await client.kakao.brandTemplates.list({ channelId: 'clx9kak0001' });
+
+    expect(result.data[0].content).toBeNull();
+    expect(result.data[0].header).toBe('가을 기획전');
+  });
+
+  // 회귀: 카카오가 버블 타입을 하나 늘리면 닫힌 enum 은 목록 전체를 던진다.
+  it('모르는 chatBubbleType 도 파싱한다', async () => {
+    const client = createClient(
+      mockResponse(page([{ ...brandTemplate, chatBubbleType: '아직-없는-유형' }])),
+    );
+
+    const result = await client.kakao.brandTemplates.list({ channelId: 'clx9kak0001' });
+
+    expect(result.data[0].chatBubbleType).toBe('아직-없는-유형');
+  });
+});

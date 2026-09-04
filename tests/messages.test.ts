@@ -320,3 +320,51 @@ describe('카카오 알림톡 (ata)', () => {
     expect(String(fetchFn.mock.calls[0]![0])).toContain('type=ata');
   });
 });
+
+describe('카카오 브랜드 메시지 (bms)', () => {
+  const sampleBms = {
+    ...sampleMessage,
+    messageId: 'MG_bms',
+    type: 'bms',
+    body: '홍길동님, 9월 신상품이 도착했습니다.',
+  };
+
+  it('brand 를 Brand 로 실어 보낸다 — Body 는 넣지 않는다', async () => {
+    const fetchFn = mockResponse(sampleBms, 201);
+    const client = createClient(fetchFn);
+
+    await client.messages.create({
+      to: '01012345678',
+      from: '07052358010',
+      brand: {
+        channelId: 'clx9kak0001',
+        templateId: 'clx9bms0001',
+        variables: { 고객명: '홍길동' },
+      },
+    });
+
+    const body = JSON.parse(String(fetchFn.mock.calls[0]![1]!.body));
+    expect(body.Brand).toEqual({
+      ChannelId: 'clx9kak0001',
+      TemplateId: 'clx9bms0001',
+      Variables: { 고객명: '홍길동' },
+    });
+    // 본문은 템플릿이 정한다. `Kakao` 와 섞이지도 않아야 한다.
+    expect(body).not.toHaveProperty('Body');
+    expect(body).not.toHaveProperty('Kakao');
+  });
+
+  it('variables 미지정이면 Variables 키 자체를 넣지 않는다', async () => {
+    const fetchFn = mockResponse(sampleBms, 201);
+    const client = createClient(fetchFn);
+
+    await client.messages.create({
+      to: '01012345678',
+      from: '07052358010',
+      brand: { channelId: 'clx9kak0001', templateId: 'clx9bms0001' },
+    });
+
+    const body = JSON.parse(String(fetchFn.mock.calls[0]![1]!.body));
+    expect(body.Brand).toEqual({ ChannelId: 'clx9kak0001', TemplateId: 'clx9bms0001' });
+  });
+});

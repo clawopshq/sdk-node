@@ -7,6 +7,15 @@ import { z } from 'zod';
  */
 export type TranscriptSpeaker = 'CUSTOMER' | 'AGENT' | (string & {});
 
+/** 전사 실패 단계. `trigger` 는 시스템 실패라 재요청할 수 있다. */
+export type TranscriptStage =
+  | 'download'
+  | 'runtime'
+  | 'transcription'
+  | 'trigger'
+  | 'recover'
+  | (string & {});
+
 export const TranscriptSegmentSchema = z
   .object({
     /**
@@ -36,7 +45,15 @@ export const TranscriptStatusSchema = z
     segmentCount: z.number().optional(),
     segments: z.array(TranscriptSegmentSchema).optional(),
     startedAt: z.string().optional(),
-    stage: z.enum(['download', 'runtime', 'trigger']).nullable().optional(),
+    /**
+     * ⛔ **실패 단계는 서버 코드가 만든다** — 전사 파이프라인이 `download`·`runtime`·
+     * `transcription`·`recover` 를 내보내고, 영구 실패는 예외 객체의 속성을 그대로 싣는다.
+     * 어휘가 열려 있어 스펙의 enum 조차 스냅샷일 뿐이다.
+     *
+     * ⚠️ 여기가 닫혀 있으면 **전사가 실패했을 때 그 이유를 물으면 던진다** — 고객이 가장
+     * 답을 필요로 하는 순간이다.
+     */
+    stage: (z.string() as z.ZodType<TranscriptStage>).nullable().optional(),
     error: z.string().nullable().optional(),
   })
   .passthrough();

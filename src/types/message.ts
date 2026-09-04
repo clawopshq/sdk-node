@@ -17,7 +17,6 @@ export type MessageType =
   | 'sms'
   | 'lms'
   | 'mms'
-  | 'rcs'
   /** 카카오 알림톡. */
   | 'ata'
   /** 카카오 브랜드 메시지. */

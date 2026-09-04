@@ -334,6 +334,15 @@ describe('Calls resource', () => {
       expect(r.startedAt).toBe('2026-04-23T08:33:00Z');
     });
 
+    // 회귀: 전사 파이프라인은 `transcription`·`recover` 도 내보내고, 영구 실패는 예외 객체의
+    // 속성을 그대로 싣는다. 닫힌 enum 이던 시절 **실패 이유를 물으면 던졌다.**
+    it('아는 단계 밖의 stage 도 파싱한다', async () => {
+      const client = createClient(
+        mockResponse({ status: 'failed', stage: 'transcription', error: 'transcription_failed' }),
+      );
+      expect((await client.calls.getTranscript('CA_123')).stage).toBe('transcription');
+    });
+
     it('returns failed with stage and error', async () => {
       const body = { status: 'failed', stage: 'runtime', error: 'boom' };
       const fetchFn = mockResponse(body);

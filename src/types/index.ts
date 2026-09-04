@@ -37,6 +37,7 @@ export { WebhookLogSchema } from './webhook-log.js';
 export type {
   TranscriptSegment,
   TranscriptSpeaker,
+  TranscriptStage,
   TranscriptStatus,
   TranscriptRequestAccepted,
 } from './transcript.js';

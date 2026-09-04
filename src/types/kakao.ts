@@ -96,6 +96,7 @@ export type BrandBubbleType =
   | 'CAROUSEL_FEED'
   | 'COMMERCE'
   | 'CAROUSEL_COMMERCE'
+  // ⚠️ `PREMIUM_VIDEO` 는 카카오TV 종료로 등록 경로가 막혀 알려진 값에서 뺐다.
   | (string & {});
 
 /**

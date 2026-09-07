@@ -18,24 +18,31 @@ type RequestOptions = {
 /**
  * 수신거부(DNC) 명단 리소스.
  *
- * 등록된 번호는 이 계정의 **발신**(전화·문자)에서 제외됩니다. 착신은 막지 않습니다 —
- * 그 번호에서 걸려오는 전화는 그대로 받습니다.
+ * 등록된 대상은 이 계정의 **발신**(전화·문자·이메일)에서 제외됩니다. 착신은 막지 않습니다 —
+ * 그 번호에서 걸려오는 전화도, 그 주소에서 오는 메일도 그대로 받습니다.
  *
- * 전화와 문자는 각각 따로 차단합니다. 같은 번호라도 채널마다 별개 항목이므로,
- * 둘 다 막으려면 `channel` 을 바꿔 두 번 등록합니다.
+ * 채널은 각각 따로 차단합니다. 같은 상대라도 채널마다 별개 항목이므로, 전화와 이메일을
+ * 모두 막으려면 `channel` 을 바꿔 두 번 등록합니다.
+ *
+ * ⚠️ **채널마다 막는 방식이 다릅니다.**
+ * - 전화·문자: 수신거부 대상이면 그 발신 요청 **전체**가 `422 recipient_blocked` 로 거절됩니다.
+ * - 이메일: 차단된 수신자만 **빼고 나머지에게는 보냅니다.** 응답의 `suppressed` 에 빠진
+ *   주소가 담기므로, `2xx` 를 받아도 그 칸을 확인해야 누가 안 갔는지 알 수 있습니다.
+ *   수신자가 전원 걸렸을 때만 `422` 입니다.
  */
 export class BlockedRecipients extends APIResource {
   /**
-   * 번호를 수신거부 명단에 등록합니다.
+   * 수신거부 명단에 등록합니다.
    *
-   * 하이픈·`+82` 표기 모두 허용되며 국내 표기로 정규화되어 저장됩니다.
+   * `recipient` 의 형식은 `channel` 이 정합니다 — `call`·`message` 는 **전화번호**(하이픈·`+82`
+   * 표기 모두 허용, 국내 표기로 정규화되어 저장), `email` 은 **이메일 주소**(소문자로 정규화).
    *
-   * **멱등입니다** — 이미 차단 중인 (번호, 채널)을 다시 등록해도 에러가 아니라 기존 항목을
+   * **멱등입니다** — 이미 차단 중인 (대상, 채널)을 다시 등록해도 에러가 아니라 기존 항목을
    * 돌려줍니다. 같은 사람이 수신거부를 두 번 요청하는 것은 정상 상황이기 때문입니다.
    */
   async create(
     params: {
-      number: string;
+      recipient: string;
       channel: BlockedChannel;
       source?: BlockedRecipientSource;
       sourceRef?: string;
@@ -44,7 +51,7 @@ export class BlockedRecipients extends APIResource {
     options: RequestOptions = {},
   ): Promise<BlockedRecipient> {
     const body = stripNotGiven({
-      number: params.number,
+      recipient: params.recipient,
       channel: params.channel,
       source: params.source,
       sourceRef: params.sourceRef,
@@ -64,7 +71,7 @@ export class BlockedRecipients extends APIResource {
   async list(
     params: {
       channel?: BlockedChannel;
-      number?: string;
+      recipient?: string;
       status?: BlockedRecipientStatus;
       page?: number;
       pageSize?: number;
@@ -73,7 +80,7 @@ export class BlockedRecipients extends APIResource {
   ): Promise<Page<BlockedRecipient>> {
     const query = stripNotGiven({
       channel: params.channel,
-      number: params.number,
+      recipient: params.recipient,
       status: params.status,
       page: params.page,
       pageSize: params.pageSize,
@@ -130,13 +137,10 @@ export class BlockedRecipients extends APIResource {
     options: RequestOptions = {},
   ): Promise<BlockedRecipient> {
     const body = stripNotGiven({ note: params.note });
-    return this._client._deleteWithResponse(
-      `${this._basePath}/blocked-recipients/${blockId}`,
-      {
-        body: Object.keys(body).length ? body : undefined,
-        castTo: BlockedRecipientSchema,
-        ...options,
-      },
-    );
+    return this._client._deleteWithResponse(`${this._basePath}/blocked-recipients/${blockId}`, {
+      body: Object.keys(body).length ? body : undefined,
+      castTo: BlockedRecipientSchema,
+      ...options,
+    });
   }
 }

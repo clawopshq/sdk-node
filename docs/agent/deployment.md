@@ -1,0 +1,111 @@
+# 배포
+
+에이전트 서버를 재배포할 때 통화가 끊기지 않게 하는 방법입니다.
+
+무중단 배포는 **@teamlearners/clawops 0.42.0 이상**에서 동작합니다. 그 이전 버전은 아래 설정을 해도 교체 중에 콜이 끊깁니다.
+
+## 왜 배포할 때 끊기나
+
+에이전트는 Control WS로 서버에 상시 연결해 인바운드 콜 알림을 받습니다. 이 연결은 **전화번호 하나에 하나**입니다 — 콜을 어디로 보낼지 정하는 자리이기 때문입니다.
+
+그래서 인스턴스를 내렸다가 올리면, 그 사이에는 콜을 받을 곳이 없습니다. 걸려온 전화는 연결되지 못하고 종료됩니다. 내리고 올리는 데 3분이 걸린다면 3분간 전화가 안 됩니다.
+
+## 겹치게 배포하세요
+
+**새 인스턴스를 먼저 띄우고, 그다음 옛 인스턴스를 내립니다.** 새 인스턴스가 연결되는 순간 서버가 번호를 넘겨주고, 옛 인스턴스는 그 통지를 받아 스스로 물러납니다 — 진행 중인 통화를 끝까지 처리한 뒤에.
+
+`serve()`를 쓰고 있다면 코드는 그대로 두어도 됩니다.
+
+```typescript
+const agent = new ClawOpsAgent({ from: '0705...', session });
+await agent.serve(); // 인계받으면 알아서 드레이닝하고 반환한다
+```
+
+바꿀 것은 배포 설정입니다.
+
+### Kubernetes
+
+```yaml
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0 # 옛 pod 를 먼저 내리지 않는다
+      maxSurge: 1
+  template:
+    spec:
+      terminationGracePeriodSeconds: 150 # 드레이닝 상한보다 길게
+```
+
+### ECS
+
+```json
+{
+  "deploymentConfiguration": {
+    "minimumHealthyPercent": 100,
+    "maximumPercent": 200
+  },
+  "containerDefinitions": [{ "stopTimeout": 120 }]
+}
+```
+
+`minimumHealthyPercent`가 100 미만이면 ECS는 옛 태스크를 먼저 내립니다. 그 사이가 그대로 불통 구간이 됩니다.
+
+## 종료 유예를 넉넉히 두세요
+
+`serve()`는 멈출 때가 되면 **진행 중인 통화가 끝나기를 기다린 뒤** 종료합니다. 기본 상한은 120초입니다.
+
+그런데 오케스트레이터가 그보다 먼저 프로세스를 강제 종료하면(`SIGKILL`) 통화가 도중에 끊깁니다. 그래서 플랫폼의 종료 유예를 드레이닝 상한보다 **길게** 잡아야 합니다.
+
+| 플랫폼     | 설정                            |
+| ---------- | ------------------------------- |
+| Kubernetes | `terminationGracePeriodSeconds` |
+| ECS        | `stopTimeout` (최대 120)        |
+
+상한을 직접 정하려면:
+
+```typescript
+await agent.serve({ drainTimeoutMs: 90_000 });
+```
+
+통화가 평균적으로 얼마나 긴지에 맞춰 잡으시면 됩니다. 상한에 걸린 통화는 종료됩니다.
+
+## 직접 제어하기
+
+`connect()`로 직접 수명을 관리한다면 두 가지를 쓰시면 됩니다.
+
+```typescript
+const agent = new ClawOpsAgent({
+  from: '0705...',
+  session,
+  onTakenOver: () => console.log('다른 인스턴스가 넘겨받았습니다'),
+});
+await agent.connect();
+
+// ... 종료할 때
+const { completed, forced } = await agent.drain({ timeoutMs: 120_000 });
+console.log(`${completed}건 정상 종료, ${forced}건 중단`);
+```
+
+| | 설명 |
+| --- | --- |
+| `onTakenOver` | 다른 인스턴스가 이 번호를 넘겨받았을 때 호출됩니다. 롤링 배포의 한가운데이고, 오류가 아닙니다. 여기서 `drain()`을 부르면 됩니다. |
+| `agent.takenOver` | 넘겨준 상태인지 여부. |
+| `drain({ timeoutMs })` | 새 콜 수신을 멈추고 진행 중 통화를 기다린 뒤 종료합니다. `{ completed, forced }`를 돌려줍니다. |
+
+`disconnect()`는 기다리지 않고 즉시 끊습니다. 배포에는 `drain()`을 쓰세요.
+
+드레이닝 중에 끝나는 통화는 `call_end`의 `endedDuration`이 `null`입니다. 통화 시간은 Control 연결로 오는데 그 연결을 이미 내려놓은 뒤이기 때문입니다. 통화 시간이 필요하면 통화 조회 API를 쓰세요.
+
+## 인스턴스는 하나로 두세요
+
+**한 번호에 인스턴스를 여러 개 붙이지 마세요.** `replicas`는 1이어야 합니다.
+
+Control 연결이 번호당 하나이므로, 같은 번호로 여러 인스턴스가 붙으면 서로 자리를 뺏습니다. 새 인스턴스가 뜰 때마다 앞의 인스턴스가 물러나고, 오케스트레이터는 죽은 자리를 다시 채우고, 그것이 또 남은 것을 밀어냅니다. 이 상태가 이어지면 **그 번호로 한동안 전화를 받지 못하게 됩니다.**
+
+HPA(오토스케일링)도 같은 이유로 이 번호에는 걸지 마세요.
+
+Control 연결은 콜 알림만 주고받고 오디오는 통화별 Media WS로 흐르기 때문에, 인스턴스 하나가 감당하는 동시 통화 수는 대개 CPU와 사용하는 모델의 한도가 정합니다 — 연결 수가 아닙니다. 지금 규모에서 부족하다면 문의해 주세요.
+
+번호를 여러 개 쓰신다면 **번호마다 인스턴스를 하나씩** 두는 것은 문제없습니다.

@@ -12,20 +12,26 @@
 
 **불통 구간의 길이는 새 인스턴스가 뜨는 데 걸리는 시간과 같습니다.** 이미지를 받고 프로세스가 기동하는 데 3분이 걸린다면 3분간 전화가 안 됩니다. 배포를 빠르게 만드는 것으로는 이 구간을 없앨 수 없습니다 — 겹치게 배포해야 없어집니다.
 
-## 맞춰야 하는 네 가지
+## 순서
 
-| | 안 맞추면 |
-| --- | --- |
-| **겹치게 배포** — 새 인스턴스를 먼저 띄우고 옛 것을 내린다 | 그 사이 전화가 안 걸린다 |
-| **준비 판정** — Control 연결이 붙은 뒤에 "정상"으로 본다 | 겹치게 배포해도 그 사이가 빈다 |
-| **종료 유예** — 드레이닝 상한보다 길게 | 통화 도중에 `SIGKILL` 로 끊긴다 |
-| **시그널 전달** — 종료 시그널이 프로세스까지 닿는다 | 드레이닝이 시작조차 안 된다 |
+이대로 따라 하시면 됩니다. **다섯 단계 전부 해야 합니다** — 하나라도 빠지면 무중단이 되지 않습니다.
 
-앞의 셋은 배포 설정이고, 마지막은 컨테이너 이미지의 문제입니다. **하나라도 빠지면 무중단이 되지 않습니다.**
+### 1. SDK 를 올린다
 
-## 애플리케이션
+```bash
+npm install @teamlearners/clawops@latest
+```
 
-`serve()`를 쓰고 있다면 인계와 드레이닝은 SDK가 처리합니다. 준비 표시 한 줄만 더하면 됩니다.
+확인:
+
+```bash
+npm ls @teamlearners/clawops
+# └── @teamlearners/clawops@0.42.0    ← 0.42.0 이상이면 됩니다
+```
+
+0.42.0 미만은 아래를 다 해도 교체 중에 콜이 끊깁니다.
+
+### 2. 앱에 준비 표시를 한 줄 넣는다
 
 ```typescript
 import { writeFileSync } from 'node:fs';
@@ -34,15 +40,82 @@ import { ClawOpsAgent } from '@teamlearners/clawops/agent';
 const agent = new ClawOpsAgent({ from: '0705...', session });
 
 await agent.connect();
-writeFileSync('/tmp/clawops-ready', ''); // 여기서부터 이 인스턴스가 콜을 받는다
-await agent.serve();                     // 멈출 때가 되면 진행 중 통화를 마치고 반환한다
+writeFileSync('/tmp/clawops-ready', ''); // ← 이 한 줄
+await agent.serve();
 ```
 
-`connect()`는 Control 연결이 **실제로 붙은 뒤에** 반환합니다. 그래서 이 파일이 생긴 시점이 곧 "이 인스턴스가 콜을 받을 수 있게 된 시점"이고, 헬스체크가 그걸 보면 됩니다.
+`connect()`는 Control 연결이 **실제로 붙은 뒤에** 반환합니다. 그래서 이 파일이 생긴 시점이 곧 "이 인스턴스가 콜을 받을 수 있게 된 시점"이고, 4단계의 헬스체크가 그걸 봅니다. 이게 없으면 오케스트레이터는 **컨테이너가 뜬 순간** 교체를 시작해, 겹치게 배포해도 그 사이가 빕니다.
+
+`serve()`는 그대로 두시면 됩니다 — 인계와 드레이닝은 SDK가 처리합니다.
+
+### 3. 이미지의 진입점을 확인한다
+
+```bash
+docker run -d --name check <이미지>
+docker exec check cat /proc/1/cmdline | tr '\0' ' '
+docker rm -f check
+```
+
+| 나온 값 | |
+| --- | --- |
+| `node dist/app.js` | 그대로 두시면 됩니다 |
+| `/bin/sh -c node ...` | `CMD ["node", "dist/app.js"]` 형식으로 바꾸세요 |
+| `npm start` | 같이 바꾸세요 — 이쪽이 더 나쁩니다 |
+
+셸 형식이면 PID 1이 `/bin/sh`가 되고, `sh`는 종료 시그널을 자식에게 전달하지 않습니다. 드레이닝이 **시작조차 되지 않은 채** 유예가 지나 통화가 잘립니다. `npm start`는 npm이 시그널을 받고 자식을 곧바로 죽여, 유예를 아무리 길게 잡아도 드레이닝이 시작되지 않습니다. 자세한 이유는 아래 「시그널이 프로세스까지 닿아야 합니다」에 있습니다.
+
+이미지를 고치기 어렵다면 4단계의 배포 설정에서 `command`로 덮어써도 됩니다.
+
+### 4. 배포 설정을 바꾼다
+
+플랫폼별 전체 설정은 아래 「쿠버네티스」 · 「ECS」에 있습니다. 바뀌는 건 셋입니다.
+
+| | 쿠버네티스 | ECS |
+| --- | --- | --- |
+| 겹치게 배포 | `maxUnavailable: 0` · `maxSurge: 1` | `minimumHealthyPercent: 100` · `maximumPercent: 200` |
+| 준비 판정 | `readinessProbe` | `healthCheck` |
+| 종료 유예 | `terminationGracePeriodSeconds: 150` | `stopTimeout: 120` |
+
+### 5. 배포해 보고 확인한다
+
+```bash
+kubectl rollout restart deploy/my-agent
+kubectl get pods -w
+```
+
+이렇게 나와야 합니다.
+
+```
+my-agent-aaa   1/1   Running                 ← 옛 pod
+my-agent-bbb   0/1   Running                 ← 새 pod, 아직 안 붙음
+...
+my-agent-aaa   1/1   Running                 ← 옛 pod 은 그대로 (여기가 핵심)
+my-agent-bbb   1/1   Running                 ← 새 pod 이 붙었다
+my-agent-aaa   1/1   Terminating             ← 이제야 옛 pod 이 내려간다
+```
+
+봐야 하는 것 셋입니다.
+
+1. 새 pod 이 **`1/1`이 된 뒤에** 옛 pod 이 `Terminating`으로 바뀐다. 그 전에 바뀌면 2단계나 4단계가 빠진 것입니다.
+2. 옛 pod 이 `Terminating`으로 **한동안 남아 있다.** 진행 중이던 통화를 마치는 중이고, 정상입니다. 통화가 없으면 몇 초 만에 사라집니다.
+3. 교체가 도는 동안 그 번호로 **전화를 걸면 연결된다.**
+
+ECS는 `aws ecs describe-services`로 배포 중 `runningCount`가 2가 되는지 보시면 됩니다 — 1로 떨어졌다가 올라오면 옛 태스크를 먼저 내린 것입니다.
+
+## 왜 이 넷인가
+
+| | 안 맞추면 |
+| --- | --- |
+| **겹치게 배포** — 새 인스턴스를 먼저 띄우고 옛 것을 내린다 | 그 사이 전화가 안 걸린다 |
+| **준비 판정** — Control 연결이 붙은 뒤에 "정상"으로 본다 | 겹치게 배포해도 그 사이가 빈다 |
+| **종료 유예** — 드레이닝 상한보다 길게 | 통화 도중에 `SIGKILL` 로 끊긴다 |
+| **시그널 전달** — 종료 시그널이 프로세스까지 닿는다 | 드레이닝이 시작조차 안 된다 |
+
+앞의 셋은 배포 설정이고, 마지막은 컨테이너 이미지의 문제입니다.
 
 ## 쿠버네티스
 
-전체 매니페스트입니다.
+전체 매니페스트입니다. 3단계에서 셸 형식이나 `npm start`가 나왔다면 `command`가 그걸 덮어씁니다.
 
 ```yaml
 apiVersion: apps/v1

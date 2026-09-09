@@ -38,6 +38,11 @@ export type AgentEventType = 'call_start' | 'call_end' | 'call_failed' | 'transc
  */
 const TERMINAL_FRAME_GRACE_MS = 2000;
 
+/** How long `drain()` waits for in-flight calls before cutting them. */
+const DEFAULT_DRAIN_TIMEOUT_MS = 120_000;
+/** How often `drain()` re-checks whether the last call has ended. */
+const DRAIN_POLL_INTERVAL_MS = 200;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentEventHandler = (...args: any[]) => void | Promise<void>;
 
@@ -74,6 +79,13 @@ export interface ClawOpsAgentOptions {
   logger?: Logger;
   /** Tool 실행 관련 설정. */
   toolConfig?: ToolConfig;
+  /**
+   * Called when another process takes over this number's control connection — the normal
+   * middle of a rolling deploy, seen from the instance being replaced. New calls already go
+   * elsewhere; finish the calls still in flight and exit. `serve()` handles this for you;
+   * wire this only if you drive `connect()` yourself, and call `drain()` from it.
+   */
+  onTakenOver?: (info: { code: number; reason: string }) => void;
   /**
    * Gain applied to inbound audio (caller → AI). 1.0 = pass-through (default), 0 = mute, 2.0 = 2x amplify.
    * AI/STT receive the gained audio, and recording captures it post-gain.
@@ -112,6 +124,17 @@ export class ClawOpsAgent {
   private _recording: boolean;
   private _recordingPath: string;
   private _activeSessions: Map<string, CallSession> = new Map();
+  /** Set once the server hands this number to another process (rolling deploy takeover). */
+  private _takenOver = false;
+  /**
+   * Set once we deliberately give up the control connection (`drain()`/`disconnect()`).
+   * Distinct from `_controlWs === null`, which also covers "never connected": only after a
+   * hand-back is it certain that no server terminal frame can still arrive.
+   */
+  private _controlGivenUp = false;
+  /** serve()'s stop hook, so takeover can end the block the same way a signal does. */
+  private _stopServe: ((why: string) => void) | null = null;
+  private _onTakenOver?: (info: { code: number; reason: string }) => void;
   /** 미디어 정리를 마친 통화가 서버 종료 프레임을 기다리는 자리. callId → resolve. */
   private _terminalWaiters = new Map<string, () => void>();
   private _builtinTools!: Set<BuiltinTool>;
@@ -149,6 +172,7 @@ export class ClawOpsAgent {
     this._txGain = ClawOpsAgent._validateGain('txGain', options.txGain ?? 1.0);
     this._prewarmEnabled = options.prewarmEnabled ?? true;
     this._machineDetection = options.machineDetection;
+    this._onTakenOver = options.onTakenOver;
 
     // Configure tracing
     if (options.tracing) {
@@ -225,6 +249,17 @@ export class ClawOpsAgent {
   async connect(): Promise<void> {
     if (this._controlWs) return;
 
+    // Reconnecting after a handover is not recovery — the slot is exclusive per number, so a
+    // fresh control connection evicts the process that just took over, which reconnects and
+    // evicts us back. `call()` funnels through here, so an outbound call placed during or
+    // after a drain would otherwise reopen the connection the drain just gave up.
+    if (this._takenOver) {
+      throw new AgentError(
+        `${this._fromNumber} is now served by another process — reconnecting would evict it. ` +
+          'Start a new agent process instead of reconnecting this one.',
+      );
+    }
+
     if (!this._apiKey) {
       throw new AgentError('API key is required. Set CLAWOPS_API_KEY or pass apiKey option.');
     }
@@ -235,11 +270,13 @@ export class ClawOpsAgent {
     }
 
     // Connect control WebSocket
+    this._controlGivenUp = false;
     this._controlWs = new ControlWebSocket({
       baseUrl: this._baseUrl,
       apiKey: this._apiKey,
       accountId: this._accountId,
       number: this._fromNumber,
+      onTerminalClose: (info) => this._handleTakenOver(info),
     });
 
     this._controlWs.setLogger(this._log);
@@ -266,26 +303,169 @@ export class ClawOpsAgent {
   }
 
   /**
-   * Connect and block until disconnected.
-   * Convenience method for simple agent scripts.
+   * Connect and block until it is time to stop.
+   *
+   * Returns on SIGINT/SIGTERM, or when another process takes over this number — in every case
+   * after `drain()` has let in-flight calls finish. A second signal skips the wait and cuts them.
+   *
+   * Because it returns on takeover, a rolling deploy needs no shutdown wiring: bring the new
+   * instance up, and the old one hands over the number, finishes the calls it still has, and
+   * exits on its own. Give the platform a grace period longer than the drain timeout
+   * (k8s `terminationGracePeriodSeconds`, ECS `stopTimeout`) so it does not SIGKILL mid-drain.
+   *
+   * @param options.drainTimeoutMs Passed through to `drain()`.
    */
-  async serve(): Promise<void> {
+  async serve(options?: { drainTimeoutMs?: number }): Promise<void> {
     await this.connect();
 
-    // Block indefinitely until process signal
     return new Promise<void>((resolve) => {
-      const shutdown = () => {
-        this.disconnect()
-          .then(resolve)
-          .catch(() => resolve());
+      let stopping = false;
+      let signals = 0;
+
+      // Leaving the handlers attached past the drain would make SIGTERM a no-op for the rest
+      // of the process's life — the default "terminate" disposition is suppressed while a
+      // listener exists, and this closure has nothing left to do.
+      const finish = (): void => {
+        process.off('SIGINT', onSigint);
+        process.off('SIGTERM', onSigterm);
+        this._stopServe = null;
+        resolve();
       };
-      process.on('SIGINT', shutdown);
-      process.on('SIGTERM', shutdown);
+
+      const stop = (why: string): void => {
+        if (stopping) return;
+        stopping = true;
+        this._log.info('Stopping (%s) — draining in-flight calls', why);
+        this.drain({ timeoutMs: options?.drainTimeoutMs })
+          .then(finish)
+          .catch((err) => {
+            this._log.error({ err }, 'Drain failed');
+            finish();
+          });
+      };
+
+      // A takeover starts the drain by itself, and the orchestrator's SIGTERM to the replaced
+      // instance lands right after it. Counting that first signal as "don't wait" would cut
+      // exactly the calls the drain exists to protect, so the fast path needs a *second*
+      // signal, not merely a second stop.
+      const onSignal = (why: string): void => {
+        signals += 1;
+        if (signals >= 2) {
+          this._log.warn('Second stop signal (%s) — ending calls immediately', why);
+          void this.disconnect().finally(finish);
+          return;
+        }
+        if (stopping) {
+          this._log.info(
+            '%s arrived while draining — still waiting for in-flight calls (signal again to cut)',
+            why,
+          );
+          return;
+        }
+        stop(why);
+      };
+
+      const onSigint = (): void => onSignal('SIGINT');
+      const onSigterm = (): void => onSignal('SIGTERM');
+
+      this._stopServe = stop;
+      process.on('SIGINT', onSigint);
+      process.on('SIGTERM', onSigterm);
     });
+  }
+
+  /**
+   * The server handed this number's control connection to another process.
+   *
+   * Nothing here is an error: it is the normal middle of a rolling deploy, seen from the
+   * instance being replaced. New calls already go to the new process, so all that is left is
+   * to finish the calls we still hold and get out of the way. `serve()` does that by returning;
+   * callers who wired `connect()` themselves get `onTakenOver` and should call `drain()`.
+   */
+  private _handleTakenOver(info: { code: number; reason: string }): void {
+    this._takenOver = true;
+    this._log.info(
+      'Another process now serves %s (close %d) — handing over',
+      this._fromNumber,
+      info.code,
+    );
+    this._onTakenOver?.(info);
+    this._stopServe?.('taken over');
+  }
+
+  /** Whether another process has taken over this number's control connection. */
+  get takenOver(): boolean {
+    return this._takenOver;
+  }
+
+  /**
+   * Stop accepting new calls, let the ones already in progress finish, then disconnect.
+   *
+   * This is what a rolling deploy needs. `disconnect()` cuts live calls mid-sentence, which is
+   * correct when you mean "stop now" and wrong when you mean "hand over". The two are separated
+   * because only the caller knows which one a SIGTERM meant.
+   *
+   * It works because control and media are different connections. Closing the control WebSocket
+   * only gives up this number's delivery slot — the server stops sending us `call.incoming` and
+   * routes new calls to whichever process holds the slot next. Calls already up keep streaming
+   * over their own per-call media connections, which nothing here touches, and each one tears
+   * itself down normally when the caller hangs up.
+   *
+   * Deploy shape this is built for: start the new instance, let it take the slot (the server
+   * hands it over and tells us not to reconnect), then drain the old one. New calls go to the
+   * new instance from the moment it connects; in-flight calls end on the old one. No gap.
+   *
+   * One thing is given up: `endedDuration` on `call_end`. That figure rides the control
+   * connection we just closed, so calls finishing during a drain report a null duration.
+   *
+   * @param options.timeoutMs How long to wait for in-flight calls. Default 120s. Calls still
+   *   running when it expires are ended the way `disconnect()` ends them. Keep the platform's
+   *   own grace period longer than this (k8s `terminationGracePeriodSeconds`, ECS
+   *   `stopTimeout`), or it will SIGKILL the process mid-drain and undo the point of draining.
+   * @returns How many calls ended on their own, and how many had to be cut short.
+   */
+  async drain(options?: { timeoutMs?: number }): Promise<{ completed: number; forced: number }> {
+    const timeoutMs = options?.timeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
+
+    // Give up the delivery slot first. Every call that arrives after this goes elsewhere.
+    this._controlGivenUp = true;
+    if (this._controlWs) {
+      this._controlWs.close();
+      this._controlWs = null;
+    }
+    // No terminal frame can arrive on a closed control connection — release anyone waiting on
+    // one now. Calls that finish *later* in the drain are covered by the `_controlGivenUp`
+    // check in `_awaitServerTerminal`; without it they would each register a fresh waiter that nothing
+    // can ever wake, and burn the full grace window for nothing.
+    for (const wake of [...this._terminalWaiters.values()]) wake();
+
+    const inFlight = this._activeSessions.size;
+    if (inFlight === 0) {
+      this._log.info('Drain: no calls in progress');
+      await this.disconnect();
+      return { completed: 0, forced: 0 };
+    }
+
+    this._log.info('Drain: waiting for %d call(s) to finish (timeout %dms)', inFlight, timeoutMs);
+    const deadline = Date.now() + timeoutMs;
+    while (this._activeSessions.size > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, DRAIN_POLL_INTERVAL_MS));
+    }
+
+    const forced = this._activeSessions.size;
+    if (forced > 0) {
+      this._log.warn('Drain timed out — cutting %d call(s) still in progress', forced);
+    } else {
+      this._log.info('Drain complete: all %d call(s) finished', inFlight);
+    }
+
+    await this.disconnect();
+    return { completed: inFlight - forced, forced };
   }
 
   /** Disconnect from the platform. */
   async disconnect(): Promise<void> {
+    this._controlGivenUp = true;
     if (this._controlWs) {
       this._controlWs.close();
       this._controlWs = null;
@@ -421,6 +601,9 @@ export class ClawOpsAgent {
    */
   private async _awaitServerTerminal(session: CallSession): Promise<void> {
     if (session.endedDuration !== null) return;
+    // 제어 연결을 이미 내놓았으면(drain/disconnect 이후) 종료 프레임은 영영 오지 않는다.
+    // 기다려 봐야 통화마다 유예를 통째로 헛쓰고 drain 꼬리만 길어진다.
+    if (this._controlGivenUp) return;
     await new Promise<void>((resolve) => {
       const done = (): void => {
         clearTimeout(timer);
@@ -788,7 +971,18 @@ export class ClawOpsAgent {
           () => mediaWs.isConnected,
         );
 
-        session._transferFn = (params) => this._controlWs!.requestTransfer(session.callId, params);
+        // `drain()` nulls the control connection while this call keeps running, so the
+        // reference has to be re-read and checked per transfer — the non-null assertion used
+        // to turn a transfer during a drain into a bare TypeError out of the user's tool.
+        session._transferFn = (params) => {
+          const controlWs = this._controlWs;
+          if (!controlWs) {
+            throw new AgentError(
+              'transfer unavailable: the control connection is closed (draining, or this number was taken over)',
+            );
+          }
+          return controlWs.requestTransfer(session.callId, params);
+        };
 
         // Media WS mark/flush 를 세션에 노출 — LiveKit ClawOpsAudioOutput 이 재생 완료
         // (mark echo) 판정과 barge-in 절단 위치 계산에 쓴다. native 세션은 읽지 않는다.

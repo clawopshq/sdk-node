@@ -12,6 +12,12 @@ export interface ControlWsOptions {
   accountId: string;
   /** Phone number to register on. */
   number?: string;
+  /**
+   * Called when the server closes the connection with a code that means "do not reconnect"
+   * (the number was handed to another process, or is no longer owned by this account).
+   * Reconnection has already been abandoned by the time this fires.
+   */
+  onTerminalClose?: (info: { code: number; reason: string }) => void;
 }
 
 /**
@@ -29,6 +35,26 @@ const INITIAL_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30000;
 /** Server sends ping every 30s; if no ping arrives within this window, assume dead. */
 const PING_TIMEOUT = 60000;
+
+/** Another process took over this number's control connection (zero-downtime deploy). */
+export const CLOSE_REPLACED = 4409;
+/** The number is no longer owned by this account (released or reassigned). */
+export const CLOSE_OWNERSHIP_LOST = 4403;
+
+/**
+ * Close codes after which reconnecting is wrong, not merely useless.
+ *
+ * A control connection is exclusive per phone number: one number, one owner. So when the
+ * server hands that slot to a newer process and we reconnect anyway, we do not recover our
+ * own connection — we evict the process that just took over, which then reconnects and
+ * evicts us. During a rolling deploy the two instances trade the slot for as long as they
+ * overlap, and the server's reconnect throttle eventually quarantines the number for
+ * minutes. Reconnecting turns a graceful handover into an outage.
+ *
+ * Every other close code (1001 gateway draining, 1006 network loss, …) still reconnects:
+ * there the slot is genuinely free and we are the one meant to hold it.
+ */
+const NON_RETRYABLE_CLOSE_CODES = new Set<number>([CLOSE_REPLACED, CLOSE_OWNERSHIP_LOST]);
 
 /**
  * Build the full control WebSocket URL from options.
@@ -168,11 +194,24 @@ export class ControlWebSocket {
       }
     });
 
-    ws.on('close', () => {
+    ws.on('close', (code: number, reason: Buffer | string) => {
       this._clearPingTimer();
-      if (!this._closed) {
-        this._scheduleReconnect();
+      if (this._closed) return;
+
+      if (NON_RETRYABLE_CLOSE_CODES.has(code)) {
+        const text = reason?.toString() || '';
+        // Stop for good. _closed also stops any reconnect already in flight.
+        this._closed = true;
+        this._log.info(
+          'Control WS closed by server (%d %s) — not reconnecting: this number is now served elsewhere',
+          code,
+          text,
+        );
+        this._options.onTerminalClose?.({ code, reason: text });
+        return;
       }
+
+      this._scheduleReconnect();
     });
 
     ws.on('error', (err: Error) => {

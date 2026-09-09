@@ -19,6 +19,7 @@ WebSocket 역방향 연결 방식으로 ngrok 없이 로컬에서 바로 실행�
 | [LiveKit Agents (실험적)](livekit.md) | LiveKit Agents 를 room 없이 ClawOps 번호로 실행 |
 | [Tracing](tracing.md)                | OpenTelemetry 연동                    |
 | [아키텍처](architecture.md)          | 내부 구조, 보안 모델                  |
+| [배포](deployment.md)                | 무중단 배포, 인스턴스 수              |
 
 ## 동작 원리
 

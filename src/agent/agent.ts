@@ -308,9 +308,17 @@ export class ClawOpsAgent {
    * Returns on SIGINT/SIGTERM, or when another process takes over this number — in every case
    * after `drain()` has let in-flight calls finish. A second signal skips the wait and cuts them.
    *
-   * Because it returns on takeover, a rolling deploy needs no shutdown wiring: bring the new
-   * instance up, and the old one hands over the number, finishes the calls it still has, and
-   * exits on its own. Give the platform a grace period longer than the drain timeout
+   * ⚠️ **The takeover notice does not always arrive.** It is sent when a connection is replaced
+   * within the same gateway; if the new instance lands on a different one, the old instance is
+   * never told (measured in production, 2026-09-09). It then stays up — taking no new calls —
+   * until a stop signal, and drains there instead.
+   *
+   * Either way **calls always go to the newest instance**, because delivery is decided by the
+   * shared registry rather than any one gateway's. So zero-downtime holds regardless. What does
+   * not hold is "start the new one and the old one disappears" — a rolling deploy still has to
+   * take the old instance down.
+   *
+   * Give the platform a grace period longer than the drain timeout
    * (k8s `terminationGracePeriodSeconds`, ECS `stopTimeout`) so it does not SIGKILL mid-drain.
    *
    * @param options.drainTimeoutMs Passed through to `drain()`.

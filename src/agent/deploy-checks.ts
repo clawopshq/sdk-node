@@ -24,6 +24,16 @@ import type { Logger } from 'pino';
 /** Default readiness marker path — the one the deployment guide prescribes. */
 export const DEFAULT_READY_FILE = '/tmp/clawops-ready';
 
+// Path of a stale marker cleared at import time, held until a logger exists to report it.
+let staleCleared: string | null = null;
+
+/** The stale marker cleared at import time, returned **once**. */
+export function takeStaleClearNotice(): string | null {
+  const p = staleCleared;
+  staleCleared = null;
+  return p;
+}
+
 // Meeting one of these in the parent chain means the signal stops there. npm does forward on
 // some versions and platforms, but not all — and it adds a layer either way.
 const SIGNAL_SWALLOWERS = new Set([
@@ -208,7 +218,7 @@ export function removeReadyMarker(): void {
  *
  * `CLAWOPS_READY_FILE` overrides the path; an empty value turns this off.
  */
-export function clearStaleReadyMarker(log: Logger): void {
+export function clearStaleReadyMarker(log?: Logger): void {
   const path = process.env.CLAWOPS_READY_FILE ?? DEFAULT_READY_FILE;
   if (!path) return;
   try {
@@ -216,12 +226,10 @@ export function clearStaleReadyMarker(log: Logger): void {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     // A read-only rootfs and friends — a diagnostic must never block startup.
-    if (code !== 'ENOENT') log.debug(`Could not clear readiness marker (${path}): ${code}`);
+    if (code !== 'ENOENT') log?.debug(`Could not clear readiness marker (${path}): ${code}`);
     return;
   }
-  log.warn(
-    `Cleared a stale readiness marker: ${path} — a previous process left it behind. ` +
-      'Left in place it marks the new process Ready before it has connected, and the calls ' +
-      'that arrive in between die.',
-  );
+  // This runs at **import time**, before the application has configured a logger, so a warning
+  // here would go nowhere. Keep the fact and report it from connect(), where a logger exists.
+  staleCleared = path;
 }

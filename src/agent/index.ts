@@ -3,6 +3,22 @@
  */
 
 // Core
+import { clearStaleReadyMarker } from './deploy-checks.js';
+
+// **Clear a stale readiness marker at import time.**
+//
+// Importing this module means a new agent process has started, so whatever readiness marker is
+// still on disk belongs, by definition, to a previous one.
+//
+// Deferring it to the ClawOpsAgent constructor or to connect() is too late — the heavy imports
+// and the model clients warming up happen *before* either. A read-only-rootfs deploy commonly
+// mounts an emptyDir at /tmp, and that volume outlives a container restart: after a SIGKILL the
+// previous marker is still there and the pod goes Ready in the meantime.
+//
+// Measured on kind, 2026-09-10: clearing it in the constructor left the pod Ready (t+26.6s)
+// **12 seconds before it connected** (t+38.7s). Every call in those 12 seconds died.
+clearStaleReadyMarker();
+
 export { ClawOpsAgent } from './agent.js';
 export type { ClawOpsAgentOptions, AgentEventType, ToolConfig } from './agent.js';
 

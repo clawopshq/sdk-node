@@ -9,6 +9,7 @@ import { CLOSE_REPLACED, ControlWebSocket } from './control-ws.js';
 import {
   clearStaleReadyMarker,
   removeReadyMarker,
+  takeStaleClearNotice,
   warnIfSignalsBlocked,
   writeReadyMarker,
 } from './deploy-checks.js';
@@ -249,6 +250,13 @@ export class ClawOpsAgent {
     }
 
     this._log = createAgentLogger(options.logger);
+    // **Clear a stale readiness marker here.** Deferring it to connect() leaves the stretch in
+    // between (heavy imports, model clients warming) as a window: a read-only-rootfs deploy
+    // commonly mounts an emptyDir at /tmp, and that volume outlives a container restart. After
+    // a SIGKILL the previous process's marker is still there, so the pod goes Ready *before it
+    // has connected* and the calls that arrive in between die.
+    clearStaleReadyMarker(this._log);
+
     this._pipelineLog = createPipelineLogger(this._log);
     // Detect PipelineSession at construction time (duck-type check)
     this._isPipelineSession = '_stt' in this._session && '_llm' in this._session;
@@ -319,9 +327,18 @@ export class ClawOpsAgent {
     if (this._controlWs) return;
 
     // Deployment diagnostics — these change nothing, they only make the quiet failures loud.
-    // Clearing the readiness marker has to happen before the application writes its own,
-    // so this is the only place it can go.
+    // The stale marker was already cleared in the constructor; this is idempotent and covers
+    // callers that invoke connect() more than once.
     clearStaleReadyMarker(this._log);
+    // A stale marker cleared at import time is reported here — back then no logger existed.
+    const stale = takeStaleClearNotice();
+    if (stale) {
+      this._log.warn(
+        `Cleared a stale readiness marker: ${stale} — a previous process left it behind. ` +
+          'Left in place it marks the new process Ready before it has connected, and the ' +
+          'calls that arrive in between die.',
+      );
+    }
     warnIfSignalsBlocked(this._log);
 
     // Reconnecting after a handover is not recovery — the slot is exclusive per number, so a

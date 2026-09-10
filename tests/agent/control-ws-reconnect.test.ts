@@ -131,3 +131,68 @@ describe('ControlWebSocket reconnection policy', () => {
     expect(harness.accepted.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+/**
+ * A process that has decided to step down must not reconnect. If it does, it evicts whichever
+ * process has taken the slot in the meantime — and that one never received SIGTERM, so it
+ * steps down while the old one is about to die. The slot ends up empty.
+ *
+ * The old defence was that `drain()` closed the control connection first: once closed there was
+ * no reconnect path. Holding the slot while waiting for a successor removes that defence, so it
+ * needs a replacement.
+ */
+describe('ControlWebSocket lame duck', () => {
+  let harness: Harness | null = null;
+  let client: ControlWebSocket | null = null;
+
+  afterEach(async () => {
+    client?.close();
+    client = null;
+    await harness?.close();
+    harness = null;
+  });
+
+  it('does not reconnect on a gateway drain (1001) — normally it would', async () => {
+    harness = await startServer();
+    client = connect(harness);
+    await client.connect();
+    await client.waitConnected();
+
+    client.enterLameDuck();
+    harness.accepted[0]!.close(1001, 'gateway draining');
+    await settle(1800);
+
+    expect(harness.accepted).toHaveLength(1);
+  });
+
+  it('marks itself retiring in the URL as a second line of defence', async () => {
+    harness = await startServer();
+    client = connect(harness);
+    expect((client as unknown as { _url: string })._url).not.toContain('role=');
+
+    client.enterLameDuck();
+
+    expect((client as unknown as { _url: string })._url).toContain('role=retiring');
+  });
+
+  it('agent.retired enters lame duck without closing the connection', async () => {
+    harness = await startServer();
+    const retired: string[] = [];
+    client = connect(harness);
+    client.on('agent.retired', (event) => {
+      retired.push(String(event.reason ?? ''));
+    });
+    await client.connect();
+    await client.waitConnected();
+
+    harness.accepted[0]!.send(
+      JSON.stringify({ event: 'agent.retired', number: '07012345678', reason: 'replaced' }),
+    );
+    await settle(150);
+
+    expect(retired).toEqual(['replaced']);
+    expect(client.lameDuck).toBe(true);
+    // Closing here would lose the terminal events of calls still in progress.
+    expect(harness.accepted[0]!.readyState).toBe(1);
+  });
+});

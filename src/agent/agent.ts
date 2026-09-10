@@ -5,7 +5,7 @@
 import { DEFAULT_BASE_URL } from '../constants.js';
 import { AgentConnectionError, AgentError } from '../error.js';
 import { applyUlawGain, ulawToPcm16 } from './audio.js';
-import { ControlWebSocket } from './control-ws.js';
+import { CLOSE_REPLACED, ControlWebSocket } from './control-ws.js';
 import { clearStaleReadyMarker, warnIfSignalsBlocked } from './deploy-checks.js';
 import type { ControlEvent } from './control-ws.js';
 import { MCPClient } from './mcp/client.js';
@@ -43,6 +43,63 @@ const TERMINAL_FRAME_GRACE_MS = 2000;
 const DEFAULT_DRAIN_TIMEOUT_MS = 120_000;
 /** How often `drain()` re-checks whether the last call has ended. */
 const DRAIN_POLL_INTERVAL_MS = 200;
+
+/**
+ * How long to keep holding the slot after SIGTERM, waiting for a successor to take over.
+ *
+ * This wait is what removes the gap in a deploy. Before it, the slot was released the moment
+ * SIGTERM arrived, and every call that came in before the successor connected died — a
+ * readinessProbe was the workaround that stopped the orchestrator from ever reaching that
+ * moment.
+ *
+ * ⚠ It has to be short. **When there is no successor this wait is a loss** — on a scale-in or a
+ *   plain stop, releasing the slot immediately (as before) is better: calls after that simply
+ *   do not connect. A call accepted during this wait and then cut at the grace deadline is worse.
+ */
+const DEFAULT_HANDOVER_WAIT_MS = 20_000;
+
+/**
+ * Absolute deadline from SIGTERM. The handover wait and the drain share this one budget.
+ *
+ * They are not added together: adding them overshoots the platform grace period. A handover
+ * that finishes in 2s leaves 108s for draining; one that uses the full 20s leaves 90s.
+ *
+ * 110s because ECS caps `stopTimeout` at 120s, and past the deadline `disconnect()` still has
+ * to await MCP shutdown, close media and let the process exit. That is the 10s of slack.
+ */
+const DEFAULT_SHUTDOWN_DEADLINE_MS = 110_000;
+
+/** A one-shot flag you can also await. */
+function latch(): { promise: Promise<void>; set: () => void; done: boolean } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  const l = {
+    promise,
+    done: false,
+    set: () => {
+      if (l.done) return;
+      l.done = true;
+      resolve();
+    },
+  };
+  return l;
+}
+
+/** Resolve as soon as any of the promises does, or when the budget runs out. */
+async function firstOf(promises: Promise<void>[], timeoutMs: number): Promise<void> {
+  if (timeoutMs <= 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  try {
+    await Promise.race([...promises, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentEventHandler = (...args: any[]) => void | Promise<void>;
@@ -135,6 +192,9 @@ export class ClawOpsAgent {
   private _controlGivenUp = false;
   /** serve()'s stop hook, so takeover can end the block the same way a signal does. */
   private _stopServe: ((why: string) => void) | null = null;
+  // Set when the server hands the slot away (`agent.retired`). Same meaning as a 4409 close,
+  // except the connection stays open so terminal events of in-flight calls still arrive.
+  private _onRetired: (() => void) | null = null;
   private _onTakenOver?: (info: { code: number; reason: string }) => void;
   /** 미디어 정리를 마친 통화가 서버 종료 프레임을 기다리는 자리. callId → resolve. */
   private _terminalWaiters = new Map<string, () => void>();
@@ -293,6 +353,12 @@ export class ClawOpsAgent {
     this._controlWs.on('call.outbound_ready', (event) => this._handleOutboundReady(event));
     this._controlWs.on('call.ringing', (event) => this._handleRinging(event));
     this._controlWs.on('call.failed', (event) => this._handleFailed(event));
+    this._controlWs.on('agent.retired', (event) =>
+      this._handleRetired(String(event.reason ?? '')),
+    );
+    this._controlWs.on('agent.active', () =>
+      this._log.info('Server put this connection back in the slot (promoted)'),
+    );
 
     try {
       await this._controlWs.connect();
@@ -330,76 +396,111 @@ export class ClawOpsAgent {
    *
    * @param options.drainTimeoutMs Passed through to `drain()`.
    */
-  async serve(options?: { drainTimeoutMs?: number }): Promise<void> {
+  async serve(options?: {
+    drainTimeoutMs?: number;
+    handoverWaitMs?: number;
+    shutdownDeadlineMs?: number;
+  }): Promise<void> {
     await this.connect();
 
-    return new Promise<void>((resolve) => {
-      let stopping = false;
-      let signals = 0;
+    const handoverWaitMs = options?.handoverWaitMs ?? DEFAULT_HANDOVER_WAIT_MS;
+    const shutdownDeadlineMs = options?.shutdownDeadlineMs ?? DEFAULT_SHUTDOWN_DEADLINE_MS;
+    const drainTimeoutMs = options?.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
 
-      // Leaving the handlers attached past the drain would make SIGTERM a no-op for the rest
-      // of the process's life — the default "terminate" disposition is suppressed while a
-      // listener exists, and this closure has nothing left to do.
-      const finish = (): void => {
-        process.off('SIGINT', onSigint);
-        process.off('SIGTERM', onSigterm);
-        this._stopServe = null;
-        resolve();
-      };
+    const stop = latch();
+    // "Stop waiting for the handover" — the second signal, or SIGINT. Different from cutting:
+    // the drain still protects calls already in progress.
+    const skipHandover = latch();
+    const cut = latch();
+    const retired = latch();
 
-      const stop = (why: string): void => {
-        if (stopping) return;
-        stopping = true;
-        this._log.info('Stopping (%s) — draining in-flight calls', why);
-        this.drain({ timeoutMs: options?.drainTimeoutMs })
-          .then(finish)
-          .catch((err) => {
-            this._log.error({ err }, 'Drain failed');
-            finish();
-          });
-      };
+    this._stopServe = () => stop.set();
+    this._onRetired = () => retired.set();
+    // A handover that landed before serve() started (replaced right after connect).
+    if (this._takenOver) {
+      retired.set();
+      stop.set();
+    }
 
-      // A takeover starts the drain by itself, and the orchestrator's SIGTERM to the replaced
-      // instance lands right after it. Counting that first signal as "don't wait" would cut
-      // exactly the calls the drain exists to protect, so the fast path needs a *second*
-      // signal, not merely a second stop.
-      const onSignal = (why: string): void => {
-        signals += 1;
-        if (signals >= 2) {
-          this._log.warn('Second stop signal (%s) — ending calls immediately', why);
-          void this.disconnect().finally(finish);
-          return;
-        }
-        if (stopping) {
-          this._log.info(
-            '%s arrived while draining — still waiting for in-flight calls (signal again to cut)',
-            why,
-          );
-          return;
-        }
+    let signals = 0;
+    const onSignal = (name: string): void => {
+      // Signals raise the level one step at a time. A takeover starts the shutdown by itself and
+      // the orchestrator's SIGTERM lands right after — counting that first signal as "don't
+      // wait" would cut exactly the calls the drain exists to protect.
+      //
+      //   1st  begin shutdown (SIGTERM waits for the handover; SIGINT goes straight to draining)
+      //   2nd  stop waiting for the handover → drain
+      //   3rd  cut the calls still in progress
+      signals += 1;
+      if (signals === 1) {
         // Whether this line exists at all is the tell for the shell-entrypoint trap: a process
         // that never heard the signal has no such line. Post-mortems run off the log.
-        this._log.info('%s received — no new calls, finishing the ones in progress', why);
-        stop(why);
-      };
+        this._log.info('%s received — beginning shutdown', name);
+        // Ctrl-C on a laptop must not wait 20 seconds for a successor that will never come.
+        if (name === 'SIGINT') skipHandover.set();
+      } else if (!skipHandover.done) {
+        this._log.warn('%s: second stop signal — no longer waiting for a handover', name);
+        skipHandover.set();
+      } else {
+        this._log.warn('%s: repeated stop signal — ending calls in progress now', name);
+        cut.set();
+      }
+      stop.set();
+    };
+    const onSigint = (): void => onSignal('SIGINT');
+    const onSigterm = (): void => onSignal('SIGTERM');
+    process.on('SIGINT', onSigint);
+    process.on('SIGTERM', onSigterm);
 
-      const onSigint = (): void => onSignal('SIGINT');
-      const onSigterm = (): void => onSignal('SIGTERM');
+    try {
+      await stop.promise;
+      const deadlineAt = Date.now() + shutdownDeadlineMs;
 
-      this._stopServe = stop;
-      process.on('SIGINT', onSigint);
-      process.on('SIGTERM', onSigterm);
-    });
+      // ── Phase 1: wait for the handover ──
+      if (handoverWaitMs > 0 && !skipHandover.done && !retired.done && !cut.done) {
+        // From here on, a disconnect for any reason must not lead to a reconnect: that would
+        // evict whichever process has taken the slot, and that one never got a stop signal.
+        this._controlWs?.enterLameDuck();
+        const budget = Math.min(handoverWaitMs, Math.max(0, deadlineAt - Date.now()));
+        this._log.info('Waiting for a successor — still holding the slot (up to %dms)', budget);
+        await firstOf([retired.promise, skipHandover.promise, cut.promise], budget);
+        this._log.info(
+          retired.done
+            ? 'Handover complete — new calls go to the successor'
+            : 'No handover notice — releasing the slot and draining',
+        );
+      }
+
+      // ── Phase 2: drain ──
+      if (cut.done) {
+        await this.disconnect();
+        return;
+      }
+
+      // If the handover arrived, the server already took the slot — keep the connection so the
+      // terminal events of in-flight calls (and their durations) still come back here. Without
+      // a handover we have to release it ourselves so new calls go elsewhere.
+      const releaseSlot = !retired.done;
+      const budget = Math.max(0, Math.min(drainTimeoutMs, deadlineAt - Date.now()));
+      const draining = this.drain({ timeoutMs: budget, releaseSlot }).catch((err) => {
+        this._log.error({ err }, 'Drain failed');
+      });
+      // A further signal cuts: disconnect() clears the active sessions, so the drain loop sees
+      // an empty set and returns on its next tick.
+      const cutting = cut.promise.then(() => this.disconnect());
+      await Promise.race([draining, cutting]);
+      await draining;
+    } finally {
+      // Leaving the handlers attached past the drain would make SIGTERM a no-op for the rest of
+      // the process's life — the default "terminate" disposition is suppressed while a listener
+      // exists, and this closure has nothing left to do.
+      process.off('SIGINT', onSigint);
+      process.off('SIGTERM', onSigterm);
+      this._stopServe = null;
+      this._onRetired = null;
+    }
   }
 
-  /**
-   * The server handed this number's control connection to another process.
-   *
-   * Nothing here is an error: it is the normal middle of a rolling deploy, seen from the
-   * instance being replaced. New calls already go to the new process, so all that is left is
-   * to finish the calls we still hold and get out of the way. `serve()` does that by returning;
-   * callers who wired `connect()` themselves get `onTakenOver` and should call `drain()`.
-   */
   private _handleTakenOver(info: { code: number; reason: string }): void {
     this._takenOver = true;
     this._log.info(
@@ -408,7 +509,32 @@ export class ClawOpsAgent {
       info.code,
     );
     this._onTakenOver?.(info);
+    // The connection is gone, but "the slot moved" is the same fact — mark it so serve() does
+    // not try to release a slot that is no longer ours.
+    this._onRetired?.();
     this._stopServe?.('taken over');
+  }
+
+  /**
+   * The server handed the slot to another process (`agent.retired`) — **the connection is
+   * still open.** It was left open so terminal events of calls already in progress come back
+   * here, so this must not close it. The server closes it once we are idle.
+   *
+   * Arriving with no stop signal means this is not a deploy we know about — almost always two
+   * instances running on the same number. Say so in the log.
+   */
+  private _handleRetired(reason: string): void {
+    this._takenOver = true;
+    this._log.info('Another process now serves %s (%s) — handing over', this._fromNumber, reason);
+    if (!this._stopServe) {
+      this._log.warn(
+        'Handover with no stop signal — check that only one instance serves %s (replicas must be 1)',
+        this._fromNumber,
+      );
+    }
+    this._onTakenOver?.({ code: CLOSE_REPLACED, reason });
+    this._onRetired?.();
+    this._stopServe?.('retired');
   }
 
   /** Whether another process has taken over this number's control connection. */
@@ -442,20 +568,39 @@ export class ClawOpsAgent {
    *   `stopTimeout`), or it will SIGKILL the process mid-drain and undo the point of draining.
    * @returns How many calls ended on their own, and how many had to be cut short.
    */
-  async drain(options?: { timeoutMs?: number }): Promise<{ completed: number; forced: number }> {
+  async drain(options?: {
+    timeoutMs?: number;
+    /**
+     * Whether to give up the delivery slot ourselves.
+     *
+     * When the server has already sent the handover notice (`agent.retired`) the slot is gone
+     * anyway, so pass **false** and keep the connection: that is how the terminal events of
+     * in-flight calls — and their durations — still reach us. Only a shutdown without a
+     * handover has to release the slot itself.
+     */
+    releaseSlot?: boolean;
+  }): Promise<{ completed: number; forced: number }> {
     const timeoutMs = options?.timeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
+    const releaseSlot = options?.releaseSlot ?? true;
 
-    // Give up the delivery slot first. Every call that arrives after this goes elsewhere.
-    this._controlGivenUp = true;
-    if (this._controlWs) {
-      this._controlWs.close();
-      this._controlWs = null;
+    if (releaseSlot) {
+      // Give up the delivery slot first. Every call that arrives after this goes elsewhere.
+      this._controlGivenUp = true;
+      if (this._controlWs) {
+        this._controlWs.close();
+        this._controlWs = null;
+      }
+      // No terminal frame can arrive on a closed control connection — release anyone waiting on
+      // one now. Calls that finish *later* in the drain are covered by the `_controlGivenUp`
+      // check in `_awaitServerTerminal`; without it they would each register a fresh waiter that
+      // nothing can ever wake, and burn the full grace window for nothing.
+      for (const wake of [...this._terminalWaiters.values()]) wake();
+    } else {
+      // The server already took the slot. Leaving the connection open is the whole point — it
+      // is what makes `endedDuration` arrive for calls that finish during the drain. Before
+      // this, drain() always closed first, so that duration was always missing.
+      this._log.info('Slot already handed over — draining with the connection kept open');
     }
-    // No terminal frame can arrive on a closed control connection — release anyone waiting on
-    // one now. Calls that finish *later* in the drain are covered by the `_controlGivenUp`
-    // check in `_awaitServerTerminal`; without it they would each register a fresh waiter that nothing
-    // can ever wake, and burn the full grace window for nothing.
-    for (const wake of [...this._terminalWaiters.values()]) wake();
 
     const inFlight = this._activeSessions.size;
     if (inFlight === 0) {

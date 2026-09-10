@@ -18,7 +18,7 @@
  */
 
 import { basename } from 'node:path';
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import type { Logger } from 'pino';
 
 /** Default readiness marker path — the one the deployment guide prescribes. */
@@ -159,6 +159,44 @@ export function warnIfSignalsBlocked(
       'tini/dumb-init in ENTRYPOINT. ' +
       'https://platform.claw-ops.com/docs/sdk/node/agent/deployment',
   );
+}
+
+/**
+ * Mark this process as able to take calls.
+ *
+ * **Only the SDK knows this moment.** "The container is up" and "calls can be answered" are not
+ * the same thing — the stretch between them (heavy imports, model clients warming, the control
+ * connection) is exactly the gap a deploy falls into, and the orchestrator has no way to see
+ * its end. That is why the customer's app used to have to create this file itself after
+ * `connect()`. Removing that line is the point of this function.
+ *
+ * The contents carry the pid and start time, so a stale marker says who left it.
+ */
+export function writeReadyMarker(log: Logger): void {
+  const path = process.env.CLAWOPS_READY_FILE ?? DEFAULT_READY_FILE;
+  if (!path) return;
+  try {
+    writeFileSync(path, `pid=${process.pid} since=${Math.floor(Date.now() / 1000)}\n`);
+  } catch (err) {
+    // A read-only rootfs and friends. Not being able to leave the marker is no reason to refuse
+    // to start — but staying quiet means a readinessProbe never passes and nobody knows why.
+    log.warn(
+      `Could not write the readiness marker (${path}): ${(err as Error).message}. ` +
+        'If you use a readinessProbe it will never pass — mount a writable volume ' +
+        '(an emptyDir will do) or point CLAWOPS_READY_FILE somewhere writable.',
+    );
+  }
+}
+
+/** Mark this process as no longer taking new calls (handover, drain, shutdown). */
+export function removeReadyMarker(): void {
+  const path = process.env.CLAWOPS_READY_FILE ?? DEFAULT_READY_FILE;
+  if (!path) return;
+  try {
+    unlinkSync(path);
+  } catch {
+    /* already gone, or unwritable — either way there is nothing to do */
+  }
 }
 
 /**

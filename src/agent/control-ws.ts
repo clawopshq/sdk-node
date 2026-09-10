@@ -60,12 +60,20 @@ const NON_RETRYABLE_CLOSE_CODES = new Set<number>([CLOSE_REPLACED, CLOSE_OWNERSH
  * Build the full control WebSocket URL from options.
  * Matches Python SDK: /v1/accounts/{account_id}/agent/listen?number={number}
  */
-export function buildControlWsUrl(options: ControlWsOptions): string {
+export function buildControlWsUrl(options: ControlWsOptions, role?: string): string {
   const scheme = options.baseUrl.startsWith('https') ? 'wss' : 'ws';
   const host = options.baseUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
   let url = `${scheme}://${host}/v1/accounts/${encodeURIComponent(options.accountId)}/agent/listen`;
   if (options.number) {
     url += `?number=${encodeURIComponent(options.number)}`;
+  }
+  // role=retiring — "I am already stepping down; do not give me the slot."
+  //
+  // Not reconnecting at all is the first defence, but a path may remain that reconnects anyway
+  // (a lower-level retry). Without this flag such a reconnect evicts a successor that never
+  // received SIGTERM — the very ping-pong the lame duck exists to prevent.
+  if (role && options.number) {
+    url += `&role=${encodeURIComponent(role)}`;
   }
   return url;
 }
@@ -84,6 +92,10 @@ export class ControlWebSocket {
   private _connectedPromise: Promise<void>;
   private _log: Logger = NOOP_LOGGER;
   private _pingTimer: ReturnType<typeof setTimeout> | null = null;
+  // Lame duck: this process is stepping down. It must NOT reconnect for any reason — a
+  // reconnect evicts whichever process has taken the slot in the meantime, and that one never
+  // received a stop signal.
+  private _lameDuck = false;
 
   setLogger(logger: Logger): void {
     this._log = logger;
@@ -94,6 +106,18 @@ export class ControlWebSocket {
     this._connectedPromise = new Promise<void>((resolve) => {
       this._connectedResolve = resolve;
     });
+  }
+
+  /** Stop reconnecting for good — this process is stepping down. Not reversible. */
+  enterLameDuck(): void {
+    if (this._lameDuck) return;
+    this._lameDuck = true;
+    // Second line of defence: if some path does reconnect, at least do not take the slot.
+    this._url = buildControlWsUrl(this._options, 'retiring');
+  }
+
+  get lameDuck(): boolean {
+    return this._lameDuck;
   }
 
   /** Register an event handler for a specific event type. */
@@ -220,6 +244,12 @@ export class ControlWebSocket {
   }
 
   private _dispatchEvent(event: ControlEvent): void {
+    // The slot was handed to another process, but **the connection is still open** — the server
+    // kept it so the terminal events of calls already in progress come back here. Do not close.
+    if (event.event === 'agent.retired') {
+      this._lameDuck = true;
+    }
+
     // Resolve pending transfer promises on terminal transfer events
     if (['call.transfer.completed', 'call.transfer.failed'].includes(event.event)) {
       const callId = event.callId as string;
@@ -265,6 +295,11 @@ export class ControlWebSocket {
   }
 
   private _scheduleReconnect(): void {
+    if (this._lameDuck) {
+      this._log.info('Control WS closed — stepping down, not reconnecting');
+      this._closed = true;
+      return;
+    }
     const delay = this._reconnectDelay;
     this._reconnectDelay = Math.min(this._reconnectDelay * 2, MAX_RECONNECT_DELAY);
     this._log.info('Control WS reconnecting in %ds...', delay / 1000);

@@ -1,22 +1,26 @@
 # 배포
 
-에이전트 서버를 재배포할 때 통화가 끊기지 않게 하는 방법입니다.
+에이전트를 재배포할 때 그 번호로 오는 전화가 끊기지 않게 하는 법입니다.
 
-무중단 배포는 **@teamlearners/clawops 0.42.0 이상**에서 동작합니다. 그 이전 버전은 아래 설정을 해도 교체 중에 콜이 끊깁니다.
+**세 단계입니다.** SDK를 올리고, 배포 설정을 붙여넣고, 한 번 확인합니다.
+애플리케이션 코드는 바뀌지 않습니다.
+
+---
 
 ## 왜 배포할 때 끊기나
 
-에이전트는 Control WS로 서버에 상시 연결해 인바운드 콜 알림을 받습니다. 이 연결은 **전화번호 하나에 하나**입니다 — 콜을 어디로 보낼지 정하는 자리이기 때문입니다.
+control 연결은 **번호마다 하나**입니다. 그 연결이 전화를 어디로 보낼지 정하는 자리이고,
+배포란 그 자리를 옮기는 일입니다.
 
-그래서 인스턴스를 내렸다가 올리면, 그 사이에는 콜을 받을 곳이 없습니다. 걸려온 전화는 연결되지 못하고 종료됩니다.
+예전 SDK는 종료 신호(SIGTERM)를 받는 **즉시 자리를 놓았습니다.** 그때 새 인스턴스가 아직
+안 떠 있으면 그 사이 오는 전화가 전부 죽었습니다.
 
-**불통 구간의 길이는 새 인스턴스가 뜨는 데 걸리는 시간과 같습니다.** 이미지를 받고 프로세스가 기동하는 데 3분이 걸린다면 3분간 전화가 안 됩니다. 배포를 빠르게 만드는 것으로는 이 구간을 없앨 수 없습니다 — 겹치게 배포해야 없어집니다.
+`0.43.0` 부터는 자리를 바로 놓지 않고 새 인스턴스가 붙을 때까지 **계속 전화를 받습니다.**
+새 인스턴스가 붙으면 서버가 인계를 알려 주고, 그때 진행 중이던 통화만 마치고 나갑니다.
 
-## 순서
+---
 
-이대로 따라 하시면 됩니다. **다섯 단계 전부 해야 합니다** — 하나라도 빠지면 무중단이 되지 않습니다.
-
-### 1. SDK 를 올린다
+## 1. SDK를 올립니다
 
 ```bash
 npm install @teamlearners/clawops@latest
@@ -26,96 +30,27 @@ npm install @teamlearners/clawops@latest
 
 ```bash
 npm ls @teamlearners/clawops
-# └── @teamlearners/clawops@0.42.0    ← 0.42.0 이상이면 됩니다
+# └── @teamlearners/clawops@0.43.0   ← 이 이상이어야 합니다
 ```
 
-0.42.0 미만은 아래를 다 해도 교체 중에 콜이 끊깁니다.
+애플리케이션 코드는 그대로 둡니다. 예전 문서가 시키던 준비 표시 파일 만드는 줄이 있다면
+**지워도 됩니다** — 이제 SDK가 씁니다.
 
-### 2. 앱에 준비 표시를 한 줄 넣는다
-
-```typescript
-import { writeFileSync } from 'node:fs';
+```js
 import { ClawOpsAgent } from '@teamlearners/clawops/agent';
 
-const agent = new ClawOpsAgent({ from: '0705...', session });
+const agent = new ClawOpsAgent({ from: '07012345678', session: mySession });
 
-await agent.connect();
-writeFileSync('/tmp/clawops-ready', ''); // ← 이 한 줄
-await agent.serve();
+await agent.serve();      // connect() 도 같이 합니다
 ```
 
-`connect()`는 Control 연결이 **실제로 붙은 뒤에** 반환합니다. 그래서 이 파일이 생긴 시점이 곧 "이 인스턴스가 콜을 받을 수 있게 된 시점"이고, 4단계의 헬스체크가 그걸 봅니다. 이게 없으면 오케스트레이터는 **컨테이너가 뜬 순간** 교체를 시작해, 겹치게 배포해도 그 사이가 빕니다.
+---
 
-`serve()`는 그대로 두시면 됩니다 — 인계와 드레이닝은 SDK가 처리합니다.
+## 2. 배포 설정을 붙여넣습니다
 
-### 3. 이미지의 진입점을 확인한다
+### 쿠버네티스
 
-```bash
-docker run -d --name check <이미지>
-docker exec check cat /proc/1/cmdline | tr '\0' ' '
-docker rm -f check
-```
-
-| 나온 값 | |
-| --- | --- |
-| `node dist/app.js` | 그대로 두시면 됩니다 |
-| `/bin/sh -c node ...` | `CMD ["node", "dist/app.js"]` 형식으로 바꾸세요 |
-| `npm start` | 같이 바꾸세요 — 이쪽이 더 나쁩니다 |
-
-셸 형식이면 PID 1이 `/bin/sh`가 되고, `sh`는 종료 시그널을 자식에게 전달하지 않습니다. 드레이닝이 **시작조차 되지 않은 채** 유예가 지나 통화가 잘립니다. `npm start`는 npm이 시그널을 받고 자식을 곧바로 죽여, 유예를 아무리 길게 잡아도 드레이닝이 시작되지 않습니다. 자세한 이유는 아래 「시그널이 프로세스까지 닿아야 합니다」에 있습니다.
-
-이미지를 고치기 어렵다면 4단계의 배포 설정에서 `command`로 덮어써도 됩니다.
-
-### 4. 배포 설정을 바꾼다
-
-플랫폼별 전체 설정은 아래 「쿠버네티스」 · 「ECS」에 있습니다. 바뀌는 건 셋입니다.
-
-| | 쿠버네티스 | ECS |
-| --- | --- | --- |
-| 겹치게 배포 | `maxUnavailable: 0` · `maxSurge: 1` | `minimumHealthyPercent: 100` · `maximumPercent: 200` |
-| 준비 판정 | `readinessProbe` | `healthCheck` |
-| 종료 유예 | `terminationGracePeriodSeconds: 150` | `stopTimeout: 120` |
-
-### 5. 배포해 보고 확인한다
-
-```bash
-kubectl rollout restart deploy/my-agent
-kubectl get pods -w
-```
-
-이렇게 나와야 합니다.
-
-```
-my-agent-aaa   1/1   Running                 ← 옛 pod
-my-agent-bbb   0/1   Running                 ← 새 pod, 아직 안 붙음
-...
-my-agent-aaa   1/1   Running                 ← 옛 pod 은 그대로 (여기가 핵심)
-my-agent-bbb   1/1   Running                 ← 새 pod 이 붙었다
-my-agent-aaa   1/1   Terminating             ← 이제야 옛 pod 이 내려간다
-```
-
-봐야 하는 것 셋입니다.
-
-1. 새 pod 이 **`1/1`이 된 뒤에** 옛 pod 이 `Terminating`으로 바뀐다. 그 전에 바뀌면 2단계나 4단계가 빠진 것입니다.
-2. 옛 pod 이 `Terminating`으로 **한동안 남아 있다.** 진행 중이던 통화를 마치는 중이고, 정상입니다. 통화가 없으면 몇 초 만에 사라집니다.
-3. 교체가 도는 동안 그 번호로 **전화를 걸면 연결된다.**
-
-ECS는 `aws ecs describe-services`로 배포 중 `runningCount`가 2가 되는지 보시면 됩니다 — 1로 떨어졌다가 올라오면 옛 태스크를 먼저 내린 것입니다.
-
-## 왜 이 넷인가
-
-| | 안 맞추면 |
-| --- | --- |
-| **겹치게 배포** — 새 인스턴스를 먼저 띄우고 옛 것을 내린다 | 그 사이 전화가 안 걸린다 |
-| **준비 판정** — Control 연결이 붙은 뒤에 "정상"으로 본다 | 겹치게 배포해도 그 사이가 빈다 |
-| **종료 유예** — 드레이닝 상한보다 길게 | 통화 도중에 `SIGKILL` 로 끊긴다 |
-| **시그널 전달** — 종료 시그널이 프로세스까지 닿는다 | 드레이닝이 시작조차 안 된다 |
-
-앞의 셋은 배포 설정이고, 마지막은 컨테이너 이미지의 문제입니다.
-
-## 쿠버네티스
-
-전체 매니페스트입니다. 3단계에서 셸 형식이나 `npm start`가 나왔다면 `command`가 그걸 덮어씁니다.
+아래를 그대로 쓰고 `image` 와 `secretKeyRef` 만 바꾸세요.
 
 ```yaml
 apiVersion: apps/v1
@@ -123,12 +58,13 @@ kind: Deployment
 metadata:
   name: my-agent
 spec:
-  replicas: 1 # 번호 하나에 인스턴스 하나 (아래 「인스턴스는 하나로 두세요」)
+  # ⚠️ 1 이어야 합니다. 이유는 맨 아래 "인스턴스는 하나로 두세요".
+  replicas: 1
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 0 # 옛 pod 를 먼저 내리지 않는다
-      maxSurge: 1 # 새 pod 를 하나 더 띄운다
+      maxUnavailable: 0     # 옛 것을 먼저 내리지 않는다
+      maxSurge: 1           # 새 것을 먼저 띄운다
   selector:
     matchLabels:
       app: my-agent
@@ -137,191 +73,257 @@ spec:
       labels:
         app: my-agent
     spec:
-      terminationGracePeriodSeconds: 150 # 드레이닝 상한보다 길게. 기본값 30 은 짧다
+      # ⚠️ 기본값은 30초입니다. 그대로 두면 통화 중에 SIGKILL 이 옵니다.
+      terminationGracePeriodSeconds: 150
       containers:
         - name: agent
           image: my-registry/my-agent:v1
-          command: ["node", "dist/app.js"] # 시그널이 닿게 (아래 「시그널」)
+          # ⚠️ 배열 형태여야 합니다. 문자열로 쓰거나 npm 으로 띄우면 종료 신호가 안 닿습니다.
+          command: ["node", "dist/index.js"]
           env:
             - name: CLAWOPS_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: clawops
-                  key: apiKey
-          readinessProbe: # 붙은 뒤에야 Ready 로 본다
+                  key: api-key
+          readinessProbe:
             exec:
               command: ["cat", "/tmp/clawops-ready"]
             periodSeconds: 2
-            failureThreshold: 30 # 기동이 느려도 기다린다
+            failureThreshold: 30
 ```
 
-**`readinessProbe`가 없으면 겹치게 배포해도 그 사이가 빕니다.** probe가 없으면 pod는 컨테이너가 뜬 순간 Ready가 되고, `kubectl rollout status`는 애플리케이션이 Control 연결을 붙이기도 **전에** 완료로 떨어집니다. 그 시점에 옛 pod가 내려가므로, 새 인스턴스가 붙을 때까지 전화가 안 걸립니다.
+`/tmp/clawops-ready` 는 **SDK가 만들고 지웁니다.** 연결되면 만들고, 자리를 넘기거나 종료
+절차에 들어가면 지웁니다. 애플리케이션이 손댈 필요가 없습니다.
 
-**배포 전략의 기본값은 그대로 두어도 위험하지 않습니다.** `maxUnavailable: 25%` · `maxSurge: 25%`는 `replicas: 1`에서 각각 0과 1로 떨어져 위 설정과 같아집니다. 명시해 두는 편이 낫지만, 실제로 위험한 기본값은 이쪽이 아니라 **`terminationGracePeriodSeconds: 30`** 입니다.
+> **read-only 파일시스템을 쓰신다면** `/tmp` 에 쓰기 가능한 볼륨을 붙여 주세요.
+>
+> ```yaml
+>           volumeMounts:
+>             - name: tmp
+>               mountPath: /tmp
+>       volumes:
+>         - name: tmp
+>           emptyDir: {}
+> ```
+>
+> 안 붙이면 SDK가 표시를 못 남기고 **프로브가 영영 통과하지 못합니다.** 그 경우 기동 로그에
+> 경고가 찍힙니다.
 
-`command`를 매니페스트에 두면 이미지의 `CMD` 형식과 무관하게 시그널이 프로세스에 닿습니다 — 쿠버네티스의 `command`는 배열이라 셸을 거치지 않기 때문입니다.
-
-지금 설정이 맞는지 확인:
-
-```bash
-kubectl get deploy my-agent -o jsonpath='maxUnavailable={.spec.strategy.rollingUpdate.maxUnavailable} maxSurge={.spec.strategy.rollingUpdate.maxSurge} grace={.spec.template.spec.terminationGracePeriodSeconds}{"\n"}'
-# maxUnavailable=0 maxSurge=1 grace=150
-
-kubectl get deploy my-agent -o jsonpath='{.spec.template.spec.containers[0].readinessProbe}{"\n"}'
-# {"exec":{"command":["cat","/tmp/clawops-ready"]},...}   ← 비어 있으면 probe 가 없는 것입니다
-```
-
-배포해 보고 확인:
-
-```bash
-kubectl rollout restart deploy/my-agent
-kubectl get pods -w
-# 새 pod 이 Ready 가 된 **뒤에** 옛 pod 이 Terminating 으로 바뀌어야 합니다.
-# 옛 pod 은 진행 중이던 통화가 끝날 때까지 Terminating 상태로 남아 있습니다 — 정상입니다.
-```
-
-## ECS
+### ECS
 
 ```json
 {
-  "deploymentConfiguration": {
-    "minimumHealthyPercent": 100,
-    "maximumPercent": 200
-  },
+  "family": "my-agent",
   "containerDefinitions": [
     {
       "name": "agent",
       "image": "my-registry/my-agent:v1",
-      "command": ["node", "dist/app.js"],
+      "command": ["node", "dist/index.js"],
       "stopTimeout": 120,
       "healthCheck": {
-        "command": ["CMD-SHELL", "test -f /tmp/clawops-ready"],
+        "command": ["CMD-SHELL", "cat /tmp/clawops-ready || exit 1"],
         "interval": 5,
         "retries": 12,
-        "startPeriod": 30
+        "startPeriod": 60
       }
     }
   ]
 }
 ```
 
-`minimumHealthyPercent`가 100 미만이면 ECS는 옛 태스크를 먼저 내립니다. 그 사이가 그대로 불통 구간입니다. `maximumPercent`도 200이어야 합니다 — 100이면 태스크를 하나 넘게 띄울 수 없어서 결국 옛 것을 먼저 내리게 됩니다.
+서비스 쪽 배포 설정:
 
-`healthCheck`가 없으면 ECS는 **컨테이너가 실행된 순간** 태스크를 정상으로 보고 교체를 시작합니다. 쿠버네티스의 `readinessProbe`와 같은 이유로 필요합니다.
-
-`stopTimeout`은 **120초가 상한**입니다(기본값 30초). 드레이닝 상한을 그 안에 들어오게 잡으세요.
-
-## 종료 유예와 드레이닝 상한
-
-`serve()`는 멈출 때가 되면 **진행 중인 통화가 끝나기를 기다린 뒤** 종료합니다. 기본 상한은 120초입니다.
-
-그보다 먼저 오케스트레이터가 프로세스를 강제 종료하면(`SIGKILL`) 통화가 도중에 끊깁니다. 그래서 플랫폼의 종료 유예가 드레이닝 상한보다 **길어야** 합니다.
-
-| 플랫폼 | 설정 | 기본값 | 권장 |
-| --- | --- | --- | --- |
-| Kubernetes | `terminationGracePeriodSeconds` | 30초 | 드레이닝 상한 + 30초 |
-| ECS | `stopTimeout` | 30초 | 120초 (플랫폼 최대값) |
-
-**두 플랫폼 모두 기본값이 30초입니다.** 드레이닝 상한 기본값(120초)보다 짧으므로, 양쪽을 다 기본값으로 두면 통화가 30초에서 잘립니다.
-
-상한을 직접 정하려면:
-
-```typescript
-await agent.serve({ drainTimeoutMs: 90_000 });
+```json
+"deploymentConfiguration": {
+  "minimumHealthyPercent": 100,
+  "maximumPercent": 200
+}
 ```
 
-통화가 평균적으로 얼마나 긴지에 맞춰 잡으시면 됩니다. 상한에 걸린 통화는 종료됩니다. 상한에 걸려 끝나는 편이 `SIGKILL` 로 잘리는 것보다 낫습니다 — 종료 처리가 정상적으로 돕니다.
+> **ECS `stopTimeout` 은 최대 120초입니다.** 그래서 SDK의 종료 마감도 기본 110초입니다 —
+> 그 안에 정리를 마치도록 맞춰 둔 값입니다.
 
-## 시그널이 프로세스까지 닿아야 합니다
+---
 
-종료 시그널은 **컨테이너의 PID 1 에게만** 갑니다. `CMD`를 셸 형식으로 쓰면 PID 1이 `/bin/sh`가 되는데, `sh`는 그 시그널을 자식에게 전달하지 않습니다. 그러면 SDK는 종료 요청을 **듣지 못하고**, 드레이닝은 시작조차 하지 않은 채 유예 시간이 지나 `SIGKILL`이 옵니다. 진행 중이던 통화가 전부 그 자리에서 끊깁니다.
+## 3. 배포해 보고 확인합니다
 
-배포 설정을 아무리 맞춰도 이 층에서 막히면 무중단은 되지 않습니다. 그리고 **배달 지표로는 드러나지 않습니다** — 전화는 계속 걸리고, 끊기는 건 이미 통화 중이던 사람들입니다.
-
-```dockerfile
-CMD ["node", "dist/app.js"]   # ✅ PID 1 = node — 시그널이 닿는다
-```
-
-```dockerfile
-CMD node dist/app.js          # ⛔ PID 1 = /bin/sh — 시그널이 안 닿는다
-```
-
-```dockerfile
-CMD ["npm", "start"]          # ⛔ PID 1 = npm — 드레이닝할 틈 없이 죽는다
-```
-
-`npm start` 는 셸 형식보다도 나쁩니다. npm 이 `SIGTERM` 을 받으면 자식 프로세스를 **곧바로** 죽여서, 유예 시간이 아무리 길어도 드레이닝이 시작되지 않습니다. 진입점에서는 런타임을 직접 부르세요.
-
-지금 쓰는 이미지가 어느 쪽인지는 이렇게 확인합니다.
+### 쿠버네티스
 
 ```bash
-docker run -d --name check <이미지>
-docker exec check cat /proc/1/cmdline | tr '\0' ' '
-# node dist/app.js        → 괜찮습니다
-# /bin/sh -c node ...     → 위 형식으로 고치세요
+kubectl apply -f deployment.yaml
+kubectl get pods -w
 ```
 
-이미지를 고치기 어렵다면 배포 설정에서 덮어써도 됩니다 — 쿠버네티스의 `command`, ECS의 `command`는 둘 다 배열이라 셸을 거치지 않습니다. init 프로세스를 넣는 방법도 있습니다(Docker `--init`, ECS `initProcessEnabled: true`, 이미지에 `tini`).
+이런 순서로 보이면 정상입니다:
 
-## 옛 인스턴스는 어떻게 물러나나
-
-두 가지 경로가 있습니다. 인계 통지를 받으면 스스로 드레이닝하고 종료하며, 통지를 받지 못한 경우에는 새 콜을 받지 않는 상태로 남아 있다가 종료 시그널을 받을 때 드레이닝을 거쳐 종료합니다. 접속하는 서버에 따라 갈리므로 어느 쪽일지는 미리 알 수 없지만, **통화가 보호되는 것과 새 콜이 새 인스턴스로 가는 것은 두 경우 모두 같습니다.**
-
-> **옛 인스턴스를 내리는 단계는 생략하지 마세요.** 통지를 받지 못하면 스스로 종료하지 않습니다. 롤링 배포는 어차피 옛 인스턴스를 내리므로 보통은 문제가 되지 않지만, "새 것만 띄우면 옛 것이 알아서 사라진다"고 가정하면 안 됩니다.
-
-## 직접 제어하기
-
-`connect()`로 직접 수명을 관리한다면 두 가지를 쓰시면 됩니다.
-
-```typescript
-const agent = new ClawOpsAgent({
-  from: '0705...',
-  session,
-  onTakenOver: () => console.log('다른 인스턴스가 넘겨받았습니다'),
-});
-await agent.connect();
-
-// ... 종료할 때
-const { completed, forced } = await agent.drain({ timeoutMs: 120_000 });
-console.log(`${completed}건 정상 종료, ${forced}건 중단`);
+```
+my-agent-aaa   1/1   Running       # 옛 pod — 계속 전화를 받는 중
+my-agent-bbb   0/1   Running       # 새 pod — 아직 연결 전 (프로브가 막고 있음)
+my-agent-bbb   1/1   Running       # 새 pod 연결됨
+my-agent-aaa   1/1   Terminating   # 이제서야 옛 pod 이 내려간다
 ```
 
-| | 설명 |
-| --- | --- |
-| `onTakenOver` | 다른 인스턴스가 이 번호를 넘겨받았을 때 호출됩니다. 롤링 배포의 한가운데이고, 오류가 아닙니다. 여기서 `drain()`을 부르면 됩니다. |
-| `agent.takenOver` | 넘겨준 상태인지 여부. |
-| `drain({ timeoutMs })` | 새 콜 수신을 멈추고 진행 중 통화를 기다린 뒤 종료합니다. `{ completed, forced }`를 돌려줍니다. |
+**옛 pod 이 `Terminating` 으로 한동안 남아 있는 것은 정상입니다** — 진행 중이던 통화를
+마치는 중입니다.
 
-`disconnect()`는 기다리지 않고 즉시 끊습니다. 배포에는 `drain()`을 쓰세요.
+설정이 실제로 들어갔는지:
 
-드레이닝 중에 끝나는 통화는 `call_end`의 `endedDuration`이 `null`입니다. 통화 시간은 Control 연결로 오는데 그 연결을 이미 내려놓은 뒤이기 때문입니다. 통화 시간이 필요하면 통화 조회 API를 쓰세요.
+```bash
+kubectl get deploy my-agent -o jsonpath='{.spec.strategy.rollingUpdate}{"\n"}'
+# {"maxSurge":1,"maxUnavailable":0}
+
+kubectl get deploy my-agent -o jsonpath='{.spec.template.spec.terminationGracePeriodSeconds}{"\n"}'
+# 150
+
+kubectl get deploy my-agent -o jsonpath='{.spec.template.spec.containers[0].readinessProbe}{"\n"}'
+# {"exec":{"command":["cat","/tmp/clawops-ready"]},...}   ← 비어 있으면 프로브가 없는 것입니다
+```
+
+### 로그에서 확인할 것
+
+옛 인스턴스 로그에 이 세 줄이 순서대로 나오면 제대로 동작한 것입니다.
+
+```
+SIGTERM received — beginning shutdown
+Waiting for a successor — still holding the slot (up to 20000ms)
+Handover complete — new calls go to the successor
+Drain complete in 6200ms: all 3 call(s) finished
+```
+
+**첫 줄이 없으면 종료 신호가 프로세스까지 안 닿은 것입니다.** 아래를 보세요.
+
+---
+
+## 자주 걸리는 것 넷
+
+### 종료 신호가 프로세스까지 안 닿는 경우
+
+`CMD node dist/index.js` 를 셸 형태로 쓰거나 `npm start` 로 띄우면 PID 1이 셸이나 npm이
+되는데, 둘 다 SIGTERM을 자식에게 전달하지 않습니다. SDK는 종료를 못 듣고, 유예가 끝날
+때까지 새 전화를 계속 받다가 **SIGKILL로 전부 끊깁니다.**
+
+**이게 위험한 이유는 불통 지표에 안 잡히기 때문입니다.** 저희 실측에서 45초 통화 기준
+26건이 통째로 잘렸는데 불통은 0이었습니다.
+
+```dockerfile
+CMD ["node", "dist/index.js"]      # ✅ 배열 형태
+CMD node dist/index.js             # ⛔ PID 1 이 /bin/sh 가 됩니다
+CMD ["npm", "start"]               # ⛔ npm 도 전달하지 않습니다
+```
+
+`0.43.0` 부터는 이 상태로 뜨면 **기동 로그에 경고가 찍힙니다.**
+
+### 유예가 드레이닝보다 짧은 경우
+
+SDK는 종료 신호를 받으면 진행 중인 통화를 최대 110초까지 기다립니다. 플랫폼의 유예가
+그보다 짧으면 그 도중에 SIGKILL이 옵니다.
+
+| | 기본값 | 권장 |
+|---|---|---|
+| 쿠버네티스 `terminationGracePeriodSeconds` | **30초** | 150 |
+| ECS `stopTimeout` | 30초 | 120 (최대값) |
+
+**쿠버네티스 기본값 30초를 그대로 두면 긴 통화가 잘립니다.** 실측에서 45초 통화 9건이
+그렇게 끊겼습니다. lame duck은 *빈틈*을 닫지 *절단*을 막지 못합니다 — 이건 설정으로만
+해결됩니다.
+
+통화가 그보다 길 수 있다면 상한을 조절하세요.
+
+```js
+await agent.serve({ drainTimeoutMs: 300_000, shutdownDeadlineMs: 310_000 });
+```
+
+플랫폼 유예를 `shutdownDeadlineMs` 보다 길게 잡는 것을 잊지 마세요.
+
+### `cat` 이 없는 이미지 (distroless 등)
+
+exec 프로브는 컨테이너 안에서 명령을 실행하는 것이라, 실행할 바이너리가 없으면 프로브
+자체가 성립하지 않습니다. 그럴 때는 HTTP 프로브를 쓰세요.
+
+```js
+await agent.serve({ healthPort: 8080 });
+```
+
+```yaml
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 2
+            failureThreshold: 30
+```
+
+준비되면 200, 아니면 503입니다. 파일과 달리 **낡은 상태가 남을 수 없다**는 장점도 있습니다.
+
+### 새 인스턴스를 안 띄우는 배포
+
+스케일인이나 단순 정지처럼 **후임이 아예 없는** 경우에는 자리를 붙들고 기다리는 것이
+손해입니다. 그 사이 받은 전화가 유예 만료에 끊길 수 있습니다.
+
+```js
+await agent.serve({ handoverWaitMs: 0 });   // 예전처럼 즉시 자리를 놓습니다
+```
+
+---
+
+## readinessProbe 는 왜 계속 필요한가
+
+`0.43.0` 부터는 프로브가 없어도 배포 중 빈틈이 생기지 않습니다. 그래도 권장합니다.
+
+프로브가 막는 것은 **시간 빈틈이 아니라 나쁜 후임**입니다. 새 인스턴스가 설정 오류로
+crash-loop에 빠지면, 프로브가 있을 때는 옛 pod 에 종료 신호가 **아예 가지 않습니다.**
+프로브를 빼면 옛 것이 내려가고 롤백할 때까지 전면 불통이 됩니다.
+
+그리고 앱 기동이 인계 대기 상한(기본 20초)보다 오래 걸리면 그 차이만큼은 빈틈이 남습니다.
+
+| 앱 기동 | 프로브 없음 | 프로브 있음 |
+|---|---|---|
+| 12초 | 빈틈 없음 | 빈틈 없음 |
+| 35초 | **11초 불통** | 빈틈 없음 |
+
+---
 
 ## 인스턴스는 하나로 두세요
 
-**한 번호에 인스턴스를 여러 개 붙이지 마세요.** `replicas`는 1이어야 합니다.
+**`replicas: 1`.** 번호 하나에 자리도 하나뿐이라, 둘을 띄우면 전화를 나눠 받는 게 아니라
+서로 자리를 뺏습니다. HPA도 걸지 마세요.
 
-Control 연결이 번호당 하나이므로, 같은 번호로 여러 인스턴스가 붙으면 서로 자리를 뺏습니다. 새 인스턴스가 뜰 때마다 앞의 인스턴스가 물러나고, 오케스트레이터는 죽은 자리를 다시 채우고, 그것이 또 남은 것을 밀어냅니다. 이 상태가 이어지면 **그 번호로 한동안 전화를 받지 못하게 됩니다.**
-
-HPA(오토스케일링)도 같은 이유로 이 Deployment에는 걸지 마세요.
-
-```yaml
-# ⛔ 이렇게 하지 마세요
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-spec:
-  scaleTargetRef:
-    name: my-agent
-  minReplicas: 2
-```
-
-Control 연결은 콜 알림만 주고받고 오디오는 통화별 Media WS로 흐르기 때문에, 인스턴스 하나가 감당하는 동시 통화 수는 대개 CPU와 사용하는 모델의 한도가 정합니다 — 연결 수가 아닙니다. 부하가 걱정된다면 `replicas`를 늘리는 대신 pod의 CPU/메모리를 키우세요.
-
-번호를 여러 개 쓰신다면 **번호마다 Deployment를 하나씩** 두는 것은 문제없습니다.
+번호를 여러 개 쓰신다면 **번호마다 Deployment를 하나씩** 두세요.
 
 ```yaml
 # 번호 A 용 Deployment (replicas: 1)
 # 번호 B 용 Deployment (replicas: 1)
-# ...
 ```
 
-지금 규모에서 부족하다면 문의해 주세요.
+같은 번호로 인스턴스가 둘 이상 떠 있으면 기동 로그에 경고가 찍힙니다.
+
+```
+Handover with no stop signal — check that only one instance serves 070…
+```
+
+---
+
+## 직접 제어하기
+
+`serve()` 대신 직접 다루고 싶다면:
+
+```js
+await agent.connect();
+
+// ... 종료할 때
+const { completed, forced } = await agent.drain({ timeoutMs: 120_000 });
+```
+
+`drain()` 은 새 전화를 받지 않고 진행 중인 통화만 기다립니다. `disconnect()` 는 통화
+도중이라도 즉시 끊습니다 — "지금 멈춰라" 일 때는 맞고 "넘겨라" 일 때는 틀립니다.
+
+인계 통지를 직접 받고 싶다면:
+
+```js
+const agent = new ClawOpsAgent({
+  from: '07012345678',
+  session: mySession,
+  onTakenOver: ({ code, reason }) => console.log('자리를 넘겼습니다:', reason),
+});
+```

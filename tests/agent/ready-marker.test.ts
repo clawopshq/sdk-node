@@ -14,6 +14,7 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mkdtempSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { get as httpGet } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Logger } from 'pino';
@@ -82,15 +83,37 @@ describe('readiness marker', () => {
   });
 });
 
+/**
+ * Probed with `node:http` rather than `fetch`.
+ *
+ * `fetch` keeps its connections alive through undici's pool, so the server does not see them
+ * close and `server.close()` waits for sockets that nothing will release — on CI that showed up
+ * as a 5s test timeout while passing locally. A kubelet probe opens a plain connection per
+ * check, so this is also the closer match to what actually happens.
+ */
+function probe(port: number, path = '/healthz'): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = httpGet(
+      { host: '127.0.0.1', port, path, agent: false, timeout: 3000 },
+      (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode ?? 0));
+      },
+    );
+    req.on('timeout', () => req.destroy(new Error('probe timed out')));
+    req.on('error', reject);
+  });
+}
+
 describe('/healthz', () => {
   it('is 503 before ready and 200 after', async () => {
     let ready = false;
     const server = await startHealthServer(0, () => ready, fakeLog().log);
     const port = (server.address() as { port: number }).port;
     try {
-      expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(503);
+      expect(await probe(port)).toBe(503);
       ready = true;
-      expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(200);
+      expect(await probe(port)).toBe(200);
     } finally {
       await new Promise<void>((r) => server.close(() => r()));
     }
@@ -100,8 +123,8 @@ describe('/healthz', () => {
     const server = await startHealthServer(0, () => true, fakeLog().log);
     const port = (server.address() as { port: number }).port;
     try {
-      expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(200);
-      expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBe(200);
+      expect(await probe(port, '/healthz')).toBe(200);
+      expect(await probe(port, '/health')).toBe(200);
     } finally {
       await new Promise<void>((r) => server.close(() => r()));
     }

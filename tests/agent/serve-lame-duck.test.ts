@@ -177,3 +177,62 @@ describe('serve() shutdown', () => {
     expect(agent.takenOver).toBe(true);
   });
 });
+
+/**
+ * Deadline removal (2026-09-10).
+ *
+ * The 110s default came from the ECS `stopTimeout` ceiling (120s) and was then applied to k8s,
+ * where `terminationGracePeriodSeconds` has no ceiling. Measured against real traffic,
+ * **29.8% of in-flight calls (464/1,559) run past 110s** — we were cutting calls that would
+ * have finished. The only thing that ends a call now is the platform SIGKILL.
+ */
+describe('serve() has no deadline by default', () => {
+  it('drains without a timeout — this was the 29.8% of cut calls', async () => {
+    const { agent, seen } = buildAgent();
+    // The handover wait stays short on purpose (it is a loss when there is no successor);
+    // only the deadline goes away.
+    const served = agent.serve({ handoverWaitMs: 100 });
+    raise('SIGTERM', 20);
+    await served;
+
+    expect(seen.drain?.timeoutMs).toBe(Infinity);
+  });
+
+  it('still shares one budget when a deadline is given — ECS caps the grace period', async () => {
+    const { agent, seen } = buildAgent();
+    const served = agent.serve({ handoverWaitMs: 400, shutdownDeadlineMs: 3000 });
+    raise('SIGTERM', 20);
+    await served;
+
+    // 3000ms total, ~400ms spent waiting for a handover that never came.
+    expect(seen.drain?.timeoutMs).toBeGreaterThan(2300);
+    expect(seen.drain?.timeoutMs).toBeLessThan(2700);
+  });
+
+  it('can still be escaped by signals — without this it would never exit locally', async () => {
+    // The **real** drain() and disconnect() are used on purpose: the escape works through them.
+    // A further signal calls disconnect(), which clears the active sessions, and the drain loop
+    // then falls out on its next tick. With the stubs from buildAgent() this test would pass
+    // while the real mechanism was broken.
+    const { agent, seen } = buildAgent();
+    const inner = agent as unknown as { _activeSessions: Map<string, unknown> };
+    agent.drain = ClawOpsAgent.prototype.drain.bind(agent);
+    agent.disconnect = async () => {
+      seen.disconnects += 1;
+      await ClawOpsAgent.prototype.disconnect.call(agent);
+    };
+    inner._activeSessions.set('CA_STUCK', { _markEnded: () => {} });
+
+    const served = agent.serve(); // defaults = no deadline
+    // serve() awaits connect() before attaching the handlers — a synchronous emit is missed.
+    raise('SIGINT', 20); // 1st: skip the handover, go straight to draining
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(inner._activeSessions.size).toBe(1); // still hanging — there is no deadline
+
+    process.emit('SIGINT'); // 2nd: cut the call still in progress
+    await served;
+
+    expect(seen.disconnects).toBeGreaterThanOrEqual(1);
+    expect(inner._activeSessions.size).toBe(0);
+  });
+});

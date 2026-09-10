@@ -46,8 +46,19 @@ export type AgentEventType = 'call_start' | 'call_end' | 'call_failed' | 'transc
  */
 const TERMINAL_FRAME_GRACE_MS = 2000;
 
-/** How long `drain()` waits for in-flight calls before cutting them. */
-const DEFAULT_DRAIN_TIMEOUT_MS = 120_000;
+/**
+ * How long `drain()` waits for in-flight calls before cutting them. **Unbounded by default.**
+ *
+ * This used to be 120s — a number that came from the ECS `stopTimeout` ceiling and was then
+ * applied to k8s as well, where `terminationGracePeriodSeconds` has no ceiling at all. Measured
+ * against real traffic, **29.8% of in-flight calls (464/1,559) run past 110s.** We were cutting
+ * calls that would have finished on their own.
+ *
+ * The only thing that ends a call now is the platform SIGKILL. On a short grace period (ECS) that
+ * grace *is* the deadline, so there is nothing to count here; on a long one (k8s) waiting for the
+ * call to finish is the whole point. Pass an explicit value to cut before the grace period.
+ */
+const DEFAULT_DRAIN_TIMEOUT_MS = Infinity;
 /** How often `drain()` re-checks whether the last call has ended. */
 const DRAIN_POLL_INTERVAL_MS = 200;
 
@@ -67,14 +78,17 @@ const DEFAULT_HANDOVER_WAIT_MS = 20_000;
 
 /**
  * Absolute deadline from SIGTERM. The handover wait and the drain share this one budget.
+ * **Unbounded by default** — same reason as `DEFAULT_DRAIN_TIMEOUT_MS`.
  *
- * They are not added together: adding them overshoots the platform grace period. A handover
- * that finishes in 2s leaves 108s for draining; one that uses the full 20s leaves 90s.
+ * It used to be 110s (ECS `stopTimeout` 120s minus 10s of cleanup slack). That value was applied
+ * to k8s too, so calls were cut at 110s even where the grace period was generous.
  *
- * 110s because ECS caps `stopTimeout` at 120s, and past the deadline `disconnect()` still has
- * to await MCP shutdown, close media and let the process exit. That is the 10s of slack.
+ * When a finite deadline *is* given the contract is unchanged: the two phases **share** it rather
+ * than adding up. A handover that finishes in 2s leaves the rest for draining; one that uses the
+ * full 20s leaves that much less. Adding them would overshoot the platform grace period and the
+ * SIGKILL would cut the calls anyway.
  */
-const DEFAULT_SHUTDOWN_DEADLINE_MS = 110_000;
+const DEFAULT_SHUTDOWN_DEADLINE_MS = Infinity;
 
 /** A one-shot flag you can also await. */
 function latch(): { promise: Promise<void>; set: () => void; done: boolean } {
@@ -420,10 +434,20 @@ export class ClawOpsAgent {
    * not hold is "start the new one and the old one disappears" — a rolling deploy still has to
    * take the old instance down.
    *
-   * Give the platform a grace period longer than the drain timeout
-   * (k8s `terminationGracePeriodSeconds`, ECS `stopTimeout`) so it does not SIGKILL mid-drain.
+   * **There is no deadline by default.** In-flight calls are waited out and the only thing that
+   * ends them is the platform SIGKILL. The old default (110s) came from the ECS `stopTimeout`
+   * ceiling and was applied to k8s too, which is why **29.8% of in-flight calls were being cut
+   * by us** rather than finishing.
    *
-   * @param options.drainTimeoutMs Passed through to `drain()`.
+   * Set the platform grace period (k8s `terminationGracePeriodSeconds`, ECS `stopTimeout`) to
+   * cover your calls. Where that grace is capped — ECS tops out at 120s — pass an explicit
+   * `shutdownDeadlineMs` slightly under it so the process cleans up on its own terms instead.
+   * A finite deadline is **shared** between the handover wait and the drain, never added.
+   *
+   * ⚠️ Without a deadline there is still a way out: a second stop signal skips the handover and
+   * a third cuts in-flight calls. SIGINT counts its first as the second, so two Ctrl-C's cut.
+   *
+   * @param options.drainTimeoutMs Passed through to `drain()`. Unbounded by default.
    */
   async serve(options?: {
     drainTimeoutMs?: number;
@@ -621,10 +645,11 @@ export class ClawOpsAgent {
    * One thing is given up: `endedDuration` on `call_end`. That figure rides the control
    * connection we just closed, so calls finishing during a drain report a null duration.
    *
-   * @param options.timeoutMs How long to wait for in-flight calls. Default 120s. Calls still
-   *   running when it expires are ended the way `disconnect()` ends them. Keep the platform's
-   *   own grace period longer than this (k8s `terminationGracePeriodSeconds`, ECS
-   *   `stopTimeout`), or it will SIGKILL the process mid-drain and undo the point of draining.
+   * @param options.timeoutMs How long to wait for in-flight calls. **Unbounded by default** —
+   *   calls are waited out and only the platform SIGKILL ends them. Pass a value and calls still
+   *   running when it expires are ended the way `disconnect()` ends them; that only makes sense
+   *   where the platform grace period is capped (ECS `stopTimeout` tops out at 120s) and you would
+   *   rather clean up on your own terms than be killed mid-drain.
    * @returns How many calls ended on their own, and how many had to be cut short.
    */
   async drain(options?: {
@@ -670,7 +695,11 @@ export class ClawOpsAgent {
       return { completed: 0, forced: 0 };
     }
 
-    this._log.info('Drain started: waiting for %d call(s) to finish (timeout %dms)', inFlight, timeoutMs);
+    this._log.info(
+      'Drain started: waiting for %d call(s) to finish (%s)',
+      inFlight,
+      Number.isFinite(timeoutMs) ? `timeout ${timeoutMs}ms` : 'no timeout — until the platform grace period',
+    );
     const started = Date.now();
     const deadline = started + timeoutMs;
     while (this._activeSessions.size > 0 && Date.now() < deadline) {
@@ -683,7 +712,8 @@ export class ClawOpsAgent {
       this._log.warn(
         `Drain timed out after ${elapsed}ms — cutting ${forced} call(s) still in progress. ` +
           'The platform grace period (terminationGracePeriodSeconds / stopTimeout) has to ' +
-          `exceed the ${timeoutMs}ms drain timeout for these cuts to stop.`,
+          `exceed the ${timeoutMs}ms drain timeout for these cuts to stop ` +
+          '(leave the timeout unset and it is unbounded).',
       );
     } else {
       this._log.info('Drain complete in %dms: all %d call(s) finished', elapsed, inFlight);

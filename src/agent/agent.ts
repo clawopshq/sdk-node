@@ -6,7 +6,14 @@ import { DEFAULT_BASE_URL } from '../constants.js';
 import { AgentConnectionError, AgentError } from '../error.js';
 import { applyUlawGain, ulawToPcm16 } from './audio.js';
 import { CLOSE_REPLACED, ControlWebSocket } from './control-ws.js';
-import { clearStaleReadyMarker, warnIfSignalsBlocked } from './deploy-checks.js';
+import {
+  clearStaleReadyMarker,
+  removeReadyMarker,
+  takeStaleClearNotice,
+  warnIfSignalsBlocked,
+  writeReadyMarker,
+} from './deploy-checks.js';
+import { startHealthServer } from './health.js';
 import type { ControlEvent } from './control-ws.js';
 import { MCPClient } from './mcp/client.js';
 import type { MCPServerStdio, MCPServerHTTP } from './mcp/index.js';
@@ -195,6 +202,8 @@ export class ClawOpsAgent {
   // Set when the server hands the slot away (`agent.retired`). Same meaning as a 4409 close,
   // except the connection stays open so terminal events of in-flight calls still arrive.
   private _onRetired: (() => void) | null = null;
+  // Whether calls can be answered right now. The file marker and /healthz read this same bit.
+  private _ready = false;
   private _onTakenOver?: (info: { code: number; reason: string }) => void;
   /** 미디어 정리를 마친 통화가 서버 종료 프레임을 기다리는 자리. callId → resolve. */
   private _terminalWaiters = new Map<string, () => void>();
@@ -241,6 +250,13 @@ export class ClawOpsAgent {
     }
 
     this._log = createAgentLogger(options.logger);
+    // **Clear a stale readiness marker here.** Deferring it to connect() leaves the stretch in
+    // between (heavy imports, model clients warming) as a window: a read-only-rootfs deploy
+    // commonly mounts an emptyDir at /tmp, and that volume outlives a container restart. After
+    // a SIGKILL the previous process's marker is still there, so the pod goes Ready *before it
+    // has connected* and the calls that arrive in between die.
+    clearStaleReadyMarker(this._log);
+
     this._pipelineLog = createPipelineLogger(this._log);
     // Detect PipelineSession at construction time (duck-type check)
     this._isPipelineSession = '_stt' in this._session && '_llm' in this._session;
@@ -311,9 +327,18 @@ export class ClawOpsAgent {
     if (this._controlWs) return;
 
     // Deployment diagnostics — these change nothing, they only make the quiet failures loud.
-    // Clearing the readiness marker has to happen before the application writes its own,
-    // so this is the only place it can go.
+    // The stale marker was already cleared in the constructor; this is idempotent and covers
+    // callers that invoke connect() more than once.
     clearStaleReadyMarker(this._log);
+    // A stale marker cleared at import time is reported here — back then no logger existed.
+    const stale = takeStaleClearNotice();
+    if (stale) {
+      this._log.warn(
+        `Cleared a stale readiness marker: ${stale} — a previous process left it behind. ` +
+          'Left in place it marks the new process Ready before it has connected, and the ' +
+          'calls that arrive in between die.',
+      );
+    }
     warnIfSignalsBlocked(this._log);
 
     // Reconnecting after a handover is not recovery — the slot is exclusive per number, so a
@@ -366,6 +391,10 @@ export class ClawOpsAgent {
       try {
         this._controlWs.send({ event: 'agent.hello', sdk: getSdkInfo() });
       } catch { /* best-effort */ }
+      // This is the moment calls can be answered — only the SDK knows it, so the SDK marks it.
+      // The customer's app used to have to create this file itself right here.
+      this._ready = true;
+      writeReadyMarker(this._log);
     } catch (err) {
       throw new AgentConnectionError(
         `Failed to connect to ClawOps: ${err instanceof Error ? err.message : String(err)}`,
@@ -400,12 +429,32 @@ export class ClawOpsAgent {
     drainTimeoutMs?: number;
     handoverWaitMs?: number;
     shutdownDeadlineMs?: number;
+    /** Open `/healthz` on this port — the only probe a distroless image can answer. */
+    healthPort?: number;
+  }): Promise<void> {
+    let health: Awaited<ReturnType<typeof startHealthServer>> | null = null;
+    if (options?.healthPort !== undefined) {
+      // Opened **before** connect(): a slow start should still answer the probe (with 503).
+      // A port that never opens fails the probe as a connection refusal instead.
+      health = await startHealthServer(options.healthPort, () => this._ready, this._log);
+    }
+    try {
+      await this._serveInner(options ?? {});
+    } finally {
+      if (health) await new Promise<void>((resolve) => health.close(() => resolve()));
+    }
+  }
+
+  private async _serveInner(options: {
+    drainTimeoutMs?: number;
+    handoverWaitMs?: number;
+    shutdownDeadlineMs?: number;
   }): Promise<void> {
     await this.connect();
 
-    const handoverWaitMs = options?.handoverWaitMs ?? DEFAULT_HANDOVER_WAIT_MS;
-    const shutdownDeadlineMs = options?.shutdownDeadlineMs ?? DEFAULT_SHUTDOWN_DEADLINE_MS;
-    const drainTimeoutMs = options?.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
+    const handoverWaitMs = options.handoverWaitMs ?? DEFAULT_HANDOVER_WAIT_MS;
+    const shutdownDeadlineMs = options.shutdownDeadlineMs ?? DEFAULT_SHUTDOWN_DEADLINE_MS;
+    const drainTimeoutMs = options.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
 
     const stop = latch();
     // "Stop waiting for the handover" — the second signal, or SIGINT. Different from cutting:
@@ -508,6 +557,7 @@ export class ClawOpsAgent {
       this._fromNumber,
       info.code,
     );
+    this._notReady();
     this._onTakenOver?.(info);
     // The connection is gone, but "the slot moved" is the same fact — mark it so serve() does
     // not try to release a slot that is no longer ours.
@@ -525,6 +575,9 @@ export class ClawOpsAgent {
    */
   private _handleRetired(reason: string): void {
     this._takenOver = true;
+    // The slot is gone, so no new calls come here. Dropping the probe is what makes the
+    // orchestrator take this instance out of rotation.
+    this._notReady();
     this._log.info('Another process now serves %s (%s) — handing over', this._fromNumber, reason);
     if (!this._stopServe) {
       this._log.warn(
@@ -535,6 +588,12 @@ export class ClawOpsAgent {
     this._onTakenOver?.({ code: CLOSE_REPLACED, reason });
     this._onRetired?.();
     this._stopServe?.('retired');
+  }
+
+  /** No longer able to take calls — drop both readiness signals. Idempotent. */
+  private _notReady(): void {
+    this._ready = false;
+    removeReadyMarker();
   }
 
   /** Whether another process has taken over this number's control connection. */
@@ -582,6 +641,8 @@ export class ClawOpsAgent {
   }): Promise<{ completed: number; forced: number }> {
     const timeoutMs = options?.timeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
     const releaseSlot = options?.releaseSlot ?? true;
+    // Draining means no new calls. The handover may already have cleared this; it is idempotent.
+    this._notReady();
 
     if (releaseSlot) {
       // Give up the delivery slot first. Every call that arrives after this goes elsewhere.
@@ -634,6 +695,7 @@ export class ClawOpsAgent {
 
   /** Disconnect from the platform. */
   async disconnect(): Promise<void> {
+    this._notReady();
     this._controlGivenUp = true;
     if (this._controlWs) {
       this._controlWs.close();

@@ -18,11 +18,21 @@
  */
 
 import { basename } from 'node:path';
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import type { Logger } from 'pino';
 
 /** Default readiness marker path — the one the deployment guide prescribes. */
 export const DEFAULT_READY_FILE = '/tmp/clawops-ready';
+
+// Path of a stale marker cleared at import time, held until a logger exists to report it.
+let staleCleared: string | null = null;
+
+/** The stale marker cleared at import time, returned **once**. */
+export function takeStaleClearNotice(): string | null {
+  const p = staleCleared;
+  staleCleared = null;
+  return p;
+}
 
 // Meeting one of these in the parent chain means the signal stops there. npm does forward on
 // some versions and platforms, but not all — and it adds a layer either way.
@@ -162,6 +172,44 @@ export function warnIfSignalsBlocked(
 }
 
 /**
+ * Mark this process as able to take calls.
+ *
+ * **Only the SDK knows this moment.** "The container is up" and "calls can be answered" are not
+ * the same thing — the stretch between them (heavy imports, model clients warming, the control
+ * connection) is exactly the gap a deploy falls into, and the orchestrator has no way to see
+ * its end. That is why the customer's app used to have to create this file itself after
+ * `connect()`. Removing that line is the point of this function.
+ *
+ * The contents carry the pid and start time, so a stale marker says who left it.
+ */
+export function writeReadyMarker(log: Logger): void {
+  const path = process.env.CLAWOPS_READY_FILE ?? DEFAULT_READY_FILE;
+  if (!path) return;
+  try {
+    writeFileSync(path, `pid=${process.pid} since=${Math.floor(Date.now() / 1000)}\n`);
+  } catch (err) {
+    // A read-only rootfs and friends. Not being able to leave the marker is no reason to refuse
+    // to start — but staying quiet means a readinessProbe never passes and nobody knows why.
+    log.warn(
+      `Could not write the readiness marker (${path}): ${(err as Error).message}. ` +
+        'If you use a readinessProbe it will never pass — mount a writable volume ' +
+        '(an emptyDir will do) or point CLAWOPS_READY_FILE somewhere writable.',
+    );
+  }
+}
+
+/** Mark this process as no longer taking new calls (handover, drain, shutdown). */
+export function removeReadyMarker(): void {
+  const path = process.env.CLAWOPS_READY_FILE ?? DEFAULT_READY_FILE;
+  if (!path) return;
+  try {
+    unlinkSync(path);
+  } catch {
+    /* already gone, or unwritable — either way there is nothing to do */
+  }
+}
+
+/**
  * Remove a readiness marker left behind by a previous process.
  *
  * The timing is the whole point — this has to run *before* the application creates its own
@@ -170,7 +218,7 @@ export function warnIfSignalsBlocked(
  *
  * `CLAWOPS_READY_FILE` overrides the path; an empty value turns this off.
  */
-export function clearStaleReadyMarker(log: Logger): void {
+export function clearStaleReadyMarker(log?: Logger): void {
   const path = process.env.CLAWOPS_READY_FILE ?? DEFAULT_READY_FILE;
   if (!path) return;
   try {
@@ -178,12 +226,10 @@ export function clearStaleReadyMarker(log: Logger): void {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     // A read-only rootfs and friends — a diagnostic must never block startup.
-    if (code !== 'ENOENT') log.debug(`Could not clear readiness marker (${path}): ${code}`);
+    if (code !== 'ENOENT') log?.debug(`Could not clear readiness marker (${path}): ${code}`);
     return;
   }
-  log.warn(
-    `Cleared a stale readiness marker: ${path} — a previous process left it behind. ` +
-      'Left in place it marks the new process Ready before it has connected, and the calls ' +
-      'that arrive in between die.',
-  );
+  // This runs at **import time**, before the application has configured a logger, so a warning
+  // here would go nowhere. Keep the fact and report it from connect(), where a logger exists.
+  staleCleared = path;
 }

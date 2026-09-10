@@ -15,6 +15,7 @@ import {
   findSignalSwallower,
   warnIfSignalsBlocked,
   clearStaleReadyMarker,
+  takeStaleClearNotice,
   type ProcReader,
 } from '../../src/agent/deploy-checks.js';
 
@@ -110,22 +111,21 @@ describe('stale readiness marker', () => {
     else process.env.CLAWOPS_READY_FILE = saved;
   });
 
-  it('removes a marker left by a previous process', () => {
+  it('removes a marker left by a previous process and keeps the fact', () => {
     const marker = join(mkdtempSync(join(tmpdir(), 'clawops-')), 'ready');
     writeFileSync(marker, '');
     process.env.CLAWOPS_READY_FILE = marker;
-    const { log, warn } = fakeLog();
-    clearStaleReadyMarker(log);
+    clearStaleReadyMarker();
     expect(existsSync(marker)).toBe(false);
-    expect(warn).toHaveBeenCalledTimes(1);
+    // At import time no logger exists yet, so the fact is held and reported later.
+    expect(takeStaleClearNotice()).toBe(marker);
+    expect(takeStaleClearNotice()).toBeNull();
   });
 
   it('is silent when there is nothing to remove', () => {
     process.env.CLAWOPS_READY_FILE = join(mkdtempSync(join(tmpdir(), 'clawops-')), 'nope');
-    const { log, warn, debug } = fakeLog();
-    clearStaleReadyMarker(log);
-    expect(warn).not.toHaveBeenCalled();
-    expect(debug).not.toHaveBeenCalled();
+    clearStaleReadyMarker();
+    expect(takeStaleClearNotice()).toBeNull();
   });
 
   it('an empty value turns it off', () => {

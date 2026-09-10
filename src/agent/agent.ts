@@ -6,6 +6,7 @@ import { DEFAULT_BASE_URL } from '../constants.js';
 import { AgentConnectionError, AgentError } from '../error.js';
 import { applyUlawGain, ulawToPcm16 } from './audio.js';
 import { ControlWebSocket } from './control-ws.js';
+import { clearStaleReadyMarker, warnIfSignalsBlocked } from './deploy-checks.js';
 import type { ControlEvent } from './control-ws.js';
 import { MCPClient } from './mcp/client.js';
 import type { MCPServerStdio, MCPServerHTTP } from './mcp/index.js';
@@ -249,6 +250,12 @@ export class ClawOpsAgent {
   async connect(): Promise<void> {
     if (this._controlWs) return;
 
+    // Deployment diagnostics — these change nothing, they only make the quiet failures loud.
+    // Clearing the readiness marker has to happen before the application writes its own,
+    // so this is the only place it can go.
+    clearStaleReadyMarker(this._log);
+    warnIfSignalsBlocked(this._log);
+
     // Reconnecting after a handover is not recovery — the slot is exclusive per number, so a
     // fresh control connection evicts the process that just took over, which reconnects and
     // evicts us back. `call()` funnels through here, so an outbound call placed during or
@@ -370,6 +377,9 @@ export class ClawOpsAgent {
           );
           return;
         }
+        // Whether this line exists at all is the tell for the shell-entrypoint trap: a process
+        // that never heard the signal has no such line. Post-mortems run off the log.
+        this._log.info('%s received — no new calls, finishing the ones in progress', why);
         stop(why);
       };
 
@@ -454,17 +464,23 @@ export class ClawOpsAgent {
       return { completed: 0, forced: 0 };
     }
 
-    this._log.info('Drain: waiting for %d call(s) to finish (timeout %dms)', inFlight, timeoutMs);
-    const deadline = Date.now() + timeoutMs;
+    this._log.info('Drain started: waiting for %d call(s) to finish (timeout %dms)', inFlight, timeoutMs);
+    const started = Date.now();
+    const deadline = started + timeoutMs;
     while (this._activeSessions.size > 0 && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, DRAIN_POLL_INTERVAL_MS));
     }
 
+    const elapsed = Date.now() - started;
     const forced = this._activeSessions.size;
     if (forced > 0) {
-      this._log.warn('Drain timed out — cutting %d call(s) still in progress', forced);
+      this._log.warn(
+        `Drain timed out after ${elapsed}ms — cutting ${forced} call(s) still in progress. ` +
+          'The platform grace period (terminationGracePeriodSeconds / stopTimeout) has to ' +
+          `exceed the ${timeoutMs}ms drain timeout for these cuts to stop.`,
+      );
     } else {
-      this._log.info('Drain complete: all %d call(s) finished', inFlight);
+      this._log.info('Drain complete in %dms: all %d call(s) finished', elapsed, inFlight);
     }
 
     await this.disconnect();

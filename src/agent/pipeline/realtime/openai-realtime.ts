@@ -54,10 +54,17 @@ export interface OpenAIRealtimeOptions {
   turnDetection?: Record<string, unknown> | null;
   /** Send initial greeting. Default: true */
   greeting?: boolean;
+  /**
+   * 발신자 음성 **전사**에 넘기는 어휘 힌트(자유 문장). 예: `'재진, 초진, 예약 변경, 직원 연결'`.
+   * 전사 텍스트(`transcript` 이벤트)의 정확도에만 영향을 주며, 모델이 오디오를 알아듣는
+   * 방식은 바뀌지 않는다 — 모델 쪽 어휘는 `systemPrompt` 에 적는다. 빈 문자열은 보내지 않는다.
+   */
+  transcriptionPrompt?: string;
 }
 
 export class OpenAIRealtime implements Session {
   private _apiKey: string;
+  private _transcriptionPrompt: string | undefined;
   private _systemPrompt: string;
   private _model: string;
   private _voice: string;
@@ -138,6 +145,7 @@ export class OpenAIRealtime implements Session {
             interrupt_response: true,
           };
     this._greeting = options.greeting ?? true;
+    this._transcriptionPrompt = options.transcriptionPrompt;
   }
 
   /** Inject per-call ToolRegistry. */
@@ -313,6 +321,13 @@ export class OpenAIRealtime implements Session {
     const toolSchemas = this._currentToolSchemas();
     this._sentToolNames = toolSchemas.map((t) => String(t['name'] ?? ''));
 
+    const transcription: Record<string, unknown> = {
+      model: 'gpt-4o-transcribe',
+      language: this._language,
+    };
+    // 빈 문자열은 보내지 않는다 — 안 준 것과 같게 둔다.
+    if (this._transcriptionPrompt) transcription['prompt'] = this._transcriptionPrompt;
+
     this._send({
       type: 'session.update',
       session: {
@@ -323,10 +338,7 @@ export class OpenAIRealtime implements Session {
           input: {
             format: { type: 'audio/pcmu' },
             noise_reduction: { type: 'near_field' },
-            transcription: {
-              model: 'gpt-4o-transcribe',
-              language: this._language,
-            },
+            transcription,
             turn_detection: this._turnDetection,
           },
           output: {

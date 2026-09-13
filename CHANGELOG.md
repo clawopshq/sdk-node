@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.44.0 (2026-09-13)
+
+### Added
+- **전사 어휘 힌트 — `new OpenAIRealtime({ transcriptionPrompt })`.** 발신자 음성 전사에
+  어휘 힌트(자유 문장)를 넘깁니다. 진료 용어·업무 용어처럼 일반 전사가 자주 틀리는
+  단어를 적어 두면 `transcript` 이벤트의 전사 텍스트가 그 어휘 쪽으로 맞춰집니다.
+  Python SDK 0.56.0 `transcription_prompt` 와 같습니다.
+
+  ```typescript
+  new OpenAIRealtime({
+    systemPrompt: '...',
+    transcriptionPrompt: '재진, 초진, 예약 변경, 직원 연결',
+  });
+  ```
+
+  - **전사 텍스트에만 영향을 줍니다.** 모델이 오디오를 알아듣는 방식은 바뀌지 않습니다 —
+    모델이 알아야 할 어휘는 `systemPrompt` 에 함께 적어 주세요.
+  - 기본은 보내지 않음이라 기존 동작은 그대로입니다. 빈 문자열도 보내지 않습니다.
+
+### Changed
+- **LiveKit Agents 실행(`LiveKitSession`)이 정식 지원입니다.** 문서의 「실험적」 표기를
+  뗐습니다. 동시통화 1건 제약은 그대로입니다.
+
 ## 0.43.0 (2026-09-10)
 
 **배포에서 전화가 죽던 구간과, 배포가 통화를 끊던 구간이 둘 다 사라집니다.**

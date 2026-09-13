@@ -1,9 +1,9 @@
-# LiveKit Agents 실행 (실험적)
+# LiveKit Agents 실행
 
 [LiveKit Agents](https://docs.livekit.io/agents/) 로 작성한 음성 에이전트를 **LiveKit
 서버도 SIP 도 없이** 실제 ClawOps 전화번호로 실행합니다.
 
-> 실험적 기능이라 API 가 바뀔 수 있고, 동시통화는 현재 1건입니다.
+> 동시통화는 현재 1건입니다.
 
 ## 설치
 

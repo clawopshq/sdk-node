@@ -17,7 +17,7 @@ npm install @teamlearners/clawops ws @deepgram/sdk @google/genai elevenlabs # Ge
 # MCP 서버 지원 포함
 npm install @teamlearners/clawops ws @modelcontextprotocol/sdk
 
-# LiveKit Agents 실행 (실험적) — docs/agent/livekit.md 참조
+# LiveKit Agents 실행 — docs/agent/livekit.md 참조
 npm install @teamlearners/clawops @livekit/agents @livekit/rtc-node
 ```
 
@@ -76,6 +76,7 @@ const agent = new ClawOpsAgent({
     language: 'ko',
     turnDetection: { type: 'semantic_vad', eagerness: 'medium' },
     greeting: true,
+    transcriptionPrompt: '재진, 초진, 예약 변경', // 전사 어휘 힌트 (전사 텍스트에만 영향)
   }),
 
   // 인증 (환경변수 대체 가능)

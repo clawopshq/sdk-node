@@ -354,6 +354,17 @@ export class CallSession {
       callerId?: string;
       callerIdMode?: 'account' | 'original';
       timeout?: number;
+      /**
+       * 전환이 연결되지 않았을 때(무응답·통화중·대상 실패) **발신자에게** 들려주고 끊을 문장.
+       * 주지 않으면 종전대로 아무 말 없이 끊긴다.
+       *
+       * ⚠️ `afterTransfer: 'return'` 에서는 재생되지 않는다 — 그 모드는 에이전트가 통화를
+       * 이어받으므로 무엇을 말할지는 당신 코드가 정한다. 다만 이어받을 채널이 사라져
+       * 서버가 `terminate` 로 내려앉힌 통화에서는 재생된다(그게 발신자가 무음에 남는 경우다).
+       */
+      failureMessage?: string;
+      /** 위 문장을 읽을 음성. `<Say voice>` 와 같은 표기(`cartesia:<id>`). 생략하면 기본 음성. */
+      failureVoice?: string;
     },
   ): Promise<Record<string, unknown>> {
     if (!this._transferFn) {
@@ -379,6 +390,10 @@ export class CallSession {
       timeout: options?.timeout ?? 30,
       // 안 주면 키를 붙이지 않는다 — 구 서버와 기존 동작을 그대로 둔다(additive).
       ...(callerIdMode !== undefined ? { callerIdMode } : {}),
+      // 같은 이유로 안 주면 키 자체를 안 붙인다. 빈 문자열도 보내지 않는다 — 서버가 빈 문장을
+      // 합성하러 가지 않게 하는 것은 서버 쪽에서도 막지만, 굳이 왕복시킬 이유가 없다.
+      ...(options?.failureMessage ? { failureMessage: options.failureMessage } : {}),
+      ...(options?.failureVoice ? { failureVoice: options.failureVoice } : {}),
     });
   }
 

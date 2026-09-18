@@ -216,6 +216,25 @@ await call.transfer('01012345678', {
 });
 ```
 
+### 연결되지 않으면 안내하고 종료
+
+`afterTransfer: 'terminate'`(기본값)에서 대상이 받지 않거나 통화 중이면, 고객은 지금까지
+**아무 말 없이** 끊겼습니다. `failureMessage` 를 주면 끊기 전에 그 문장을 고객에게 들려줍니다.
+
+```typescript
+await call.transfer('01012345678', {
+  failureMessage: '죄송합니다. 담당자와 연결되지 않았습니다. 잠시 후 다시 걸어 주세요.',
+});
+```
+
+재생이 끝나면 통화가 종료됩니다. 고객이 재생 도중에 끊으면 거기서 끝납니다 — 전환 결과
+(`no-answer`·`busy` 등)는 안내와 무관하게 그대로 기록되고, 실패 이벤트는 **안내를 기다리지 않고**
+먼저 나갑니다.
+
+> `afterTransfer: 'return'` 에서는 재생되지 않습니다. 그 모드는 AI가 통화를 이어받으므로
+> 무엇을 말할지는 여러분 코드가 정합니다. 다만 이어받을 채널이 사라져 서버가 `terminate` 로
+> 내려앉힌 통화에서는 재생됩니다 — 그게 고객이 무음에 남는 경우이기 때문입니다.
+
 ### SIP 엔드포인트 전환
 
 전화번호(PSTN) 대신 SIP 엔드포인트로 통화를 직접 전환합니다.
@@ -262,6 +281,8 @@ await call.transfer('01012345678', {
 | `callerIdMode` | `string` | `undefined` | 전환받는 쪽에 표시할 번호를 **의도**로 지정. `'account'`: 계정 번호(기본과 같음), `'original'`: 걸려온 통화의 발신자 번호 표시 |
 | `callerId` | `string` | `undefined` | 표시할 번호를 **직접** 지정. 허용 범위를 벗어나면 전환이 실패합니다 (아래 참고) |
 | `timeout` | `number` | `30` | 대상 응답 대기 시간 (초). 초과 시 전환 실패 처리 |
+| `failureMessage` | `string` | `undefined` | 전환이 연결되지 않았을 때 **고객에게** 들려주고 끊을 문장 (TTS). 주지 않으면 아무 말 없이 종료 |
+| `failureVoice` | `string` | `undefined` | `failureMessage` 를 읽을 음성. `<Say voice>` 와 같은 표기(`cartesia:<음성 ID>`). 생략하면 기본 음성 |
 
 ### 전환받는 쪽에 표시되는 발신번호
 

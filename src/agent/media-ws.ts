@@ -80,6 +80,24 @@ export function buildDtmfMessage(digit: string): string {
   return JSON.stringify({ event: 'dtmf', dtmf: { digit } });
 }
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+/** 공개 호스트로 가는 `ws://` 면 경고한다 — 연결은 막지 않는다(로컬 하네스는 평문을 쓴다). */
+export function warnIfPlaintext(url: string, log: Pick<Logger, 'warn'>): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return;
+  }
+  if (parsed.protocol === 'ws:' && !LOOPBACK_HOSTS.has(parsed.hostname)) {
+    log.warn(
+      'Media WS URL is plaintext (ws://%s); the call token travels unencrypted. ClawOps sends wss:// URLs — check what rewrote this one.',
+      parsed.hostname,
+    );
+  }
+}
+
 export class MediaWebSocket {
   private _ws: WsType | null = null;
   private _audioQueue: string[] = [];
@@ -128,17 +146,19 @@ export class MediaWebSocket {
     return this._ws !== null && this._ws.readyState === 1 && !this._closed;
   }
 
-  /** Connect to a media WebSocket URL with Bearer authentication. */
-  async connect(url: string, apiKey: string): Promise<void> {
+  /**
+   * Connect to a media WebSocket URL.
+   *
+   * 인증은 서버가 준 URL 의 1회용 `token` 하나다. 두 번째 인자(API 키)는 호환을 위해 받기만 하고
+   * 쓰지 않는다 — 예전엔 `Authorization: Bearer` 로 실었지만 서버는 그 헤더를 읽은 적이 없고,
+   * 서버가 `ws://` 를 주던 동안엔 계정 API 키가 평문 첫 요청에 실려 나갔다(clawops#1250).
+   */
+  async connect(url: string, _apiKey?: string): Promise<void> {
     const { WebSocket } = await import('ws');
+    warnIfPlaintext(url, this._log);
 
     return new Promise<void>((resolve, reject) => {
-      const ws = new WebSocket(url, {
-        followRedirects: true,
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-        },
-      });
+      const ws = new WebSocket(url, { followRedirects: true });
       this._ws = ws;
       this._closed = false;
 

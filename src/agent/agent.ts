@@ -1288,7 +1288,7 @@ export class ClawOpsAgent {
         session._emit('call_start');
 
         try {
-          await mediaWs.connect(mediaWsUrl, this._apiKey);
+          await mediaWs.connect(mediaWsUrl);
           this._log.info('Media stream started: %s', session.callId);
 
           // If a prewarm task was kicked off earlier (outbound_ready hook),

@@ -113,15 +113,22 @@ describe('MediaWebSocket.connect (clawops#1250)', () => {
     const { port } = wss.address() as AddressInfo;
 
     const media = new MediaWebSocket();
-    await media.connect(
-      `ws://127.0.0.1:${port}/v1/agent/media/CA1?token=t`,
-      'sk_live_should_not_be_sent',
-    );
-    const headers = await seen;
+    const info = vi.fn();
+    media.setLogger({ info, warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as never);
+    try {
+      await media.connect(
+        `ws://127.0.0.1:${port}/v1/agent/media/CA1?token=secret_token`,
+        'sk_live_should_not_be_sent',
+      );
+      const headers = await seen;
 
-    expect(headers['authorization']).toBeUndefined();
-    await media.close();
-    await new Promise<void>((r) => wss.close(() => r()));
+      expect(headers['authorization']).toBeUndefined();
+      expect(info).toHaveBeenCalled();
+      expect(JSON.stringify(info.mock.calls)).not.toContain('secret_token');
+    } finally {
+      media.close();
+      await new Promise<void>((r) => wss.close(() => r()));
+    }
   });
 });
 

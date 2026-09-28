@@ -98,6 +98,12 @@ export function warnIfPlaintext(url: string, log: Pick<Logger, 'warn'>): void {
   }
 }
 
+/** 로그용 — 1회용 `token` 이 쿼리에 실려 있으므로 쿼리·프래그먼트를 뗀다. */
+function stripQuery(url: string): string {
+  const i = url.search(/[?#]/);
+  return i === -1 ? url : url.slice(0, i);
+}
+
 export class MediaWebSocket {
   private _ws: WsType | null = null;
   private _audioQueue: string[] = [];
@@ -165,7 +171,7 @@ export class MediaWebSocket {
       ws.on('open', () => {
         this._startSendLoop();
         resolve();
-        this._log.info('Media WS connected: %s', url);
+        this._log.info('Media WS connected: %s', stripQuery(url));
       });
 
       ws.on('message', (data: Buffer | string) => {

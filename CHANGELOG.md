@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.46.0 (2026-09-29)
+
+### Added
+- **Gemini thinking 설정 — `new GeminiRealtime({ thinkingConfig })`.**
+  `gemini-3.8-live-extended-thinking` 은 생각 수준(`thinkingLevel`)이 없으면 세션을 열 때
+  `Thinking level must be specified for this model.` 로 거절됩니다. 지금까지는 이 값을 넘길 방법이
+  없어 이 모델을 쓸 수 없었습니다. 값은 해석하지 않고 Gemini 에 그대로 넘기며, 지정하지 않으면
+  보내지 않습니다(기존 동작 그대로).
+
+  ```typescript
+  new GeminiRealtime({
+    model: 'gemini-3.8-live-extended-thinking',
+    thinkingConfig: { thinkingLevel: 'LOW' },
+  });
+  ```
+
+  받는 값은 모델마다 다릅니다 — `gemini-3.8-live` 는 `thinkingLevel` 을 거절합니다.
+  모델별 표는 `docs/agent/quickstart.md` 에 있습니다.
+
+### Fixed
+- ⛔ **Gemini 세션이 열리지 못해도 조용히 지나가던 것.** 두 가지 경우가 있었습니다.
+  - **서버가 설정을 거절하면(1007 등) 통화가 무음이 됐습니다.** `prewarm()` 이 성공으로 끝나고
+    세션은 이미 닫혀 있어, 에이전트가 아무 말도 하지 않았습니다. 거절 사유는 로그에도 남지 않았습니다.
+  - **WebSocket 이 열리기 전에 실패하면 `prewarm()`·`start()` 가 끝나지 않았습니다.**
+    `@google/genai` 의 `live.connect()` 는 연결이 열릴 때만 끝나기 때문입니다. 수신 통화처럼
+    prewarm 시간 제한을 거치지 않는 경로에서는 에이전트가 그 통화에서 멈춰 있었습니다.
+
+  이제 `setupComplete` 를 받아야 세션이 열린 것으로 봅니다. 그 전에 끊기거나 에러가 나거나
+  15초가 지나면 사유를 담아 실패합니다(예: `Gemini Live closed before setup completed (code 1007:
+  Thinking level must be specified for this model.)`). 정상 종료(1000)가 아닌 끊김은 `warn` 으로
+  사유와 함께 남깁니다. Python SDK 는 원래 이렇게 동작했습니다.
+
 ## 0.45.1 (2026-09-28)
 
 ### Security

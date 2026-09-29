@@ -10,7 +10,11 @@ const mockSession = {
   close: vi.fn(),
 };
 
-const mockConnect = vi.fn().mockResolvedValue(mockSession);
+// 실제 서버처럼 연결 직후 setupComplete 를 보낸다 — prewarm 은 이걸 받아야 끝난다.
+const mockConnect = vi.fn().mockImplementation(async ({ callbacks }) => {
+  queueMicrotask(() => callbacks.onmessage({ setupComplete: {} }));
+  return mockSession;
+});
 
 vi.mock('@google/genai', () => ({
   GoogleGenAI: vi.fn().mockImplementation(() => ({
@@ -92,6 +96,7 @@ describe('GeminiRealtime', () => {
       // Stage 3: 포함되지 않음
       expect(config).not.toHaveProperty('realtimeInputConfig');
       expect(config).not.toHaveProperty('contextWindowCompression');
+      expect(config).not.toHaveProperty('thinkingConfig');
 
       // greeting 전송 확인 (3.1에서는 sendRealtimeInput 사용)
       expect(mockSession.sendRealtimeInput).toHaveBeenCalledOnce();
@@ -109,6 +114,25 @@ describe('GeminiRealtime', () => {
       await session.start(call);
 
       expect(mockSession.sendClientContent).not.toHaveBeenCalled();
+
+      await session.stop();
+    });
+
+    it('passes thinkingConfig through as-is', async () => {
+      // gemini-3.8-live-extended-thinking 은 thinkingLevel 이 없으면 연결을 거절한다.
+      const thinkingConfig = { thinkingLevel: 'LOW' };
+      const session = new GeminiRealtime({
+        apiKey: 'test-key',
+        model: 'gemini-3.8-live-extended-thinking',
+        thinkingConfig,
+      });
+      const call = createMockCallSession();
+
+      await session.start(call);
+
+      const connectArgs = mockConnect.mock.calls[0][0];
+      expect(connectArgs.model).toBe('gemini-3.8-live-extended-thinking');
+      expect(connectArgs.config.thinkingConfig).toEqual(thinkingConfig);
 
       await session.stop();
     });

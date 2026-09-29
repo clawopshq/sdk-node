@@ -10,7 +10,11 @@ const mockSession = {
   close: vi.fn(),
 };
 
-const mockConnect = vi.fn().mockResolvedValue(mockSession);
+// 실제 서버처럼 연결 직후 setupComplete 를 보낸다 — prewarm 은 이걸 받아야 끝난다.
+const mockConnect = vi.fn().mockImplementation(async ({ callbacks }) => {
+  queueMicrotask(() => callbacks.onmessage({ setupComplete: {} }));
+  return mockSession;
+});
 
 const mockGenAI = {
   GoogleGenAI: vi.fn().mockImplementation(() => ({
@@ -76,5 +80,61 @@ describe('GeminiRealtime prewarm/attach', () => {
     expect(prewarmSpy).toHaveBeenCalledOnce();
     expect(attachSpy).toHaveBeenCalledOnce();
     expect(attachSpy).toHaveBeenCalledWith(realCall);
+  });
+});
+
+describe('GeminiRealtime prewarm — setup 실패는 조용히 지나가지 않는다', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('rejects with the server reason when the server closes before setupComplete', async () => {
+    // 실측: gemini-3.8-live-extended-thinking 을 thinkingConfig 없이 열면 연결은 열리고
+    // 곧바로 1007 로 끊긴다. 예전엔 prewarm 이 성공으로 끝나고 통화가 무음이 됐다.
+    mockConnect.mockImplementationOnce(async ({ callbacks }) => {
+      queueMicrotask(() =>
+        callbacks.onclose({
+          code: 1007,
+          reason: 'Thinking level must be specified for this model.',
+        }),
+      );
+      return mockSession;
+    });
+    const sess = new GeminiRealtime({ apiKey: 'g-test', greeting: false });
+
+    await expect(sess.prewarm()).rejects.toThrow(
+      'Gemini Live closed before setup completed (code 1007: Thinking level must be specified for this model.)',
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((sess as any)._session).toBeNull();
+  });
+
+  it('rejects when the socket errors before it ever opens (connect never resolves)', async () => {
+    // @google/genai 의 live.connect() 는 onopen 에서만 resolve 한다 — 열리기 전 에러면 영원히 pending.
+    mockConnect.mockImplementationOnce(({ callbacks }) => {
+      queueMicrotask(() => callbacks.onerror(new Error('handshake failed')));
+      return new Promise(() => {});
+    });
+    const sess = new GeminiRealtime({ apiKey: 'g-test', greeting: false });
+
+    await expect(sess.prewarm()).rejects.toThrow('Gemini Live connection error');
+  });
+
+  it('times out when setupComplete never arrives', async () => {
+    vi.useFakeTimers();
+    try {
+      mockConnect.mockImplementationOnce(async () => mockSession);
+      const sess = new GeminiRealtime({ apiKey: 'g-test', greeting: false });
+
+      const p = sess.prewarm();
+      const assertion = expect(p).rejects.toThrow('Gemini Live setup timed out after 15000ms');
+      // prewarm 은 @google/genai/node 를 동적 import 한 뒤에야 타이머를 건다.
+      await vi.dynamicImportSettled();
+      await vi.advanceTimersByTimeAsync(15_000);
+      await assertion;
+      expect(mockSession.close).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

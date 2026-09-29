@@ -141,6 +141,9 @@ function sanitizeSchemaForGemini(
   return result;
 }
 
+/** connect 부터 setupComplete 까지 기다리는 상한. 3.8 Live 는 핸드셰이크+setup 이 10초를 넘긴 적이 있다(2026-09-29 실측). */
+const SETUP_TIMEOUT_MS = 15_000;
+
 export interface GeminiRealtimeOptions {
   /** Google API key. Falls back to GOOGLE_API_KEY env var. */
   apiKey?: string;
@@ -156,6 +159,11 @@ export interface GeminiRealtimeOptions {
   greeting?: boolean;
   /** Gemini VAD config. @google/genai RealtimeInputConfig 구조 그대로 전달. */
   realtimeInputConfig?: Record<string, unknown>;
+  /**
+   * Gemini thinking 설정. @google/genai ThinkingConfig 구조 그대로 전달.
+   * `gemini-3.8-live-extended-thinking` 은 `{ thinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH' }` 이 필수다.
+   */
+  thinkingConfig?: Record<string, unknown>;
 }
 
 export class GeminiRealtime implements Session {
@@ -174,6 +182,7 @@ export class GeminiRealtime implements Session {
   private _language: string;
   private _greeting: boolean;
   private _realtimeInputConfig: Record<string, unknown> | null;
+  private _thinkingConfig: Record<string, unknown> | null;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _session: any = null;
@@ -198,6 +207,7 @@ export class GeminiRealtime implements Session {
     this._language = options.language ?? 'ko';
     this._greeting = options.greeting ?? true;
     this._realtimeInputConfig = options.realtimeInputConfig ?? null;
+    this._thinkingConfig = options.thinkingConfig ?? null;
   }
 
   /** Inject per-call ToolRegistry. */
@@ -269,6 +279,13 @@ export class GeminiRealtime implements Session {
       config['realtimeInputConfig'] = this._realtimeInputConfig;
     }
 
+    // 모델마다 받는 키가 다르다(2026-09-29 실측): gemini-3.8-live-extended-thinking 은
+    // thinkingLevel(LOW·MEDIUM·HIGH)이 없으면 연결을 거절하고, gemini-3.8-live 는
+    // thinkingLevel 을 거절하고 thinkingBudget 만 받는다. 그래서 값을 해석하지 않고 그대로 넘긴다.
+    if (this._thinkingConfig) {
+      config['thinkingConfig'] = this._thinkingConfig;
+    }
+
     if (this._systemPrompt) {
       config['systemInstruction'] = {
         parts: [{ text: this._systemPrompt }],
@@ -282,23 +299,62 @@ export class GeminiRealtime implements Session {
 
     this._log.debug({ config }, 'Gemini SDK final config');
 
-    this._session = await client.live.connect({
+    // live.connect() 는 WebSocket 이 열려야만 끝나고, 서버의 setup 거절(1007 등)은 연결이 열린
+    // 뒤에 온다. 그래서 connect() 만 기다리면 열리기 전 에러에는 영원히 걸리고, setup 거절은
+    // 성공으로 지나가 통화가 무음이 된다. setupComplete 를 받아야 prewarm 을 끝낸다
+    // (Python google-genai 는 connect 가 setup 응답까지 기다린다 — 동작을 맞춘다).
+    let setupDone!: () => void;
+    let setupFailed!: (err: Error) => void;
+    const setup = new Promise<void>((resolve, reject) => {
+      setupDone = resolve;
+      setupFailed = reject;
+    });
+    // 실패가 경주에서 진 뒤에 와도 unhandled rejection 이 되지 않게 한다.
+    setup.catch(() => {});
+    const timer = setTimeout(
+      () => setupFailed(new Error(`Gemini Live setup timed out after ${SETUP_TIMEOUT_MS}ms`)),
+      SETUP_TIMEOUT_MS,
+    );
+
+    const connecting = client.live.connect({
       model: this._model,
       config,
       callbacks: {
-        onmessage: (msg) => this._handleMessage(msg),
+        onmessage: (msg) => {
+          if (msg.setupComplete) setupDone();
+          this._handleMessage(msg);
+        },
         onerror: (err) => {
           this._log.error({ err }, 'Gemini SDK error');
+          setupFailed(new Error('Gemini Live connection error'));
         },
         onclose: (ev) => {
-          this._log.info(
-            { code: (ev as { code?: number })?.code ?? 'unknown' },
-            'Gemini connection closed',
-          );
+          const { code, reason } = (ev ?? {}) as { code?: number; reason?: string };
+          // 1007 등 서버 거절 사유는 reason 에만 담긴다(예: "Thinking level must be specified").
+          const fields = { code: code ?? 'unknown', reason: reason || undefined };
+          if (code === 1000) this._log.info(fields, 'Gemini connection closed');
+          else this._log.warn(fields, 'Gemini connection closed');
           this._closed = true;
+          setupFailed(
+            new Error(
+              `Gemini Live closed before setup completed (code ${code ?? 'unknown'}${reason ? `: ${reason}` : ''})`,
+            ),
+          );
         },
       },
     });
+
+    try {
+      this._session = await Promise.race([connecting, setup.then(() => connecting)]);
+      await setup;
+    } catch (err) {
+      // 열리기 전에 실패했으면 나중에 열리는 세션을 닫아 upstream 연결을 남기지 않는다.
+      void connecting.then((sess) => sess.close()).catch(() => {});
+      this._session = null;
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
     this._log.info('Gemini Live connected (prewarm)');
 
     if (this._greeting) {

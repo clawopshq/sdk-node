@@ -44,7 +44,11 @@ const mockGeminiSession = {
   sendToolResponse: vi.fn(),
   close: vi.fn(),
 };
-const mockConnect = vi.fn().mockResolvedValue(mockGeminiSession);
+// 실제 서버처럼 연결 직후 setupComplete 를 보낸다 — prewarm 은 이걸 받아야 끝난다.
+const mockConnect = vi.fn().mockImplementation(async ({ callbacks }) => {
+  queueMicrotask(() => callbacks.onmessage({ setupComplete: {} }));
+  return mockGeminiSession;
+});
 const mockGenAI = {
   GoogleGenAI: vi.fn().mockImplementation(() => ({
     live: { connect: mockConnect },

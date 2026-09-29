@@ -827,6 +827,8 @@ export class ClawOpsAgent {
       toNumber: this._fromNumber,
       accountId: this._accountId,
       direction: 'inbound',
+      // 이 필드를 모르는 서버는 키를 보내지 않는다 — boolean 이 아니면 false.
+      callerIdRestricted: event['callerIdRestricted'] === true,
     });
 
     // Register all agent-level event handlers on the session

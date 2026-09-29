@@ -28,6 +28,11 @@ export const CallSchema = z
     /** AMD(machineDetection) 결과 — AMD 켠 발신 통화에만 값 존재. */
     answeredBy: z.enum(['human', 'machine', 'unknown']).nullable().optional(),
     /**
+     * 수신 통화에서 발신자가 번호 표시제한(`*23#` 등)을 걸고 건 통화면 true, 아니면 false.
+     * 번호는 `from` 에 그대로 있다. 발신 통화와 2026-09-29 이전의 수신 통화는 null.
+     */
+    callerIdRestricted: z.boolean().nullable().optional(),
+    /**
      * 통화 종료 사유. status 가 왜 그렇게 끝났는지를 구분한다 — 특히 failed 는 결번·망 오류·
      * 시스템 오류를 모두 포함하는 대분류라, 발신 리스트를 정제하려면 status 가 아니라 이 값을 본다.
      *

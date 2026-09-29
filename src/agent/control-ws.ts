@@ -22,7 +22,8 @@ export interface ControlWsOptions {
 
 /**
  * Control event is a flat JSON object with an 'event' field.
- * Example: { "event": "call.incoming", "callId": "xxx", "from": "070...", "mediaUrl": "wss://..." }
+ * Example: { "event": "call.incoming", "callId": "xxx", "from": "070...", "mediaUrl": "wss://...",
+ *            "callerIdRestricted": false }
  */
 export interface ControlEvent {
   event: string;

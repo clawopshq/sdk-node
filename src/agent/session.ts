@@ -61,6 +61,12 @@ export class CallSession {
   readonly toNumber: string;
   readonly accountId: string;
   readonly direction: CallDirection;
+  /**
+   * 수신 통화에서 발신자가 번호 표시제한(`*23#` 등)을 걸고 건 통화면 `true`.
+   * 번호는 `fromNumber` 에 그대로 전달되고, 표시제한 여부만 이 값으로 알 수 있다.
+   * 통신사가 표시제한 여부를 보내지 않은 통화와 발신 통화는 `false`.
+   */
+  readonly callerIdRestricted: boolean;
   readonly startTime: Date;
   readonly metadata: Record<string, unknown>;
 
@@ -97,6 +103,7 @@ export class CallSession {
     toNumber: string;
     accountId: string;
     direction: CallDirection;
+    callerIdRestricted?: boolean;
     metadata?: Record<string, unknown>;
   }) {
     this.callId = options.callId;
@@ -104,6 +111,7 @@ export class CallSession {
     this.toNumber = options.toNumber;
     this.accountId = options.accountId;
     this.direction = options.direction;
+    this.callerIdRestricted = options.callerIdRestricted ?? false;
     this.metadata = options.metadata ?? {};
     this._status = 'ringing';
     this.startTime = new Date();

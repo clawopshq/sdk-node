@@ -61,6 +61,7 @@ agent.on('call_failed', async (call, reason) => {
 | `toNumber` | `string` | 수신 번호 |
 | `accountId` | `string` | 계정 ID |
 | `direction` | `string` | `"inbound"` 또는 `"outbound"` |
+| `callerIdRestricted` | `boolean` | 수신 통화에서 발신자가 번호 표시제한(`*23#` 등)을 걸고 건 통화면 `true`. 번호는 `fromNumber` 에 그대로 전달됩니다. 통신사가 표시제한 여부를 보내지 않은 통화와 발신 통화는 `false` |
 | `status` | `CallStatus` | 수명주기 상태. 아래 표 참고 |
 | `endedStatus` | `string \| null` | 종료 사유. 통화가 끝나기 전에는 `null` |
 | `endedDuration` | `number \| null` | **서버가 확정한 통화 시간(초).** 아래 설명 참고 |

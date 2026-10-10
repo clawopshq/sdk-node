@@ -214,6 +214,18 @@ export interface GeminiRealtimeOptions {
   toolResponseScheduling?: ToolScheduling;
   /** Gemini API 버전(`v1beta` 기본). `GoogleGenAI({ httpOptions: { apiVersion } })` 로 넘긴다. */
   apiVersion?: string;
+  /**
+   * Gemini `contextWindowCompression` 그대로 전달. 압축을 켜지 않은 오디오 세션은 15분에서 끝나므로
+   * 긴 통화에는 `{ slidingWindow: {} }` 를 권장. 지정하지 않으면 보내지 않는다.
+   */
+  contextWindowCompression?: Record<string, unknown>;
+  /**
+   * 세션 재접속(기본 true). 접속 때마다 `sessionResumption` 핸들을 보내 서버가 주는 새 핸들을 보관하고,
+   * `goAway`(연결 약 10분 한도)·예기치 않은 끊김에서 그 핸들로 다시 접속해 대화를 이어 간다.
+   */
+  sessionResumption?: boolean;
+  /** 재접속 시도 상한(기본 3). 다 실패하면 통화에 `session_lost` 를 알리고 끊는다. */
+  reconnectMaxAttempts?: number;
 }
 
 export class GeminiRealtime implements Session {
@@ -245,6 +257,15 @@ export class GeminiRealtime implements Session {
   // 진행 중인 NON_BLOCKING 호출. Promise 는 끊을 수 없으니 취소 표시만 하고 끝나도 응답을 안 보낸다.
   private _inflight = new Map<string, { cancelled: boolean }>();
   private _schedulingDroppedWarned = false;
+  // ── 세션 수명(LiveKit livekit-plugins-google 의 처리를 이식) ──
+  private _contextWindowCompression: Record<string, unknown> | null;
+  private _sessionResumption: boolean;
+  private _reconnectMaxAttempts: number;
+  private _resumptionHandle: string | null = null;
+  private _reconnecting = false;
+  private _stopping = false;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private _client: any = null;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _session: any = null;
@@ -290,6 +311,9 @@ export class GeminiRealtime implements Session {
     }
     this._toolResponseScheduling = options.toolResponseScheduling ?? null;
     this._apiVersion = options.apiVersion ?? null;
+    this._contextWindowCompression = options.contextWindowCompression ?? null;
+    this._sessionResumption = options.sessionResumption ?? true;
+    this._reconnectMaxAttempts = Math.max(0, options.reconnectMaxAttempts ?? 3);
   }
 
   /**
@@ -435,6 +459,8 @@ export class GeminiRealtime implements Session {
     if (tools) this._tools = tools;
     this._call = new BufferingCall();
     this._closed = false;
+    this._stopping = false;
+    this._resumptionHandle = null;
     this._sentAudioChunks = 0;
     this._audioRemainder = Buffer.alloc(0);
 
@@ -445,8 +471,21 @@ export class GeminiRealtime implements Session {
     if (this._apiKey) clientOptions['apiKey'] = this._apiKey;
     // 기본값은 v1beta. proactivity 등 일부 기능은 다른 버전을 요구할 수 있어 그대로 넘긴다.
     if (this._apiVersion) clientOptions['httpOptions'] = { apiVersion: this._apiVersion };
-    const client = new GoogleGenAI(clientOptions);
+    this._client = new GoogleGenAI(clientOptions);
+    this._traceT0 = Date.now();
 
+    this._session = await this._connect();
+    this._log.info('Gemini Live connected (prewarm)');
+
+    if (this._greeting) {
+      this._session.sendRealtimeInput({ text: '인사해 주세요.' });
+    }
+  }
+
+  /** Live 연결 하나를 연다(setupComplete 까지 기다림). prewarm 과 재접속이 함께 쓴다. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async _connect(): Promise<any> {
+    const client = this._client;
     const config: Record<string, unknown> = {
       responseModalities: ['AUDIO'],
       speechConfig: {
@@ -483,14 +522,28 @@ export class GeminiRealtime implements Session {
       };
     }
 
+    // 압축을 켜지 않은 오디오 세션은 15분에서 끝난다(공식 문서). 값은 해석하지 않고 그대로 넘긴다.
+    if (this._contextWindowCompression !== null) {
+      config['contextWindowCompression'] = this._contextWindowCompression;
+    }
+    // 핸들이 없어도 보내야 서버가 sessionResumptionUpdate 로 새 핸들을 준다.
+    if (this._sessionResumption) {
+      config['sessionResumption'] = this._resumptionHandle
+        ? { handle: this._resumptionHandle }
+        : {};
+    }
+
     const toolSchemas = this._buildToolSchemas();
     if (toolSchemas.length > 0) {
       config['tools'] = [{ functionDeclarations: toolSchemas }];
     }
 
     this._log.debug({ config }, 'Gemini SDK final config');
-    this._traceT0 = Date.now();
-    this._trace('connect', { model: this._model, tool_behavior: this.effectiveToolBehavior() });
+    this._trace('connect', {
+      model: this._model,
+      tool_behavior: this.effectiveToolBehavior(),
+      resume: !!this._resumptionHandle,
+    });
 
     // live.connect() 는 WebSocket 이 열려야만 끝나고, 서버의 setup 거절(1007 등)은 연결이 열린
     // 뒤에 온다. 그래서 connect() 만 기다리면 열리기 전 에러에는 영원히 걸리고, setup 거절은
@@ -509,49 +562,132 @@ export class GeminiRealtime implements Session {
       SETUP_TIMEOUT_MS,
     );
 
+    let isSetUp = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let thisSession: any = null;
     const connecting = client.live.connect({
       model: this._model,
       config,
       callbacks: {
-        onmessage: (msg) => {
-          if (msg.setupComplete) setupDone();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        onmessage: (msg: any) => {
+          if (msg.setupComplete) {
+            isSetUp = true;
+            setupDone();
+          }
           this._handleMessage(msg);
         },
-        onerror: (err) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        onerror: (err: any) => {
           this._log.error({ err }, 'Gemini SDK error');
           setupFailed(new Error('Gemini Live connection error'));
         },
-        onclose: (ev) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        onclose: (ev: any) => {
           const { code, reason } = (ev ?? {}) as { code?: number; reason?: string };
           // 1007 등 서버 거절 사유는 reason 에만 담긴다(예: "Thinking level must be specified").
           const fields = { code: code ?? 'unknown', reason: reason || undefined };
           if (code === 1000) this._log.info(fields, 'Gemini connection closed');
           else this._log.warn(fields, 'Gemini connection closed');
-          this._closed = true;
-          setupFailed(
-            new Error(
-              `Gemini Live closed before setup completed (code ${code ?? 'unknown'}${reason ? `: ${reason}` : ''})`,
-            ),
-          );
+          if (!isSetUp) {
+            setupFailed(
+              new Error(
+                `Gemini Live closed before setup completed (code ${code ?? 'unknown'}${reason ? `: ${reason}` : ''})`,
+              ),
+            );
+            return;
+          }
+          // 통화 중 끊김. 이 연결이 아직 현재 세션이면(= goAway 재접속으로 이미 바뀐 게 아니면) 다시 접속한다.
+          if (!this._stopping && thisSession !== null && this._session === thisSession) {
+            void this._reconnect(
+              `closed (code ${code ?? 'unknown'}${reason ? `: ${reason}` : ''})`,
+            );
+          }
         },
       },
     });
 
     try {
-      this._session = await Promise.race([connecting, setup.then(() => connecting)]);
+      thisSession = await Promise.race([connecting, setup.then(() => connecting)]);
       await setup;
     } catch (err) {
       // 열리기 전에 실패했으면 나중에 열리는 세션을 닫아 upstream 연결을 남기지 않는다.
-      void connecting.then((sess) => sess.close()).catch(() => {});
-      this._session = null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      void connecting.then((sess: any) => sess.close()).catch(() => {});
       throw err;
     } finally {
       clearTimeout(timer);
     }
-    this._log.info('Gemini Live connected (prewarm)');
+    this._closed = false;
+    return thisSession;
+  }
 
-    if (this._greeting) {
-      this._session.sendRealtimeInput({ text: '인사해 주세요.' });
+  /**
+   * 같은 대화를 새 연결로 이어 간다(sessionResumption 핸들). 실패가 상한에 닿으면 통화에 `session_lost` 를
+   * 알리고 끊는다 — 모델만 사라진 채 통화가 무음으로 이어지는 것이 가장 나쁜 실패이기 때문이다.
+   */
+  private async _reconnect(reason: string): Promise<boolean> {
+    if (this._stopping || this._reconnecting) return !this._stopping;
+    this._reconnecting = true;
+    const old = this._session;
+    this._session = null; // 그동안 feedAudio 는 조용히 버린다
+    this._trace('reconnect', { reason, handle: !!this._resumptionHandle });
+    this._log.info('Gemini Live reconnecting (%s, resume=%s)', reason, !!this._resumptionHandle);
+    let lastError: unknown = null;
+    try {
+      for (let attempt = 1; attempt <= this._reconnectMaxAttempts; attempt++) {
+        try {
+          const sess = await this._connect();
+          this._session = sess;
+          this._pendingToolCall = null;
+          this._audioRemainder = Buffer.alloc(0);
+          if (old && old !== sess) {
+            try {
+              const ret = old.close();
+              if (ret && typeof ret.then === 'function') await ret;
+            } catch {
+              // 옛 연결 정리 실패는 치명적이지 않다
+            }
+          }
+          this._trace('reconnected', { attempt });
+          this._log.info('Gemini Live reconnected (attempt %d)', attempt);
+          return true;
+        } catch (err) {
+          lastError = err;
+          this._log.warn(
+            { err },
+            'Gemini Live reconnect attempt %d/%d failed',
+            attempt,
+            this._reconnectMaxAttempts,
+          );
+          await new Promise((r) => setTimeout(r, Math.min(500 * 2 ** (attempt - 1), 2000)));
+        }
+      }
+      await this._onSessionLost(
+        `${reason}; reconnect failed after ${this._reconnectMaxAttempts} attempts: ${String(lastError)}`,
+      );
+      return false;
+    } finally {
+      this._reconnecting = false;
+    }
+  }
+
+  /** 재접속을 포기했다. 통화 쪽에 알리고 끊는다(무음 방치 금지). */
+  private async _onSessionLost(reason: string): Promise<void> {
+    this._trace('session_lost', { reason });
+    this._log.error('Gemini Live session lost: %s — hanging up', reason);
+    this._closed = true;
+    const call = this._call;
+    if (!call || call instanceof BufferingCall) return;
+    try {
+      call._emit('session_lost', reason);
+    } catch (err) {
+      this._log.error({ err }, 'session_lost handler failed');
+    }
+    try {
+      await call.hangup();
+    } catch (err) {
+      this._log.error({ err }, 'hangup after session loss failed');
     }
   }
 
@@ -591,6 +727,7 @@ export class GeminiRealtime implements Session {
   }
 
   async stop(): Promise<void> {
+    this._stopping = true;
     this._closed = true;
     if (this._toolDrainTimer) {
       clearTimeout(this._toolDrainTimer);
@@ -711,6 +848,17 @@ export class GeminiRealtime implements Session {
         this._log.info('Assistant: %s', outputText);
         this._call._emit('transcript', 'assistant', outputText);
       }
+    }
+
+    // ── 세션 수명 ──
+    const upd = msg.sessionResumptionUpdate;
+    if (upd?.resumable && upd.newHandle) {
+      this._resumptionHandle = upd.newHandle;
+      this._trace('session_resumption_update', { handle: upd.newHandle.slice(0, 12) + '…' });
+    }
+    if (msg.goAway && !this._stopping) {
+      this._log.info({ timeLeft: msg.goAway.timeLeft }, 'Gemini goAway received — reconnecting');
+      void this._reconnect('go_away');
     }
 
     // Handle tool calls — NON_BLOCKING 은 즉시, BLOCKING 은 debounce 로 남은 오디오 drain 후 실행

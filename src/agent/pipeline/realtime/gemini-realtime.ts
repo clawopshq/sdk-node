@@ -625,9 +625,27 @@ export class GeminiRealtime implements Session {
     return thisSession;
   }
 
+  /** 연결 하나를 조용히 닫는다. 서버가 세션을 놓아야 같은 핸들로 다시 붙을 수 있다. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async _closeQuietly(sess: any): Promise<void> {
+    if (!sess) return;
+    try {
+      const ret = sess.close();
+      if (ret && typeof ret.then === 'function')
+        await Promise.race([ret, new Promise((r) => setTimeout(r, 2000))]);
+    } catch {
+      // 죽은 연결 정리 실패는 치명적이지 않다
+    }
+  }
+
   /**
-   * 같은 대화를 새 연결로 이어 간다(sessionResumption 핸들). 실패가 상한에 닿으면 통화에 `session_lost` 를
-   * 알리고 끊는다 — 모델만 사라진 채 통화가 무음으로 이어지는 것이 가장 나쁜 실패이기 때문이다.
+   * 같은 대화를 새 연결로 이어 간다(sessionResumption 핸들).
+   * 순서: 옛 연결을 먼저 닫는다(서버가 세션을 놓게) → 핸들로 재접속(상한만큼, 백오프 1/2/4초) → 그래도 안 되면
+   * 핸들 없이 새 세션으로 이어 간다(대화 기억은 잃지만 통화는 산다) → 그것마저 실패하면 통화에 `session_lost` 를
+   * 알리고 끊는다. 모델만 사라진 채 통화가 무음으로 이어지는 것이 가장 나쁜 실패다.
+   *
+   * 2026-10-10 실측(Python): setup 이 안 끝나 버린 연결이 서버엔 살아 있어 다음 시도가 1008 "session is already
+   * connected to an existing client" 로 거절됐다. 그래서 실패한 시도의 연결도 반드시 닫는다.
    */
   private async _reconnect(reason: string): Promise<boolean> {
     if (this._stopping || this._reconnecting) return !this._stopping;
@@ -636,39 +654,53 @@ export class GeminiRealtime implements Session {
     this._session = null; // 그동안 feedAudio 는 조용히 버린다
     this._trace('reconnect', { reason, handle: !!this._resumptionHandle });
     this._log.info('Gemini Live reconnecting (%s, resume=%s)', reason, !!this._resumptionHandle);
-    let lastError: unknown = null;
+    await this._closeQuietly(old);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tryConnect = async (): Promise<any | null> => {
+      try {
+        return await this._connect();
+      } catch (err) {
+        this._log.warn({ err }, 'Gemini Live reconnect attempt failed');
+        return null;
+      }
+    };
+    const adopt = (sess: unknown) => {
+      this._session = sess;
+      this._pendingToolCall = null;
+      this._audioRemainder = Buffer.alloc(0);
+    };
+
     try {
-      for (let attempt = 1; attempt <= this._reconnectMaxAttempts; attempt++) {
-        try {
-          const sess = await this._connect();
-          this._session = sess;
-          this._pendingToolCall = null;
-          this._audioRemainder = Buffer.alloc(0);
-          if (old && old !== sess) {
-            try {
-              const ret = old.close();
-              if (ret && typeof ret.then === 'function') await ret;
-            } catch {
-              // 옛 연결 정리 실패는 치명적이지 않다
-            }
-          }
-          this._trace('reconnected', { attempt });
-          this._log.info('Gemini Live reconnected (attempt %d)', attempt);
-          return true;
-        } catch (err) {
-          lastError = err;
-          this._log.warn(
-            { err },
-            'Gemini Live reconnect attempt %d/%d failed',
+      const attempts = this._reconnectMaxAttempts;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        const sess = await tryConnect();
+        if (sess) {
+          adopt(sess);
+          this._trace('reconnected', { attempt, resumed: !!this._resumptionHandle });
+          this._log.info(
+            'Gemini Live reconnected (attempt %d, resumed=%s)',
             attempt,
-            this._reconnectMaxAttempts,
+            !!this._resumptionHandle,
           );
-          await new Promise((r) => setTimeout(r, Math.min(500 * 2 ** (attempt - 1), 2000)));
+          return true;
+        }
+        if (attempt < attempts)
+          await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** (attempt - 1), 4000)));
+      }
+      if (this._resumptionHandle && !this._stopping) {
+        // 핸들 재접속을 포기하고 새 세션으로 이어 간다. systemPrompt·도구는 config 에 있어 그대로다.
+        this._log.warn('Gemini Live resume failed; starting a fresh session without context');
+        this._resumptionHandle = null;
+        const sess = await tryConnect();
+        if (sess) {
+          adopt(sess);
+          this._trace('reconnected', { attempt: attempts + 1, resumed: false });
+          this._log.info('Gemini Live reconnected without context (fresh session)');
+          return true;
         }
       }
-      await this._onSessionLost(
-        `${reason}; reconnect failed after ${this._reconnectMaxAttempts} attempts: ${String(lastError)}`,
-      );
+      await this._onSessionLost(`${reason}; reconnect failed after ${attempts} attempts (+fresh)`);
       return false;
     } finally {
       this._reconnecting = false;

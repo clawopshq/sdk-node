@@ -797,7 +797,7 @@ describe('GeminiRealtime', () => {
       await session.stop();
     });
 
-    it('emits session_lost and hangs up when reconnect keeps failing', async () => {
+    it('emits session_lost and hangs up when reconnect keeps failing (handle + fresh)', async () => {
       const s1 = makeSession();
       const seen = connectSequence([s1, new Error('boom')]);
       const session = new GeminiRealtime({
@@ -809,10 +809,60 @@ describe('GeminiRealtime', () => {
       const call = createMockCallSession();
       await session.start(call);
 
+      seen[0]!.callbacks.onmessage({
+        sessionResumptionUpdate: { resumable: true, newHandle: 'h-1' },
+      });
       seen[0]!.callbacks.onmessage({ goAway: { timeLeft: '1s' } });
-      await new Promise((r) => setTimeout(r, 700));
-      expect(call._emit).toHaveBeenCalledWith('session_lost', expect.stringContaining('boom'));
+      await new Promise((r) => setTimeout(r, 200));
+      // 핸들 시도 1회 + 핸들 없는 새 세션 시도 1회
+      expect(mockConnect).toHaveBeenCalledTimes(3);
+      expect(s1.close).toHaveBeenCalledOnce(); // 옛 연결은 재접속 전에 닫는다
+      expect(call._emit).toHaveBeenCalledWith(
+        'session_lost',
+        expect.stringContaining('reconnect failed'),
+      );
       expect(call.hangup).toHaveBeenCalledOnce();
+      await session.stop();
+    });
+
+    it('falls back to a fresh session when resuming with the handle is rejected', async () => {
+      const s1 = makeSession();
+      const fresh = makeSession();
+      const seen: Array<{
+        config: Record<string, unknown>;
+        callbacks: Record<string, (x: unknown) => void>;
+      }> = [];
+      mockConnect.mockImplementation(async ({ config, callbacks }) => {
+        seen.push({ config, callbacks });
+        const resumption = config['sessionResumption'] as { handle?: string } | undefined;
+        if (seen.length === 1) {
+          queueMicrotask(() => callbacks.onmessage({ setupComplete: {} }));
+          return s1;
+        }
+        if (resumption?.handle)
+          throw new Error('1008 session is already connected to an existing client');
+        queueMicrotask(() => callbacks.onmessage({ setupComplete: {} }));
+        return fresh;
+      });
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+        reconnectMaxAttempts: 1,
+      });
+      const call = createMockCallSession();
+      await session.start(call);
+      seen[0]!.callbacks.onmessage({
+        sessionResumptionUpdate: { resumable: true, newHandle: 'h-1' },
+      });
+      seen[0]!.callbacks.onmessage({ goAway: { timeLeft: '1s' } });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(
+        seen.map((x) => (x.config['sessionResumption'] as { handle?: string })?.handle ?? null),
+      ).toEqual([null, 'h-1', null]);
+      session.feedAudio(Buffer.alloc(160, 0xff));
+      expect(fresh.sendRealtimeInput).toHaveBeenCalledOnce();
+      expect(call.hangup).not.toHaveBeenCalled();
       await session.stop();
     });
 

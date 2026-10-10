@@ -181,6 +181,39 @@ session: new GeminiRealtime({
 모델이 받지 않는 값을 넣으면 세션을 열 때 Gemini 가 거절 사유와 함께 실패합니다.
 생각 수준을 높일수록 응답 전 대기가 길어지므로, 전화 상담에서는 `LOW` 부터 시작하는 것을 권장합니다.
 
+#### 함수 호출 behavior 와 proactive audio (3.8 Live)
+
+Gemini 3.8 Live 는 함수 호출 기본값이 비동기(`NON_BLOCKING`)입니다. 비동기 모드에서는 도구 결과를
+기다리는 동안 모델이 계속 말하므로, 전화에서는 결과가 나올 때까지 모델이 기다리는 동기(`BLOCKING`)가
+맞습니다. SDK 는 모델별 기본값을 함수 선언에 자동으로 싣고, `toolBehavior` 로 덮어쓸 수 있습니다.
+
+```typescript
+session: new GeminiRealtime({
+  systemPrompt: '상담원입니다.',
+  model: 'gemini-3.8-live',
+  toolBehavior: 'BLOCKING', // 생략하면 3.8-live 는 BLOCKING 이 기본
+}),
+```
+
+| 파라미터 | 타입 | 설명 |
+| --- | --- | --- |
+| `toolBehavior` | `'BLOCKING' \| 'NON_BLOCKING'` | 모든 함수 선언(커스텀·MCP·내장)에 실리는 `behavior`. 생략하면 모델별 기본값(`defaultToolBehavior(model)`). |
+| `proactiveAudio` | `boolean` | `proactivity.proactiveAudio`. 지정하지 않으면 보내지 않습니다. |
+| `apiVersion` | `string` | `@google/genai` `httpOptions.apiVersion`. 기본 `v1beta`. |
+
+모델별 동작(2026-10-10, 모델 페이지·실측 기준):
+
+| 모델 | `behavior` | proactive audio |
+| --- | --- | --- |
+| `gemini-3.8-live` | 서버 기본값 NON_BLOCKING. SDK 기본값은 **BLOCKING** 명시 | 영구 ON. `false` 는 거절 |
+| `gemini-3.8-live-extended-thinking` | **NON_BLOCKING 만** 받음(BLOCKING 은 하드 에러). SDK 기본값 NON_BLOCKING | 영구 ON. `false` 는 거절 |
+| `gemini-3.1-flash-live-preview` | 동기만. SDK 는 보내지 않음 | 미지원 |
+
+`gemini-3.8-live-extended-thinking` 은 비동기 도구 실행만 가능해, 도구 결과를 기다리는 동안 모델이
+말할 수 있습니다. 도구를 쓰는 전화 에이전트에는 `gemini-3.8-live` 를 권장합니다.
+
+타이밍 문제를 보고할 때는 `CLAWOPS_GEMINI_DEBUG=1` 로 띄워 `[gemini-trace]` 로그를 함께 보내 주세요.
+
 ### 음성 옵션
 
 | 음성     | 특징                         |

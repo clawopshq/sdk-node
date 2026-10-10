@@ -816,6 +816,48 @@ describe('GeminiRealtime', () => {
       await session.stop();
     });
 
+    it('ignores control messages from the replaced connection but still passes transcripts', async () => {
+      const s1 = makeSession();
+      const s2 = makeSession();
+      const seen = connectSequence([s1, s2, makeSession()]);
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+      });
+      const call = createMockCallSession();
+      await session.start(call);
+      seen[0]!.callbacks.onmessage({
+        sessionResumptionUpdate: { resumable: true, newHandle: 'h-1' },
+      });
+      seen[0]!.callbacks.onmessage({ goAway: { timeLeft: '10s' } });
+      await tick();
+      await tick();
+      expect(mockConnect).toHaveBeenCalledTimes(2);
+      seen[1]!.callbacks.onmessage({
+        sessionResumptionUpdate: { resumable: true, newHandle: 'h-2' },
+      });
+
+      // 옛 연결(s1)에서 늦게 온 제어 메시지들
+      seen[0]!.callbacks.onmessage({
+        sessionResumptionUpdate: { resumable: true, newHandle: 'h-stale' },
+      });
+      seen[0]!.callbacks.onmessage({ goAway: { timeLeft: '1s' } });
+      seen[0]!.callbacks.onmessage({
+        serverContent: { outputTranscription: { text: '늦은 전사' } },
+      });
+      await tick();
+      await tick();
+      expect(mockConnect).toHaveBeenCalledTimes(2); // 재접속을 또 하지 않는다
+      expect(call._emit).toHaveBeenCalledWith('transcript', 'assistant', '늦은 전사');
+      // 옛 핸들이 새 핸들을 덮지 않았다: 다음 재접속은 h-2 로 간다
+      seen[1]!.callbacks.onmessage({ goAway: { timeLeft: '10s' } });
+      await tick();
+      await tick();
+      expect(seen[2]!.config['sessionResumption']).toEqual({ handle: 'h-2' });
+      await session.stop();
+    });
+
     it('does not reconnect after stop()', async () => {
       const s1 = makeSession();
       const seen = connectSequence([s1, makeSession()]);

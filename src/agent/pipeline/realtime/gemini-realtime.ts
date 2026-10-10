@@ -575,7 +575,10 @@ export class GeminiRealtime implements Session {
             isSetUp = true;
             setupDone();
           }
-          this._handleMessage(msg);
+          // 재접속으로 교체된 옛 연결의 메시지는 오디오·전사만 흘리고 제어 메시지는 무시한다.
+          const stale =
+            thisSession !== null && this._session !== null && this._session !== thisSession;
+          this._handleMessage(msg, stale);
         },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         onerror: (err: any) => {
@@ -789,7 +792,12 @@ export class GeminiRealtime implements Session {
     return toolDefs;
   }
 
-  private _handleMessage(msg: LiveServerMessage): void {
+  /**
+   * 서버 메시지 하나를 처리한다. `stale` 은 재접속으로 교체된 옛 연결에서 온 메시지다 — 남은 오디오·전사는
+   * 그대로 흘리되 goAway·sessionResumptionUpdate·toolCall 같은 제어 메시지는 무시한다(옛 연결의 늦은
+   * goAway 가 재접속을 또 일으키거나 옛 핸들이 새 핸들을 덮으면 안 된다).
+   */
+  private _handleMessage(msg: LiveServerMessage, stale = false): void {
     if (!this._call) return;
     if (TRACE_ENABLED) this._traceMessage(msg);
 
@@ -849,6 +857,8 @@ export class GeminiRealtime implements Session {
         this._call._emit('transcript', 'assistant', outputText);
       }
     }
+
+    if (stale) return;
 
     // ── 세션 수명 ──
     const upd = msg.sessionResumptionUpdate;

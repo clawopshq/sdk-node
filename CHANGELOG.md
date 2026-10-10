@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.48.0 (2026-10-10)
+
+### Fixed
+- **`gemini-3.8-live` 에서 도구 실행 중 모델이 계속 말하던 문제 — 함수 선언에 `behavior` 를 명시합니다.**
+  Gemini 3.8 Live 는 함수 호출 기본값이 비동기(`NON_BLOCKING`)로 바뀌었습니다(모델 페이지
+  「Migrating from Gemini 3.1 Flash Live」). SDK 가 `behavior` 를 보내지 않아 서버는 도구를 비동기로
+  돌리고, 도구 결과를 기다리는 사이 모델이 한 말이 결과 뒤에 몰려 나와 발화가 겹친 것처럼 들렸습니다.
+  이제 모델별 기본값을 함수 선언(커스텀·MCP·내장 도구 전부)에 싣습니다.
+
+  | 모델 | 기본 `behavior` |
+  | --- | --- |
+  | `gemini-3.8-live` | `BLOCKING` — 3.1 과 같은 동기 동작 복원 |
+  | `gemini-3.8-live-extended-thinking` | `NON_BLOCKING` — 이 모델은 `BLOCKING` 을 거절합니다 |
+  | 그 외(`gemini-3.1-flash-live-preview` 등) | 보내지 않음(서버 기본값 = 동기) |
+
+### Added
+- **`new GeminiRealtime({ toolBehavior })`** — `'BLOCKING'` 또는 `'NON_BLOCKING'` 으로 모델별 기본값을
+  덮어씁니다. 모든 도구에 같은 값이 실립니다(도구별 지정과 비동기 도구 실행 런타임은 다음 버전).
+  `defaultToolBehavior(model)` 도 export 합니다.
+- **`new GeminiRealtime({ proactiveAudio })`** — `proactivity.proactiveAudio` 에 그대로 실립니다.
+  3.8 두 모델은 영구 ON 이라 `false` 를 보내면 거절되고, 3.1 은 미지원입니다. 지정하지 않으면 보내지 않습니다.
+- **`new GeminiRealtime({ apiVersion })`** — `@google/genai` 클라이언트의 `httpOptions.apiVersion`
+  (기본 `v1beta`)을 바꿉니다.
+- **`CLAWOPS_GEMINI_DEBUG=1`** — Live 서버 메시지(오디오 바이트 수·턴 완료·생성 완료·끼어들기·전사·
+  도구 호출/취소)와 도구 응답 전송을 `[gemini-trace] +NNNms ...` 한 줄씩 info 로 남깁니다.
+  발화 겹침 같은 타이밍 문제를 보고할 때 이 로그를 함께 보내 주세요.
+
 ## 0.47.0 (2026-09-29)
 
 ### Added

@@ -144,6 +144,38 @@ function sanitizeSchemaForGemini(
 /** connect 부터 setupComplete 까지 기다리는 상한. 3.8 Live 는 핸드셰이크+setup 이 10초를 넘긴 적이 있다(2026-09-29 실측). */
 const SETUP_TIMEOUT_MS = 15_000;
 
+/** Gemini Live 함수 선언의 `behavior` 허용값. */
+export type GeminiToolBehavior = 'BLOCKING' | 'NON_BLOCKING';
+export const GEMINI_TOOL_BEHAVIORS: readonly GeminiToolBehavior[] = ['BLOCKING', 'NON_BLOCKING'];
+
+/** `CLAWOPS_GEMINI_DEBUG=1` 이면 Live 서버 메시지를 한 줄씩 info 로 남긴다(오디오는 바이트 수만). */
+const TRACE_ENABLED = ['1', 'true', 'yes'].includes(
+  (process.env['CLAWOPS_GEMINI_DEBUG'] ?? '').toLowerCase(),
+);
+
+export function isExtendedThinkingModel(model: string): boolean {
+  return model.includes('extended-thinking');
+}
+
+/**
+ * 모델별 함수 호출 `behavior` 기본값.
+ *
+ * - `gemini-3.8-live-extended-thinking` 은 NON_BLOCKING 만 받고 BLOCKING 은 하드 에러다.
+ * - `gemini-3.8-live` 는 서버 기본값이 NON_BLOCKING 으로 바뀌었다(모델 페이지 「Migrating from
+ *   Gemini 3.1 Flash Live」). behavior 를 안 보내면 서버는 도구를 비동기로 돌려, 도구 결과를
+ *   기다리는 동안 모델이 계속 말한다. 전화 SDK 는 결과를 기다리는 동안 모델이 말하지 않아야
+ *   하므로 BLOCKING 을 명시해 3.1 과 같은 동작을 복원한다.
+ * - 그 외(3.1 등)는 보내지 않는다(서버 기본값 = 동기).
+ *
+ * LiveKit `livekit-plugins-google` 의 `_default_tool_behavior` 와 같은 자리이되, 기본값 방향은
+ * 반대다(LiveKit 은 3.8 에 NON_BLOCKING 을 명시한다).
+ */
+export function defaultToolBehavior(model: string): GeminiToolBehavior | null {
+  if (isExtendedThinkingModel(model)) return 'NON_BLOCKING';
+  if (model.includes('3.8')) return 'BLOCKING';
+  return null;
+}
+
 export interface GeminiRealtimeOptions {
   /** Google API key. Falls back to GOOGLE_API_KEY env var. */
   apiKey?: string;
@@ -164,6 +196,18 @@ export interface GeminiRealtimeOptions {
    * `gemini-3.8-live-extended-thinking` 은 `{ thinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH' }` 이 필수다.
    */
   thinkingConfig?: Record<string, unknown>;
+  /**
+   * Gemini proactive audio. `proactivity.proactiveAudio` 에 그대로 실린다.
+   * 3.8 두 모델은 영구 ON 이라 `false` 를 보내면 거절되고, 3.1 은 미지원이다. 지정하지 않으면 보내지 않는다.
+   */
+  proactiveAudio?: boolean;
+  /**
+   * 함수 선언의 `behavior`. 지정하지 않으면 모델별 기본값({@link defaultToolBehavior}):
+   * `gemini-3.8-live` 는 BLOCKING, `gemini-3.8-live-extended-thinking` 은 NON_BLOCKING, 그 외는 보내지 않음.
+   */
+  toolBehavior?: GeminiToolBehavior;
+  /** Gemini API 버전(`v1beta` 기본). `GoogleGenAI({ httpOptions: { apiVersion } })` 로 넘긴다. */
+  apiVersion?: string;
 }
 
 export class GeminiRealtime implements Session {
@@ -183,6 +227,10 @@ export class GeminiRealtime implements Session {
   private _greeting: boolean;
   private _realtimeInputConfig: Record<string, unknown> | null;
   private _thinkingConfig: Record<string, unknown> | null;
+  private _proactiveAudio: boolean | null;
+  private _toolBehavior: GeminiToolBehavior | null;
+  private _apiVersion: string | null;
+  private _traceT0 = Date.now();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _session: any = null;
@@ -208,6 +256,66 @@ export class GeminiRealtime implements Session {
     this._greeting = options.greeting ?? true;
     this._realtimeInputConfig = options.realtimeInputConfig ?? null;
     this._thinkingConfig = options.thinkingConfig ?? null;
+    this._proactiveAudio = options.proactiveAudio ?? null;
+    if (
+      options.toolBehavior !== undefined &&
+      !GEMINI_TOOL_BEHAVIORS.includes(options.toolBehavior)
+    ) {
+      throw new Error(
+        `toolBehavior must be one of ${GEMINI_TOOL_BEHAVIORS.join(', ')}, got ${String(options.toolBehavior)}`,
+      );
+    }
+    this._toolBehavior = options.toolBehavior ?? null;
+    this._apiVersion = options.apiVersion ?? null;
+  }
+
+  /** 이 세션의 함수 선언에 실리는 `behavior`. 지정이 없으면 모델별 기본값. */
+  effectiveToolBehavior(): GeminiToolBehavior | null {
+    return this._toolBehavior ?? defaultToolBehavior(this._model);
+  }
+
+  /** `CLAWOPS_GEMINI_DEBUG=1` 일 때만 서버·클라이언트 이벤트를 한 줄로 남긴다. */
+  private _trace(event: string, fields: Record<string, unknown> = {}): void {
+    if (!TRACE_ENABLED) return;
+    const kv = Object.entries(fields)
+      .filter(([, v]) => v !== undefined && v !== null && v !== false)
+      .map(([k, v]) => `${k}=${typeof v === 'string' ? JSON.stringify(v) : String(v)}`)
+      .join(' ');
+    this._log.info('[gemini-trace] +%dms %s %s', Date.now() - this._traceT0, event, kv);
+  }
+
+  private _traceMessage(msg: LiveServerMessage): void {
+    const sc = msg.serverContent;
+    if (sc) {
+      let audioBytes = 0;
+      for (const part of sc.modelTurn?.parts ?? []) {
+        const data = part.inlineData?.data;
+        if (typeof data === 'string') audioBytes += Math.floor((data.length * 3) / 4);
+      }
+      const extra = sc as unknown as Record<string, unknown>;
+      this._trace('server_content', {
+        audio_bytes: audioBytes || undefined,
+        turn_complete: sc.turnComplete,
+        turn_complete_reason: extra['turnCompleteReason'],
+        generation_complete: sc.generationComplete,
+        waiting_for_input: extra['waitingForInput'],
+        interrupted: sc.interrupted,
+        input_transcript: sc.inputTranscription?.text,
+        output_transcript: sc.outputTranscription?.text,
+      });
+    }
+    if (msg.toolCall) {
+      this._trace('tool_call', {
+        calls: (msg.toolCall.functionCalls ?? [])
+          .map((fc) => `${fc.name ?? ''}#${fc.id ?? ''}`)
+          .join(','),
+      });
+    }
+    const cancel = (msg as unknown as Record<string, unknown>)['toolCallCancellation'] as
+      | { ids?: string[] }
+      | undefined;
+    if (cancel) this._trace('tool_call_cancellation', { ids: (cancel.ids ?? []).join(',') });
+    if (msg.goAway) this._trace('go_away', { time_left: msg.goAway.timeLeft });
   }
 
   /** Inject per-call ToolRegistry. */
@@ -260,7 +368,11 @@ export class GeminiRealtime implements Session {
     // @google/genai의 conditional exports 타입이 bundler 모드에서
     // live 프로퍼티를 인식하지 못하므로 node 엔트리 직접 import
     const { GoogleGenAI } = await import('@google/genai/node');
-    const client = this._apiKey ? new GoogleGenAI({ apiKey: this._apiKey }) : new GoogleGenAI({});
+    const clientOptions: Record<string, unknown> = {};
+    if (this._apiKey) clientOptions['apiKey'] = this._apiKey;
+    // 기본값은 v1beta. proactivity 등 일부 기능은 다른 버전을 요구할 수 있어 그대로 넘긴다.
+    if (this._apiVersion) clientOptions['httpOptions'] = { apiVersion: this._apiVersion };
+    const client = new GoogleGenAI(clientOptions);
 
     const config: Record<string, unknown> = {
       responseModalities: ['AUDIO'],
@@ -286,6 +398,12 @@ export class GeminiRealtime implements Session {
       config['thinkingConfig'] = this._thinkingConfig;
     }
 
+    // 3.8 두 모델은 proactive audio 가 영구 ON 이라 false 를 보내면 거절되고, 3.1 은 미지원이다.
+    // 값을 해석하지 않고 그대로 넘긴다 — 모델별 표는 docs/agent/quickstart.md.
+    if (this._proactiveAudio !== null) {
+      config['proactivity'] = { proactiveAudio: this._proactiveAudio };
+    }
+
     if (this._systemPrompt) {
       config['systemInstruction'] = {
         parts: [{ text: this._systemPrompt }],
@@ -298,6 +416,8 @@ export class GeminiRealtime implements Session {
     }
 
     this._log.debug({ config }, 'Gemini SDK final config');
+    this._traceT0 = Date.now();
+    this._trace('connect', { model: this._model, tool_behavior: this.effectiveToolBehavior() });
 
     // live.connect() 는 WebSocket 이 열려야만 끝나고, 서버의 setup 거절(1007 등)은 연결이 열린
     // 뒤에 온다. 그래서 connect() 만 기다리면 열리기 전 에러에는 영원히 걸리고, setup 거절은
@@ -437,11 +557,16 @@ export class GeminiRealtime implements Session {
         }))
       : [];
     toolDefs.push(...getBuiltinToolSchemas(this._builtinTools, 'gemini'));
+    // behavior 는 세션의 effectiveToolBehavior() 를 모든 선언(커스텀·MCP·내장)에 같이 싣는다.
+    // null 이면 키를 넣지 않는다(서버 기본값).
+    const behavior = this.effectiveToolBehavior();
+    if (behavior) for (const def of toolDefs) def['behavior'] = behavior;
     return toolDefs;
   }
 
   private _handleMessage(msg: LiveServerMessage): void {
     if (!this._call) return;
+    if (TRACE_ENABLED) this._traceMessage(msg);
 
     // Handle server content
     const serverContent = msg.serverContent;
@@ -645,6 +770,7 @@ export class GeminiRealtime implements Session {
 
     if (responses.length > 0 && this._session) {
       this._log.debug('Sending %d tool response(s)', responses.length);
+      this._trace('tool_response', { names: responses.map((r) => String(r['name'])).join(',') });
       this._session.sendToolResponse({
         functionResponses: responses,
       });

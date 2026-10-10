@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { GeminiRealtime } from '../../src/agent/pipeline/realtime/gemini-realtime.js';
+import {
+  GeminiRealtime,
+  defaultToolBehavior,
+} from '../../src/agent/pipeline/realtime/gemini-realtime.js';
+import { ToolRegistry } from '../../src/agent/tool.js';
 import type { Session } from '../../src/agent/pipeline/base.js';
 
 // Mock @google/genai
@@ -97,6 +101,7 @@ describe('GeminiRealtime', () => {
       expect(config).not.toHaveProperty('realtimeInputConfig');
       expect(config).not.toHaveProperty('contextWindowCompression');
       expect(config).not.toHaveProperty('thinkingConfig');
+      expect(config).not.toHaveProperty('proactivity');
 
       // greeting 전송 확인 (3.1에서는 sendRealtimeInput 사용)
       expect(mockSession.sendRealtimeInput).toHaveBeenCalledOnce();
@@ -266,6 +271,119 @@ describe('GeminiRealtime', () => {
       // hang_up은 toolResponse를 보내지 않음
       expect(mockSession.sendToolResponse).not.toHaveBeenCalled();
 
+      await session.stop();
+    });
+  });
+
+  // ── 3.8 Live 함수 호출 behavior · proactive audio · apiVersion (0.48.0) ──────────
+  describe('tool behavior (Gemini 3.8 Live)', () => {
+    it.each([
+      ['gemini-3.8-live', 'BLOCKING'],
+      ['models/gemini-3.8-live', 'BLOCKING'],
+      ['gemini-3.8-live-extended-thinking', 'NON_BLOCKING'],
+      ['gemini-3.1-flash-live-preview', null],
+      ['gemini-2.5-flash-native-audio-preview-12-2025', null],
+    ])('defaultToolBehavior(%s) → %s', (model, expected) => {
+      // 3.8-live 는 서버 기본값이 NON_BLOCKING 이라 BLOCKING 을 명시하고, ET 는 NON_BLOCKING 만 받는다.
+      expect(defaultToolBehavior(model)).toBe(expected);
+    });
+
+    it('declares every tool BLOCKING on gemini-3.8-live (custom + builtin)', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+      });
+      const tools = new ToolRegistry();
+      tools.register({
+        name: 'lookup_order',
+        description: '주문 조회',
+        parameters: { order_id: { type: 'string' } },
+        required: ['order_id'],
+        handler: async () => 'ok',
+      });
+      session.setToolRegistry(tools);
+      await session.start(createMockCallSession());
+
+      const decls = mockConnect.mock.calls[0][0].config.tools[0].functionDeclarations as Array<
+        Record<string, unknown>
+      >;
+      const names = decls.map((d) => d['name']);
+      expect(names).toEqual(expect.arrayContaining(['lookup_order', 'hang_up']));
+      // 커스텀·내장 가리지 않고 전부 BLOCKING — 내장 도구(hang_up 등)를 모델이 말로 덮지 않게.
+      expect(decls.every((d) => d['behavior'] === 'BLOCKING')).toBe(true);
+      await session.stop();
+    });
+
+    it('omits behavior when the model has no default (3.1)', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.1-flash-live-preview',
+        greeting: false,
+      });
+      await session.start(createMockCallSession());
+      const decls = mockConnect.mock.calls[0][0].config.tools[0].functionDeclarations as Array<
+        Record<string, unknown>
+      >;
+      expect(decls.every((d) => !('behavior' in d))).toBe(true);
+      await session.stop();
+    });
+
+    it('declares NON_BLOCKING on extended-thinking', () => {
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live-extended-thinking',
+      });
+      expect(session.effectiveToolBehavior()).toBe('NON_BLOCKING');
+    });
+
+    it('explicit toolBehavior overrides the model default', () => {
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        toolBehavior: 'NON_BLOCKING',
+      });
+      expect(session.effectiveToolBehavior()).toBe('NON_BLOCKING');
+    });
+
+    it('rejects an unknown toolBehavior', () => {
+      expect(
+        () => new GeminiRealtime({ apiKey: 'k', toolBehavior: 'ASYNC' as unknown as 'BLOCKING' }),
+      ).toThrow(/toolBehavior/);
+    });
+  });
+
+  describe('proactiveAudio / apiVersion', () => {
+    it('passes proactiveAudio through as proactivity.proactiveAudio', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        proactiveAudio: true,
+        greeting: false,
+      });
+      await session.start(createMockCallSession());
+      expect(mockConnect.mock.calls[0][0].config.proactivity).toEqual({ proactiveAudio: true });
+      await session.stop();
+    });
+
+    it('passes apiVersion to GoogleGenAI httpOptions', async () => {
+      const { GoogleGenAI } = await import('@google/genai');
+      const ctor = GoogleGenAI as unknown as ReturnType<typeof vi.fn>;
+      const session = new GeminiRealtime({ apiKey: 'k', apiVersion: 'v1alpha', greeting: false });
+      await session.start(createMockCallSession());
+      expect(ctor).toHaveBeenLastCalledWith({
+        apiKey: 'k',
+        httpOptions: { apiVersion: 'v1alpha' },
+      });
+      await session.stop();
+    });
+
+    it('does not set httpOptions when apiVersion is omitted', async () => {
+      const { GoogleGenAI } = await import('@google/genai');
+      const ctor = GoogleGenAI as unknown as ReturnType<typeof vi.fn>;
+      const session = new GeminiRealtime({ apiKey: 'k', greeting: false });
+      await session.start(createMockCallSession());
+      expect(ctor).toHaveBeenLastCalledWith({ apiKey: 'k' });
       await session.stop();
     });
   });

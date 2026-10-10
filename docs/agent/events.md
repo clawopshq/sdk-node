@@ -48,6 +48,41 @@ agent.on('call_failed', async (call, reason) => {
 > `reason` 값은 `call.endedStatus` 와 동일합니다. 자세한 의미는
 > [발신 결과 확인하기](quickstart.md#발신-결과-확인하기) 를 참고하세요.
 
+## 수신 통화 거절 — `onIncoming`
+
+`agent.onIncoming()` 에 함수를 등록하면 수신 통화를 **받기 전에** 보고 거절할 수 있습니다.
+거절한 통화는 받지 않은 채 끝나므로 **과금되지 않고**, 다른 경로로 넘어가지도 않습니다.
+
+```typescript
+// 번호 표시제한 통화는 통화중으로 거절
+agent.onIncoming(async (call) => {
+  if (call.callerIdRestricted) await call.reject({ reason: 'busy' });
+});
+```
+
+`call` 은 `CallSession` 이 아니라 아직 받지 않은 통화를 나타내는 `IncomingCall` 입니다.
+
+| 속성·메서드 | 타입 | 설명 |
+|------|------|------|
+| `callId` | `string` | 통화 ID |
+| `fromNumber` | `string` | 발신 번호 |
+| `toNumber` | `string` | 수신 번호 |
+| `callerIdRestricted` | `boolean` | 발신자가 번호 표시제한을 걸고 건 통화면 `true` (위 `CallSession` 과 같은 값) |
+| `reject(opts?)` | `Promise<void>` | 통화를 거절합니다. `reason` 은 `'rejected'`(기본) 또는 `'busy'` |
+
+| `reason` | 발신자가 듣는 것 |
+|------|------|
+| `'rejected'` (기본) | 수신 거절 (SIP 603) |
+| `'busy'` | 통화중 (SIP 486) |
+
+- `reject()` 를 부르지 않고 함수가 끝나면 **받습니다.** 이후는 평소와 같이 `call_start` 부터 이어집니다.
+- 거절한 통화는 세션이 만들어지지 않으므로 `call_start`·`call_end`·`call_failed` 가 **발화되지 않습니다.**
+- 함수가 **5초** 안에 끝나지 않거나 예외를 던지면 경고 로그를 남기고 **받습니다.** 선별 함수의
+  실수로 통화를 잃지 않기 위해서입니다. 외부 조회를 한다면 5초보다 짧은 시간 제한을 직접 거세요.
+- 5초가 지난 뒤 `reject()` 를 부르면 이미 받은 통화라 아무 일도 일어나지 않습니다(경고 로그만 남습니다).
+- `reject()` 를 두 번 불러도 한 번만 처리됩니다. `'rejected'`·`'busy'` 가 아닌 `reason` 을 넘기면 예외가 납니다.
+- `onIncoming()` 을 다시 부르면 이전 함수를 바꿉니다. 등록하지 않으면 모든 수신 통화를 받습니다.
+
 ## CallSession
 
 개별 통화의 상태를 관리합니다. 이벤트 핸들러의 `call` 파라미터로 전달됩니다.

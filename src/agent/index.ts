@@ -26,6 +26,10 @@ export type { ClawOpsAgentOptions, AgentEventType, ToolConfig } from './agent.js
 export { CallSession, DtmfCollectorBusyError } from './session.js';
 export type { CallDirection, CallStatus } from './session.js';
 
+// 수신 통화 선별 — agent.onIncoming()
+export { IncomingCall } from './incoming.js';
+export type { IncomingHandler, IncomingRejectOptions, IncomingRejectReason } from './incoming.js';
+
 // Control WebSocket — account-wide call event stream. Useful for multi-tenant
 // workers that dispatch per-call configuration dynamically instead of binding
 // one ClawOpsAgent per number.

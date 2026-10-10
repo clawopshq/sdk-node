@@ -38,7 +38,13 @@ export type { MediaStartEvent, MediaEvent, DtmfEvent } from './media-ws.js';
 
 // Tools
 export { ToolRegistry, functionTool, zodToToolParams } from './tool.js';
-export type { FunctionTool, OpenAIToolDefinition } from './tool.js';
+export type {
+  FunctionTool,
+  OpenAIToolDefinition,
+  ToolBehavior,
+  ToolScheduling,
+  ToolOptions,
+} from './tool.js';
 
 // Built-in Tools
 export { BuiltinTool } from './builtin-tool.js';

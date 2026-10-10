@@ -6,7 +6,8 @@
  */
 
 import type { CallSession } from '../../session.js';
-import type { ToolRegistry } from '../../tool.js';
+import type { ToolRegistry, ToolBehavior, ToolScheduling } from '../../tool.js';
+import { TOOL_SCHEDULINGS } from '../../tool.js';
 import type { AudioRecorder } from '../../recorder.js';
 import type { Session } from '../base.js';
 import { BufferingCall, attachBuffered } from '../buffering-call.js';
@@ -144,8 +145,8 @@ function sanitizeSchemaForGemini(
 /** connect 부터 setupComplete 까지 기다리는 상한. 3.8 Live 는 핸드셰이크+setup 이 10초를 넘긴 적이 있다(2026-09-29 실측). */
 const SETUP_TIMEOUT_MS = 15_000;
 
-/** Gemini Live 함수 선언의 `behavior` 허용값. */
-export type GeminiToolBehavior = 'BLOCKING' | 'NON_BLOCKING';
+/** Gemini Live 함수 선언의 `behavior` 허용값(= `ToolBehavior`). */
+export type GeminiToolBehavior = ToolBehavior;
 export const GEMINI_TOOL_BEHAVIORS: readonly GeminiToolBehavior[] = ['BLOCKING', 'NON_BLOCKING'];
 
 /** `CLAWOPS_GEMINI_DEBUG=1` 이면 Live 서버 메시지를 한 줄씩 info 로 남긴다(오디오는 바이트 수만). */
@@ -206,6 +207,11 @@ export interface GeminiRealtimeOptions {
    * `gemini-3.8-live` 는 BLOCKING, `gemini-3.8-live-extended-thinking` 은 NON_BLOCKING, 그 외는 보내지 않음.
    */
   toolBehavior?: GeminiToolBehavior;
+  /**
+   * NON_BLOCKING 도구 결과의 기본 `scheduling`(`SILENT`·`WHEN_IDLE`·`INTERRUPT`). 도구별 값이 이를 덮는다.
+   * BLOCKING 결과에는 서버가 무시하고, extended-thinking 은 거절하므로 보내지 않는다.
+   */
+  toolResponseScheduling?: ToolScheduling;
   /** Gemini API 버전(`v1beta` 기본). `GoogleGenAI({ httpOptions: { apiVersion } })` 로 넘긴다. */
   apiVersion?: string;
 }
@@ -229,8 +235,16 @@ export class GeminiRealtime implements Session {
   private _thinkingConfig: Record<string, unknown> | null;
   private _proactiveAudio: boolean | null;
   private _toolBehavior: GeminiToolBehavior | null;
+  private _toolResponseScheduling: ToolScheduling | null;
   private _apiVersion: string | null;
   private _traceT0 = Date.now();
+  // 선언 시점에 확정한 도구별 behavior·scheduling. 응답을 보낼 때 같은 값을 읽는다(LiveKit 과 같은 원칙:
+  // 선언과 scheduling 판정이 한 값을 읽어야 「서버는 비동기인데 우리는 동기」가 안 생긴다).
+  private _declaredBehavior = new Map<string, GeminiToolBehavior | null>();
+  private _declaredScheduling = new Map<string, ToolScheduling | null>();
+  // 진행 중인 NON_BLOCKING 호출. Promise 는 끊을 수 없으니 취소 표시만 하고 끝나도 응답을 안 보낸다.
+  private _inflight = new Map<string, { cancelled: boolean }>();
+  private _schedulingDroppedWarned = false;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _session: any = null;
@@ -266,7 +280,66 @@ export class GeminiRealtime implements Session {
       );
     }
     this._toolBehavior = options.toolBehavior ?? null;
+    if (
+      options.toolResponseScheduling !== undefined &&
+      !TOOL_SCHEDULINGS.includes(options.toolResponseScheduling)
+    ) {
+      throw new Error(
+        `toolResponseScheduling must be one of ${TOOL_SCHEDULINGS.join(', ')}, got ${String(options.toolResponseScheduling)}`,
+      );
+    }
+    this._toolResponseScheduling = options.toolResponseScheduling ?? null;
     this._apiVersion = options.apiVersion ?? null;
+  }
+
+  /**
+   * 선언 하나에 실을 behavior 를 정한다.
+   * - extended-thinking 은 NON_BLOCKING 만 받으므로 무엇을 요청해도 NON_BLOCKING(요청이 BLOCKING 이면 경고).
+   * - 내장 도구(hang_up·collect_dtmf·send_dtmf·transfer_call)는 통화 제어라 항상 BLOCKING —
+   *   NON_BLOCKING 이면 모델이 끊기·전환 중에도 말을 이어 가 음성이 잘린다.
+   * - 그 외는 도구별 요청 → 세션 기본값 순.
+   */
+  private _behaviorFor(
+    name: string,
+    requested: GeminiToolBehavior | undefined,
+    builtin: boolean,
+  ): GeminiToolBehavior | null {
+    if (isExtendedThinkingModel(this._model)) {
+      if (requested === 'BLOCKING') {
+        this._log.warn(
+          'tool %s requested BLOCKING but %s accepts NON_BLOCKING only — declaring NON_BLOCKING',
+          name,
+          this._model,
+        );
+      }
+      return 'NON_BLOCKING';
+    }
+    if (builtin) return this.effectiveToolBehavior() ? 'BLOCKING' : null;
+    return requested ?? this.effectiveToolBehavior();
+  }
+
+  /**
+   * 응답에 실을 `scheduling`. NON_BLOCKING 선언에만 의미가 있고 BLOCKING 엔 서버가 무시한다.
+   * extended-thinking 은 scheduling 을 거절(1007 "Function response scheduling is not supported")하므로
+   * 절대 보내지 않는다. 결과가 없고(=모델에 전할 말이 없음) 따로 정한 값이 없으면 SILENT.
+   */
+  private _schedulingFor(name: string, resultIsEmpty: boolean): ToolScheduling | undefined {
+    if (this._declaredBehavior.get(name) !== 'NON_BLOCKING') return undefined;
+    const requested =
+      this._declaredScheduling.get(name) ?? this._toolResponseScheduling ?? undefined;
+    if (isExtendedThinkingModel(this._model)) {
+      if (requested && !this._schedulingDroppedWarned) {
+        this._schedulingDroppedWarned = true;
+        this._log.warn(
+          '%s rejects FunctionResponse.scheduling; dropping scheduling=%s',
+          this._model,
+          requested,
+        );
+      }
+      return undefined;
+    }
+    if (requested) return requested;
+    return resultIsEmpty ? 'SILENT' : undefined;
   }
 
   /** 이 세션의 함수 선언에 실리는 `behavior`. 지정이 없으면 모델별 기본값. */
@@ -556,11 +629,26 @@ export class GeminiRealtime implements Session {
           ),
         }))
       : [];
-    toolDefs.push(...getBuiltinToolSchemas(this._builtinTools, 'gemini'));
-    // behavior 는 세션의 effectiveToolBehavior() 를 모든 선언(커스텀·MCP·내장)에 같이 싣는다.
-    // null 이면 키를 넣지 않는다(서버 기본값).
-    const behavior = this.effectiveToolBehavior();
-    if (behavior) for (const def of toolDefs) def['behavior'] = behavior;
+    const builtinDefs = getBuiltinToolSchemas(this._builtinTools, 'gemini');
+
+    this._declaredBehavior.clear();
+    this._declaredScheduling.clear();
+    for (const def of toolDefs) {
+      const name = String(def['name']);
+      const tool = this._tools?.get(name);
+      const behavior = this._behaviorFor(name, tool?.behavior, false);
+      if (behavior) def['behavior'] = behavior;
+      this._declaredBehavior.set(name, behavior);
+      this._declaredScheduling.set(name, tool?.scheduling ?? null);
+    }
+    for (const def of builtinDefs) {
+      const name = String(def['name']);
+      const behavior = this._behaviorFor(name, undefined, true);
+      if (behavior) def['behavior'] = behavior;
+      this._declaredBehavior.set(name, behavior);
+      this._declaredScheduling.set(name, null);
+    }
+    toolDefs.push(...builtinDefs);
     return toolDefs;
   }
 
@@ -585,6 +673,13 @@ export class GeminiRealtime implements Session {
           }
           // NOTE: modelTurn text는 outputTranscription과 중복이므로 emit하지 않음
         }
+      }
+
+      // 생성 완료 — 오디오는 이 시점에 다 왔다. turnComplete 는 모델이 「재생이 끝났다」고 믿는 시점까지
+      // 미뤄지고(모델은 실시간 재생을 가정) 3.8 에선 안 오기도 하므로 여기서도 flush 한다.
+      if (serverContent.generationComplete) {
+        this._log.debug('Generation complete');
+        this._flushAudioRemainder();
       }
 
       // Turn complete - flush audio remainder
@@ -618,10 +713,13 @@ export class GeminiRealtime implements Session {
       }
     }
 
-    // Handle tool calls — debounce로 남은 오디오 drain 후 실행
+    // Handle tool calls — NON_BLOCKING 은 즉시, BLOCKING 은 debounce 로 남은 오디오 drain 후 실행
     if (msg.toolCall) {
-      this._pendingToolCall = msg.toolCall;
-      this._scheduleToolExecution();
+      const blocking = this._dispatchToolCall(msg.toolCall);
+      if (blocking) {
+        this._pendingToolCall = blocking;
+        this._scheduleToolExecution();
+      }
     }
 
     // Handle tool call cancellation
@@ -635,6 +733,123 @@ export class GeminiRealtime implements Session {
         clearTimeout(this._toolDrainTimer);
         this._toolDrainTimer = null;
       }
+      for (const id of toolCancellation.ids ?? []) {
+        const entry = this._inflight.get(id);
+        if (entry) entry.cancelled = true;
+      }
+    }
+  }
+
+  /**
+   * NON_BLOCKING 호출은 즉시 실행하고, BLOCKING 호출만 묶어 돌려준다(drain 뒤 실행).
+   * NON_BLOCKING 은 서버가 결과를 기다리지 않고 모델이 계속 말하므로 drain 을 기다릴 이유가 없고,
+   * hold audio 도 틀지 않는다(모델 음성과 겹친다).
+   */
+  private _dispatchToolCall(toolCall: LiveServerToolCall): LiveServerToolCall | null {
+    const calls = toolCall.functionCalls ?? [];
+    const blocking: typeof calls = [];
+    for (const fc of calls) {
+      const name = fc.name ?? '';
+      if (this._declaredBehavior.get(name) === 'NON_BLOCKING') {
+        void this._runAsyncTool(fc);
+      } else {
+        blocking.push(fc);
+      }
+    }
+    if (blocking.length === 0) return null;
+    if (blocking.length === calls.length) return toolCall;
+    return { ...toolCall, functionCalls: blocking };
+  }
+
+  private async _runAsyncTool(
+    fc: NonNullable<LiveServerToolCall['functionCalls']>[number],
+  ): Promise<void> {
+    const key = fc.id ?? `${fc.name ?? ''}@${Date.now()}`;
+    const entry = { cancelled: false };
+    this._inflight.set(key, entry);
+    try {
+      const resp = await this._executeFunctionCall(fc);
+      if (resp === 'hang_up' || resp === null) return;
+      if (entry.cancelled) {
+        this._log.info('NON_BLOCKING tool %s cancelled by server; dropping result', fc.name ?? '');
+        return;
+      }
+      if (this._session && !this._closed) {
+        this._trace('tool_response', {
+          names: String(resp['name']),
+          scheduling: resp['scheduling'],
+          mode: 'non_blocking',
+        });
+        this._session.sendToolResponse({ functionResponses: [resp] });
+      }
+    } catch (err) {
+      this._log.error({ err }, 'NON_BLOCKING tool task failed: %s', fc.name ?? '');
+    } finally {
+      if (this._inflight.get(key) === entry) this._inflight.delete(key);
+    }
+  }
+
+  /**
+   * 함수 호출 하나를 실행해 FunctionResponse 객체로 만든다. hang_up 이면 'hang_up', 실행할 게 없으면 null.
+   * 서버가 id 를 주지 않은 호출에는 id 를 돌려보내지 않는다(우리가 지어낸 id 는 서버가 모른다).
+   */
+  private async _executeFunctionCall(
+    fc: NonNullable<LiveServerToolCall['functionCalls']>[number],
+  ): Promise<Record<string, unknown> | 'hang_up' | null> {
+    const name = fc.name ?? '';
+    const args = fc.args ?? {};
+    const base: Record<string, unknown> = { name };
+    if (fc.id) base['id'] = fc.id;
+    this._log.info({ tool: name, args }, 'Tool call: %s', name);
+
+    const withScheduling = (resp: Record<string, unknown>, resultIsEmpty: boolean) => {
+      const scheduling = this._schedulingFor(name, resultIsEmpty);
+      if (scheduling) resp['scheduling'] = scheduling;
+      return resp;
+    };
+
+    // Built-in tools
+    if (BUILTIN_TOOL_NAMES.has(name) && this._call && !(this._call instanceof BufferingCall)) {
+      const result = await executeBuiltinTool(name, args as Record<string, unknown>, this._call);
+      if (result !== null) {
+        if (name === 'hang_up') {
+          this._log.info('hang_up: ending call');
+          return 'hang_up';
+        }
+        this._log.info('Builtin tool result: %s -> %s', name, result);
+        return withScheduling({ ...base, response: { result } }, false);
+      }
+    }
+
+    // prewarm 창(=상대가 받기 전)에는 통화 제어 도구를 수행할 대상이 없다.
+    if (BUILTIN_TOOL_NAMES.has(name) && this._call instanceof BufferingCall) {
+      this._log.warn('Builtin tool %s called before answer — deferring', name);
+      return withScheduling({ ...base, response: { result: CALL_NOT_READY_RESULT } }, false);
+    }
+
+    if (!this._tools || !this._tools.has(name)) {
+      this._log.error('Unknown tool: %s', name);
+      return withScheduling({ ...base, response: { error: `Unknown tool: ${name}` } }, false);
+    }
+
+    try {
+      this._call?.recordToolCall();
+      const result = await this._tools.call(name, args);
+      // undefined/null = 모델에 전할 말이 없다. NON_BLOCKING 이면 SILENT 로 보내 모델이 쓸데없이 답하지 않게 한다.
+      const isEmpty = result === undefined || result === null;
+      const resultStr = isEmpty
+        ? 'ok'
+        : typeof result === 'string'
+          ? result
+          : JSON.stringify(result);
+      this._log.info('Tool result: %s -> %s', name, resultStr.substring(0, 200));
+      return withScheduling({ ...base, response: { result: resultStr } }, isEmpty);
+    } catch (err) {
+      this._log.error({ err }, 'Tool call failed: %s', name);
+      if (err instanceof Error) {
+        this._call?.recordToolError(err);
+      }
+      return withScheduling({ ...base, response: { error: String(err) } }, false);
     }
   }
 
@@ -692,6 +907,7 @@ export class GeminiRealtime implements Session {
     }, GeminiRealtime.TOOL_DRAIN_TIMEOUT);
   }
 
+  /** BLOCKING 호출 묶음을 실행한다. 모델이 결과를 기다리므로 그동안 hold audio 를 튼다. */
   private async _handleToolCall(toolCall: LiveServerToolCall): Promise<void> {
     const functionCalls = toolCall.functionCalls;
     if (!functionCalls) return;
@@ -706,63 +922,9 @@ export class GeminiRealtime implements Session {
 
     try {
       for (const fc of functionCalls) {
-        const name = fc.name ?? '';
-        const fcId = fc.id ?? '';
-        const args = fc.args ?? {};
-        this._log.info({ tool: name, args }, 'Tool call: %s', name);
-
-        // Built-in tools
-        if (BUILTIN_TOOL_NAMES.has(name) && this._call && !(this._call instanceof BufferingCall)) {
-          const result = await executeBuiltinTool(
-            name,
-            args as Record<string, unknown>,
-            this._call,
-          );
-          if (result !== null) {
-            if (name === 'hang_up') {
-              this._log.info('hang_up: ending call');
-              return;
-            }
-            this._log.info('Builtin tool result: %s -> %s', name, result);
-            responses.push({ id: fcId, name, response: { result } });
-            continue;
-          }
-        }
-
-        // prewarm 창(=상대가 받기 전)에는 통화 제어 도구를 수행할 대상이 없다.
-        if (BUILTIN_TOOL_NAMES.has(name) && this._call instanceof BufferingCall) {
-          this._log.warn('Builtin tool %s called before answer — deferring', name);
-          responses.push({ id: fcId, name, response: { result: CALL_NOT_READY_RESULT } });
-          continue;
-        }
-
-        if (!this._tools || !this._tools.has(name)) {
-          this._log.error('Unknown tool: %s', name);
-          responses.push({ id: fcId, name, response: { error: `Unknown tool: ${name}` } });
-          continue;
-        }
-
-        try {
-          this._call?.recordToolCall();
-          const result = await this._tools.call(name, args);
-          const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
-          this._log.info('Tool result: %s -> %s', name, resultStr.substring(0, 200));
-          responses.push({
-            id: fcId,
-            name,
-            response: { result: resultStr },
-          });
-        } catch (err) {
-          this._log.error({ err }, 'Tool call failed: %s', name);
-          if (err instanceof Error) {
-            this._call?.recordToolError(err);
-          }
-          responses.push({
-            id: fcId,
-            name,
-            response: { error: String(err) },
-          });
-        }
+        const resp = await this._executeFunctionCall(fc);
+        if (resp === 'hang_up') return;
+        if (resp !== null) responses.push(resp);
       }
     } finally {
       player?.stop();
@@ -770,7 +932,10 @@ export class GeminiRealtime implements Session {
 
     if (responses.length > 0 && this._session) {
       this._log.debug('Sending %d tool response(s)', responses.length);
-      this._trace('tool_response', { names: responses.map((r) => String(r['name'])).join(',') });
+      this._trace('tool_response', {
+        names: responses.map((r) => String(r['name'])).join(','),
+        mode: 'blocking',
+      });
       this._session.sendToolResponse({
         functionResponses: responses,
       });

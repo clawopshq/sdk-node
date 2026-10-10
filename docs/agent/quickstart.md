@@ -214,6 +214,37 @@ session: new GeminiRealtime({
 
 타이밍 문제를 보고할 때는 `CLAWOPS_GEMINI_DEBUG=1` 로 띄워 `[gemini-trace]` 로그를 함께 보내 주세요.
 
+#### 도구별 비동기 실행 (`behavior`·`scheduling`)
+
+도구마다 모델이 결과를 기다릴지(`BLOCKING`) 기다리지 않고 대화를 이어 갈지(`NON_BLOCKING`) 정할 수 있습니다.
+결과가 다음 문장인 조회는 BLOCKING, 저장·기록처럼 말할 게 없는 작업은 NON_BLOCKING 이 맞습니다.
+
+```typescript
+agent.tool('save_note', '통화 중 메모를 저장합니다.', { text: { type: 'string' } }, async ({ text }) => {
+  await crm.save(text); // 모델은 기다리지 않는다. undefined 를 돌려주면 결과를 말하지 않는다(SILENT).
+}, { behavior: 'NON_BLOCKING', scheduling: 'SILENT' });
+
+agent.tool('check_stock', '재고를 확인합니다. 결과가 나오면 바로 알려 줍니다.', { sku: { type: 'string' } },
+  async ({ sku }) => inventory.check(sku as string),
+  { behavior: 'NON_BLOCKING', scheduling: 'INTERRUPT' });
+
+agent.tool('lookup_order', '주문을 조회합니다.', { order_id: { type: 'string' } },
+  async ({ order_id }) => orders.get(order_id as string)); // 생략 = 세션 기본값(3.8-live 는 BLOCKING)
+```
+
+| 값 | 의미 |
+| --- | --- |
+| `behavior: 'BLOCKING'` | 결과를 받을 때까지 모델이 기다립니다. 그동안 `holdAudio` 가 재생됩니다. |
+| `behavior: 'NON_BLOCKING'` | 도구가 도는 동안 모델이 계속 대화합니다. 결과는 끝나는 즉시 보내고, hold audio 는 틀지 않습니다. 서버가 호출을 취소하면(끼어들기 등) 결과를 버립니다. |
+| `scheduling: 'SILENT'` | 결과를 말하지 않고 기억만 합니다. 핸들러가 `undefined` 를 돌려주면 기본값입니다. |
+| `scheduling: 'WHEN_IDLE'` | 지금 하던 말을 마친 뒤 전달합니다(서버 기본값). |
+| `scheduling: 'INTERRUPT'` | 하던 말을 끊고 바로 전달합니다. |
+
+세션 전체 기본값은 `new GeminiRealtime({ toolBehavior, toolResponseScheduling })` 이고 도구별 값이 우선합니다.
+내장 도구(`hang_up`·`collect_dtmf`·`send_dtmf`·`transfer_call`)는 통화 제어라 항상 BLOCKING 입니다.
+`gemini-3.8-live-extended-thinking` 은 NON_BLOCKING 만 받고 `scheduling` 을 거절하므로, 이 모델에서는 모든 도구가
+NON_BLOCKING 이 되고 `scheduling` 은 보내지 않습니다. `scheduling` 은 OpenAI 등 다른 세션에서는 무시됩니다.
+
 ### 음성 옵션
 
 | 음성     | 특징                         |

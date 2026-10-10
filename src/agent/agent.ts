@@ -23,7 +23,7 @@ import { CallSession } from './session.js';
 import { BuiltinTool, resolveBuiltinTools } from './builtin-tool.js';
 import { loadHoldAudio } from './hold-audio.js';
 import { ToolRegistry } from './tool.js';
-import type { FunctionTool } from './tool.js';
+import type { FunctionTool, ToolOptions } from './tool.js';
 import type { Session } from './pipeline/base.js';
 import { getSdkInfo } from './telemetry.js';
 import { setTracingConfig } from './tracing/config.js';
@@ -299,6 +299,7 @@ export class ClawOpsAgent {
     description?: string,
     parameters?: Record<string, unknown>,
     handler?: (args: Record<string, unknown>) => unknown | Promise<unknown>,
+    options?: ToolOptions,
   ): this {
     if (typeof nameOrTool === 'string') {
       if (!description || !parameters || !handler) {
@@ -312,6 +313,8 @@ export class ClawOpsAgent {
         parameters,
         required: Object.keys(parameters),
         handler,
+        // Gemini Live 전용: behavior(BLOCKING·NON_BLOCKING)·scheduling(SILENT·WHEN_IDLE·INTERRUPT)
+        ...(options ?? {}),
       });
     } else {
       this._tools.register(nameOrTool);

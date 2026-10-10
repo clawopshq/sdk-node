@@ -245,6 +245,37 @@ agent.tool('lookup_order', '주문을 조회합니다.', { order_id: { type: 'st
 `gemini-3.8-live-extended-thinking` 은 NON_BLOCKING 만 받고 `scheduling` 을 거절하므로, 이 모델에서는 모든 도구가
 NON_BLOCKING 이 되고 `scheduling` 은 보내지 않습니다. `scheduling` 은 OpenAI 등 다른 세션에서는 무시됩니다.
 
+#### 긴 통화와 세션 수명
+
+Gemini Live 는 WebSocket 연결이 약 10분에서 끝나고(끝나기 전 `goAway`), 압축을 켜지 않은 오디오 세션은
+15분에서 끝납니다. SDK 는 접속 때마다 `sessionResumption` 핸들을 보내 두고, 연결이 끝나면 그 핸들로 새 연결을
+열어 대화를 이어 갑니다(기본 3회 시도). 재접속 구간에는 몇 초의 공백이 생길 수 있습니다.
+
+15분을 넘는 통화라면 컨텍스트 압축을 켜야 세션 자체가 끝나지 않습니다.
+
+```typescript
+session: new GeminiRealtime({
+  systemPrompt: '상담원입니다.',
+  model: 'gemini-3.8-live',
+  contextWindowCompression: { slidingWindow: {} },
+}),
+```
+
+재접속이 끝내 실패하면 통화에 `session_lost` 이벤트를 낸 뒤 통화를 끊습니다. 로그를 남기거나 안내를 하려면
+`call_start` 에서 핸들러를 거세요.
+
+```typescript
+agent.on('call_start', (call) => {
+  call.on('session_lost', (_call, reason) => log.error('Gemini 세션 유실: %s', reason));
+});
+```
+
+| 파라미터 | 타입 | 설명 |
+| --- | --- | --- |
+| `contextWindowCompression` | `Record<string, unknown>` | Gemini `ContextWindowCompressionConfig`. 긴 통화에 `{ slidingWindow: {} }` 권장. 지정하지 않으면 보내지 않습니다. |
+| `sessionResumption` | `boolean` | 재접속 사용 여부. 기본 `true`. |
+| `reconnectMaxAttempts` | `number` | 재접속 시도 상한. 기본 3. 다 실패하면 `session_lost` 뒤 통화를 끊습니다. |
+
 ### 음성 옵션
 
 | 음성     | 특징                         |

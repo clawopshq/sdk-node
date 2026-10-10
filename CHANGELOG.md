@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.50.0 (2026-10-10)
+
+### Fixed
+- **긴 통화에서 Gemini 연결이 끊기면 통화가 무음으로 남던 문제.** Gemini Live 는 WebSocket 연결이 약 10분에서
+  끝나고(끝나기 전 `goAway`), 압축 없는 오디오 세션은 15분에서 끝납니다(공식 문서). 지금까지는 그 순간
+  닫힘 표시만 하고 통화는 그대로 두어, 고객이 무음을 듣다 끊었습니다. 이제 LiveKit `livekit-plugins-google` 과
+  같은 방식으로 이어 갑니다.
+  - 접속 때마다 `sessionResumption` 핸들을 보내고 서버가 주는 새 핸들을 보관합니다.
+  - `goAway` 를 받으면 새 연결을 열어 대화를 이어 갑니다. 예기치 않게 끊겨도 같은 경로로 재접속합니다(기본 3회,
+    백오프 1·2·4초). 옛 연결은 재접속 전에 닫습니다 — 안 닫으면 서버가 세션을 붙잡아 다음 시도가 1008 로
+    거절됩니다(실측).
+  - 핸들 재접속이 끝내 거절되면 핸들 없이 새 세션으로 통화를 이어 갑니다. 대화 기억은 잃지만 systemPrompt 와
+    도구는 그대로이고, 끊기는 것보다 낫습니다.
+  - 재접속이 끝내 실패하면 통화에 `session_lost` 이벤트(`call.on('session_lost', (call, reason) => ...)`)를
+    낸 뒤 통화를 끊습니다. 모델만 사라진 채 통화가 이어지는 일은 없습니다.
+  - 재접속 구간에는 몇 초의 공백이 생길 수 있고, 그 사이 들어온 음성은 모델에 전달되지 않습니다.
+
+### Added
+- **`new GeminiRealtime({ contextWindowCompression })`** — Gemini `ContextWindowCompressionConfig` 그대로 전달.
+  15분 넘는 통화에는 `{ slidingWindow: {} }` 를 권장합니다. 지정하지 않으면 보내지 않습니다.
+- **`new GeminiRealtime({ sessionResumption: true, reconnectMaxAttempts: 3 })`** — 재접속을 끄거나 시도 상한을 바꿉니다.
+- `[gemini-trace]` 에 `session_resumption_update`·`reconnect`·`reconnected`·`session_lost` 가 찍힙니다.
+
 ## 0.49.0 (2026-10-10)
 
 ### Added

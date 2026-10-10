@@ -692,4 +692,231 @@ describe('GeminiRealtime', () => {
       await session.stop();
     });
   });
+
+  // ── 세션 수명: sessionResumption · goAway 재접속 · session_lost (0.50.0) ────────
+  describe('session lifetime (goAway / reconnect)', () => {
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    function makeSession() {
+      return {
+        sendRealtimeInput: vi.fn(),
+        sendClientContent: vi.fn(),
+        sendToolResponse: vi.fn(),
+        close: vi.fn(),
+      };
+    }
+    /** connect 마다 새 세션 객체를 돌려주고 config·callbacks 를 기록한다. */
+    function connectSequence(sessions: Array<ReturnType<typeof makeSession> | Error>) {
+      const seen: Array<{
+        config: Record<string, unknown>;
+        callbacks: Record<string, (x: unknown) => void>;
+      }> = [];
+      let i = 0;
+      mockConnect.mockImplementation(async ({ config, callbacks }) => {
+        const next = sessions[Math.min(i++, sessions.length - 1)]!;
+        seen.push({ config, callbacks });
+        if (next instanceof Error) throw next;
+        queueMicrotask(() => callbacks.onmessage({ setupComplete: {} }));
+        return next;
+      });
+      return seen;
+    }
+
+    it('sends sessionResumption on every connect and passes contextWindowCompression through', async () => {
+      const seen = connectSequence([makeSession()]);
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+        contextWindowCompression: { slidingWindow: {} },
+      });
+      await session.start(createMockCallSession());
+      expect(seen[0]!.config['sessionResumption']).toEqual({});
+      expect(seen[0]!.config['contextWindowCompression']).toEqual({ slidingWindow: {} });
+      await session.stop();
+    });
+
+    it('omits sessionResumption when disabled', async () => {
+      const seen = connectSequence([makeSession()]);
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        greeting: false,
+        sessionResumption: false,
+      });
+      await session.start(createMockCallSession());
+      expect(seen[0]!.config).not.toHaveProperty('sessionResumption');
+      expect(seen[0]!.config).not.toHaveProperty('contextWindowCompression');
+      await session.stop();
+    });
+
+    it('stores the resumption handle and reconnects with it on goAway', async () => {
+      const s1 = makeSession();
+      const s2 = makeSession();
+      const seen = connectSequence([s1, s2]);
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+      });
+      const call = createMockCallSession();
+      await session.start(call);
+      const onmessage = seen[0]!.callbacks.onmessage;
+
+      onmessage({ sessionResumptionUpdate: { resumable: true, newHandle: 'h-123' } });
+      onmessage({ goAway: { timeLeft: '10s' } });
+      await tick();
+      await tick();
+
+      expect(mockConnect).toHaveBeenCalledTimes(2);
+      expect(seen[1]!.config['sessionResumption']).toEqual({ handle: 'h-123' });
+      expect(s1.close).toHaveBeenCalledOnce();
+      // 이후 입력은 새 연결로 간다.
+      session.feedAudio(Buffer.alloc(160, 0xff));
+      expect(s2.sendRealtimeInput).toHaveBeenCalledOnce();
+      expect(s1.sendRealtimeInput).not.toHaveBeenCalled();
+      expect(call.hangup).not.toHaveBeenCalled();
+      await session.stop();
+    });
+
+    it('reconnects when the connection closes mid-call', async () => {
+      const s1 = makeSession();
+      const s2 = makeSession();
+      const seen = connectSequence([s1, s2]);
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+      });
+      await session.start(createMockCallSession());
+
+      seen[0]!.callbacks.onclose({ code: 1011, reason: 'going away' });
+      await tick();
+      await tick();
+      expect(mockConnect).toHaveBeenCalledTimes(2);
+      session.feedAudio(Buffer.alloc(160, 0xff));
+      expect(s2.sendRealtimeInput).toHaveBeenCalledOnce();
+      await session.stop();
+    });
+
+    it('emits session_lost and hangs up when reconnect keeps failing (handle + fresh)', async () => {
+      const s1 = makeSession();
+      const seen = connectSequence([s1, new Error('boom')]);
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+        reconnectMaxAttempts: 1,
+      });
+      const call = createMockCallSession();
+      await session.start(call);
+
+      seen[0]!.callbacks.onmessage({
+        sessionResumptionUpdate: { resumable: true, newHandle: 'h-1' },
+      });
+      seen[0]!.callbacks.onmessage({ goAway: { timeLeft: '1s' } });
+      await new Promise((r) => setTimeout(r, 200));
+      // 핸들 시도 1회 + 핸들 없는 새 세션 시도 1회
+      expect(mockConnect).toHaveBeenCalledTimes(3);
+      expect(s1.close).toHaveBeenCalledOnce(); // 옛 연결은 재접속 전에 닫는다
+      expect(call._emit).toHaveBeenCalledWith(
+        'session_lost',
+        expect.stringContaining('reconnect failed'),
+      );
+      expect(call.hangup).toHaveBeenCalledOnce();
+      await session.stop();
+    });
+
+    it('falls back to a fresh session when resuming with the handle is rejected', async () => {
+      const s1 = makeSession();
+      const fresh = makeSession();
+      const seen: Array<{
+        config: Record<string, unknown>;
+        callbacks: Record<string, (x: unknown) => void>;
+      }> = [];
+      mockConnect.mockImplementation(async ({ config, callbacks }) => {
+        seen.push({ config, callbacks });
+        const resumption = config['sessionResumption'] as { handle?: string } | undefined;
+        if (seen.length === 1) {
+          queueMicrotask(() => callbacks.onmessage({ setupComplete: {} }));
+          return s1;
+        }
+        if (resumption?.handle)
+          throw new Error('1008 session is already connected to an existing client');
+        queueMicrotask(() => callbacks.onmessage({ setupComplete: {} }));
+        return fresh;
+      });
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+        reconnectMaxAttempts: 1,
+      });
+      const call = createMockCallSession();
+      await session.start(call);
+      seen[0]!.callbacks.onmessage({
+        sessionResumptionUpdate: { resumable: true, newHandle: 'h-1' },
+      });
+      seen[0]!.callbacks.onmessage({ goAway: { timeLeft: '1s' } });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(
+        seen.map((x) => (x.config['sessionResumption'] as { handle?: string })?.handle ?? null),
+      ).toEqual([null, 'h-1', null]);
+      session.feedAudio(Buffer.alloc(160, 0xff));
+      expect(fresh.sendRealtimeInput).toHaveBeenCalledOnce();
+      expect(call.hangup).not.toHaveBeenCalled();
+      await session.stop();
+    });
+
+    it('ignores control messages from the replaced connection but still passes transcripts', async () => {
+      const s1 = makeSession();
+      const s2 = makeSession();
+      const seen = connectSequence([s1, s2, makeSession()]);
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+      });
+      const call = createMockCallSession();
+      await session.start(call);
+      seen[0]!.callbacks.onmessage({
+        sessionResumptionUpdate: { resumable: true, newHandle: 'h-1' },
+      });
+      seen[0]!.callbacks.onmessage({ goAway: { timeLeft: '10s' } });
+      await tick();
+      await tick();
+      expect(mockConnect).toHaveBeenCalledTimes(2);
+      seen[1]!.callbacks.onmessage({
+        sessionResumptionUpdate: { resumable: true, newHandle: 'h-2' },
+      });
+
+      // 옛 연결(s1)에서 늦게 온 제어 메시지들
+      seen[0]!.callbacks.onmessage({
+        sessionResumptionUpdate: { resumable: true, newHandle: 'h-stale' },
+      });
+      seen[0]!.callbacks.onmessage({ goAway: { timeLeft: '1s' } });
+      seen[0]!.callbacks.onmessage({
+        serverContent: { outputTranscription: { text: '늦은 전사' } },
+      });
+      await tick();
+      await tick();
+      expect(mockConnect).toHaveBeenCalledTimes(2); // 재접속을 또 하지 않는다
+      expect(call._emit).toHaveBeenCalledWith('transcript', 'assistant', '늦은 전사');
+      // 옛 핸들이 새 핸들을 덮지 않았다: 다음 재접속은 h-2 로 간다
+      seen[1]!.callbacks.onmessage({ goAway: { timeLeft: '10s' } });
+      await tick();
+      await tick();
+      expect(seen[2]!.config['sessionResumption']).toEqual({ handle: 'h-2' });
+      await session.stop();
+    });
+
+    it('does not reconnect after stop()', async () => {
+      const s1 = makeSession();
+      const seen = connectSequence([s1, makeSession()]);
+      const session = new GeminiRealtime({ apiKey: 'k', greeting: false });
+      await session.start(createMockCallSession());
+      await session.stop();
+      seen[0]!.callbacks.onclose({ code: 1000 });
+      await tick();
+      expect(mockConnect).toHaveBeenCalledTimes(1);
+    });
+  });
 });

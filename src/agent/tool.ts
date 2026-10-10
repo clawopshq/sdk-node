@@ -5,7 +5,43 @@
 
 import type { z } from 'zod';
 
-export interface FunctionTool {
+/**
+ * 도구 선언의 `behavior`(Gemini Live). BLOCKING=결과를 받을 때까지 모델이 기다림,
+ * NON_BLOCKING=도구가 도는 동안 모델이 계속 대화.
+ */
+export type ToolBehavior = 'BLOCKING' | 'NON_BLOCKING';
+export const TOOL_BEHAVIORS: readonly ToolBehavior[] = ['BLOCKING', 'NON_BLOCKING'];
+
+/**
+ * NON_BLOCKING 도구 결과를 모델이 어떻게 다룰지(Gemini Live `FunctionResponse.scheduling`).
+ * SILENT=말하지 않고 기억만, WHEN_IDLE=지금 말을 마친 뒤 전달(서버 기본값), INTERRUPT=즉시 끼어들어 전달.
+ */
+export type ToolScheduling = 'SILENT' | 'WHEN_IDLE' | 'INTERRUPT';
+export const TOOL_SCHEDULINGS: readonly ToolScheduling[] = ['SILENT', 'WHEN_IDLE', 'INTERRUPT'];
+
+/** Gemini Live 에서만 쓰이는 도구별 옵션. 다른 세션은 무시한다. */
+export interface ToolOptions {
+  /** 함수 선언 `behavior`. 생략하면 세션 기본값(모델별). */
+  behavior?: ToolBehavior;
+  /** NON_BLOCKING 결과의 `scheduling`. 생략하면 세션 기본값, 그것도 없으면 서버 기본값(WHEN_IDLE). */
+  scheduling?: ToolScheduling;
+}
+
+export function validateToolOptions(options: ToolOptions | undefined): void {
+  if (!options) return;
+  if (options.behavior !== undefined && !TOOL_BEHAVIORS.includes(options.behavior)) {
+    throw new Error(
+      `behavior must be one of ${TOOL_BEHAVIORS.join(', ')}, got ${String(options.behavior)}`,
+    );
+  }
+  if (options.scheduling !== undefined && !TOOL_SCHEDULINGS.includes(options.scheduling)) {
+    throw new Error(
+      `scheduling must be one of ${TOOL_SCHEDULINGS.join(', ')}, got ${String(options.scheduling)}`,
+    );
+  }
+}
+
+export interface FunctionTool extends ToolOptions {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
@@ -40,6 +76,7 @@ export class ToolRegistry {
 
   /** Register a function tool. */
   register(tool: FunctionTool): void {
+    validateToolOptions(tool);
     this._tools.set(tool.name, tool);
   }
 

@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.49.0 (2026-10-10)
+
+### Added
+- **도구별 `behavior`·`scheduling` — `agent.tool(name, desc, params, handler, { behavior: 'NON_BLOCKING', scheduling: 'SILENT' })`.**
+  Gemini Live 의 비동기 함수 호출을 도구 단위로 켭니다. `FunctionTool` 객체 형태에도 같은 필드를 넣습니다.
+  생략하면 세션 기본값(모델별, 0.48.0)을 따릅니다. 다른 세션(OpenAI 등)은 두 값을 무시합니다.
+
+  ```typescript
+  agent.tool('save_note', '통화 중 메모를 저장합니다.', { text: { type: 'string' } }, async ({ text }) => {
+    await crm.save(text);   // 모델은 기다리지 않고 대화를 이어 간다. undefined 를 돌려주면 결과를 말하지 않는다.
+  }, { behavior: 'NON_BLOCKING', scheduling: 'SILENT' });
+
+  agent.tool('lookup_order', '주문을 조회합니다.', { order_id: { type: 'string' } }, async ({ order_id }) =>
+    orders.get(order_id),   // 생략 = BLOCKING(3.8-live 기본). 결과가 다음 문장이므로 모델이 기다린다.
+  );
+  ```
+
+  - `behavior`: `'BLOCKING'`(결과를 받을 때까지 모델이 기다림) · `'NON_BLOCKING'`(도구가 도는 동안 모델이 계속 대화).
+  - `scheduling`(NON_BLOCKING 에만): `'SILENT'`(말하지 않고 기억) · `'WHEN_IDLE'`(지금 말을 마친 뒤 전달, 서버 기본값) · `'INTERRUPT'`(즉시 끼어들어 전달).
+  - 핸들러가 `undefined`/`null` 을 돌려주면 「전할 말이 없다」로 보고 NON_BLOCKING 결과를 `SILENT` 로 보냅니다(따로 정하지 않았을 때).
+  - `ToolBehavior`·`ToolScheduling`·`ToolOptions` 타입을 export 합니다.
+- **`new GeminiRealtime({ toolResponseScheduling })`** — NON_BLOCKING 결과의 세션 기본 `scheduling`. 도구별 값이 우선합니다.
+- **NON_BLOCKING 도구 실행 런타임.** 비동기 도구는 300ms drain 을 기다리지 않고 바로 실행하며, 끝나는 즉시
+  응답을 보냅니다(hold audio 없음 — 모델 음성과 겹치지 않게). 서버가 `toolCallCancellation`(끼어들기 등)을
+  보내면 그 호출의 결과를 버립니다. BLOCKING 도구는 지금처럼 drain 뒤 실행하고 hold audio 를 틉니다.
+  한 호출 묶음에 둘이 섞이면 갈라서 처리합니다.
+
+### Changed
+- 내장 도구(`hang_up`·`collect_dtmf`·`send_dtmf`·`transfer_call`)는 세션 `toolBehavior` 가 NON_BLOCKING 이어도
+  **BLOCKING** 으로 선언합니다 — 끊기·전환 중에 모델이 말을 이어 가면 음성이 잘립니다. 예외는
+  `gemini-3.8-live-extended-thinking`(NON_BLOCKING 만 받음) — 이 모델에서는 모든 도구가 NON_BLOCKING 이고
+  도구별 `BLOCKING` 요청은 경고 뒤 NON_BLOCKING 으로 바뀝니다.
+- `gemini-3.8-live-extended-thinking` 에는 `scheduling` 을 절대 보내지 않습니다(서버가 1007 로 세션을 끊습니다).
+  지정하면 경고만 남기고 뺍니다.
+- 서버가 `id` 없이 보낸 함수 호출에는 응답에도 `id` 를 넣지 않습니다(이전엔 빈 문자열을 보냈습니다).
+- 출력 오디오 잔여 프레임을 `turnComplete` 뿐 아니라 `generationComplete` 에서도 flush 합니다.
+  `turnComplete` 는 모델이 「재생이 끝났다」고 믿는 시점까지 미뤄지고 3.8 에서는 오지 않는 경우가 보고됐습니다.
+- 핸들러가 `undefined`/`null` 을 돌려주면 `JSON.stringify` 결과 대신 `{ result: 'ok' }` 를 보냅니다.
+
 ## 0.48.0 (2026-10-10)
 
 ### Fixed

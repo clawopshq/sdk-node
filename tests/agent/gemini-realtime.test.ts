@@ -39,6 +39,8 @@ function createMockCallSession() {
     sendAudio: vi.fn(),
     clearAudio: vi.fn(),
     hangup: vi.fn(),
+    recordToolCall: vi.fn(),
+    recordToolError: vi.fn(),
     on: vi.fn(),
     wait: vi.fn(),
     _emit: vi.fn(),
@@ -384,6 +386,309 @@ describe('GeminiRealtime', () => {
       const session = new GeminiRealtime({ apiKey: 'k', greeting: false });
       await session.start(createMockCallSession());
       expect(ctor).toHaveBeenLastCalledWith({ apiKey: 'k' });
+      await session.stop();
+    });
+  });
+
+  // ── 도구별 behavior/scheduling + NON_BLOCKING 런타임 (0.49.0) ─────────────────
+  describe('per-tool behavior / NON_BLOCKING runtime', () => {
+    function registryWith(
+      ...tools: Array<{
+        name: string;
+        handler: () => unknown;
+        behavior?: 'BLOCKING' | 'NON_BLOCKING';
+        scheduling?: 'SILENT' | 'WHEN_IDLE' | 'INTERRUPT';
+      }>
+    ): ToolRegistry {
+      const reg = new ToolRegistry();
+      for (const t of tools) {
+        reg.register({
+          name: t.name,
+          description: t.name,
+          parameters: { x: { type: 'string' } },
+          required: ['x'],
+          handler: t.handler,
+          ...(t.behavior ? { behavior: t.behavior } : {}),
+          ...(t.scheduling ? { scheduling: t.scheduling } : {}),
+        });
+      }
+      return reg;
+    }
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const decls = () =>
+      mockConnect.mock.calls[0][0].config.tools[0].functionDeclarations as Array<
+        Record<string, unknown>
+      >;
+
+    it('registry validates behavior/scheduling and keeps them out of OpenAI schemas', () => {
+      const reg = registryWith({
+        name: 'a',
+        handler: () => 'r',
+        behavior: 'NON_BLOCKING',
+        scheduling: 'INTERRUPT',
+      });
+      expect(reg.get('a')?.behavior).toBe('NON_BLOCKING');
+      expect(reg.toOpenAITools()[0]).not.toHaveProperty('behavior');
+      expect(() =>
+        reg.register({
+          name: 'bad',
+          description: '',
+          parameters: {},
+          required: [],
+          handler: () => 'r',
+          behavior: 'ASYNC' as unknown as 'BLOCKING',
+        }),
+      ).toThrow(/behavior/);
+    });
+
+    it('per-tool behavior overrides the session default; builtin stays BLOCKING', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+      });
+      session.setToolRegistry(
+        registryWith(
+          {
+            name: 'save_note',
+            handler: () => 'saved',
+            behavior: 'NON_BLOCKING',
+            scheduling: 'WHEN_IDLE',
+          },
+          { name: 'lookup', handler: () => 'ok' },
+        ),
+      );
+      await session.start(createMockCallSession());
+      const byName = Object.fromEntries(decls().map((d) => [d['name'], d]));
+      expect(byName['save_note']!['behavior']).toBe('NON_BLOCKING');
+      expect(byName['lookup']!['behavior']).toBe('BLOCKING');
+      expect(byName['hang_up']!['behavior']).toBe('BLOCKING');
+      await session.stop();
+    });
+
+    it('session toolBehavior=NON_BLOCKING still declares builtin tools BLOCKING', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        toolBehavior: 'NON_BLOCKING',
+        greeting: false,
+      });
+      session.setToolRegistry(registryWith({ name: 'lookup', handler: () => 'ok' }));
+      await session.start(createMockCallSession());
+      const byName = Object.fromEntries(decls().map((d) => [d['name'], d]));
+      expect(byName['lookup']!['behavior']).toBe('NON_BLOCKING');
+      expect(byName['hang_up']!['behavior']).toBe('BLOCKING');
+      await session.stop();
+    });
+
+    it('extended-thinking forces NON_BLOCKING even when a tool asks BLOCKING', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live-extended-thinking',
+        greeting: false,
+      });
+      session.setToolRegistry(
+        registryWith({ name: 'lookup', handler: () => 'ok', behavior: 'BLOCKING' }),
+      );
+      await session.start(createMockCallSession());
+      expect(decls().every((d) => d['behavior'] === 'NON_BLOCKING')).toBe(true);
+      await session.stop();
+    });
+
+    it('rejects an unknown toolResponseScheduling', () => {
+      expect(
+        () =>
+          new GeminiRealtime({
+            apiKey: 'k',
+            toolResponseScheduling: 'LATER' as unknown as 'SILENT',
+          }),
+      ).toThrow(/toolResponseScheduling/);
+    });
+
+    it('runs a NON_BLOCKING tool immediately (no 300ms drain), keeps receiving, replies when done', async () => {
+      let release!: () => void;
+      const gate = new Promise<string>((r) => (release = () => r('done')));
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+      });
+      session.setToolRegistry(
+        registryWith({ name: 'slow', handler: () => gate, behavior: 'NON_BLOCKING' }),
+      );
+      const call = createMockCallSession();
+      await session.start(call);
+      const onmessage = mockConnect.mock.calls[0][0].callbacks.onmessage;
+
+      onmessage({ toolCall: { functionCalls: [{ name: 'slow', id: 'c1', args: { x: '1' } }] } });
+      await tick();
+      // 도구가 도는 동안 수신 경로는 살아 있다.
+      onmessage({ serverContent: { outputTranscription: { text: '잠시만요' } } });
+      expect(call._emit).toHaveBeenCalledWith('transcript', 'assistant', '잠시만요');
+      expect(mockSession.sendToolResponse).not.toHaveBeenCalled();
+
+      release();
+      await tick();
+      // drain 300ms 를 기다리지 않았다.
+      expect(mockSession.sendToolResponse).toHaveBeenCalledOnce();
+      const [resp] = mockSession.sendToolResponse.mock.calls[0][0].functionResponses;
+      expect(resp).toEqual({ id: 'c1', name: 'slow', response: { result: 'done' } });
+      await session.stop();
+    });
+
+    it('sends SILENT when a NON_BLOCKING tool returns nothing', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+      });
+      session.setToolRegistry(
+        registryWith({ name: 'note', handler: () => undefined, behavior: 'NON_BLOCKING' }),
+      );
+      await session.start(createMockCallSession());
+      const onmessage = mockConnect.mock.calls[0][0].callbacks.onmessage;
+      onmessage({ toolCall: { functionCalls: [{ name: 'note', id: 'c2', args: { x: '1' } }] } });
+      await tick();
+      const [resp] = mockSession.sendToolResponse.mock.calls[0][0].functionResponses;
+      expect(resp).toEqual({
+        id: 'c2',
+        name: 'note',
+        response: { result: 'ok' },
+        scheduling: 'SILENT',
+      });
+      await session.stop();
+    });
+
+    it('scheduling precedence: tool > session > server default', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        toolResponseScheduling: 'WHEN_IDLE',
+        greeting: false,
+      });
+      session.setToolRegistry(
+        registryWith(
+          { name: 'urgent', handler: () => 'r', behavior: 'NON_BLOCKING', scheduling: 'INTERRUPT' },
+          { name: 'normal', handler: () => 'r', behavior: 'NON_BLOCKING' },
+        ),
+      );
+      await session.start(createMockCallSession());
+      const onmessage = mockConnect.mock.calls[0][0].callbacks.onmessage;
+      onmessage({
+        toolCall: {
+          functionCalls: [
+            { name: 'urgent', id: 'u', args: { x: '1' } },
+            { name: 'normal', id: 'n', args: { x: '1' } },
+          ],
+        },
+      });
+      await tick();
+      const sent = Object.fromEntries(
+        mockSession.sendToolResponse.mock.calls.flatMap((c) =>
+          (c[0].functionResponses as Array<Record<string, unknown>>).map((r) => [
+            r['name'],
+            r['scheduling'],
+          ]),
+        ),
+      );
+      expect(sent).toEqual({ urgent: 'INTERRUPT', normal: 'WHEN_IDLE' });
+      await session.stop();
+    });
+
+    it('never sends scheduling on extended-thinking', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live-extended-thinking',
+        toolResponseScheduling: 'SILENT',
+        greeting: false,
+      });
+      session.setToolRegistry(registryWith({ name: 'note', handler: () => undefined }));
+      await session.start(createMockCallSession());
+      const onmessage = mockConnect.mock.calls[0][0].callbacks.onmessage;
+      onmessage({ toolCall: { functionCalls: [{ name: 'note', id: 'e1', args: { x: '1' } }] } });
+      await tick();
+      const [resp] = mockSession.sendToolResponse.mock.calls[0][0].functionResponses;
+      expect(resp).not.toHaveProperty('scheduling');
+      await session.stop();
+    });
+
+    it('drops the result of a cancelled NON_BLOCKING call', async () => {
+      let release!: () => void;
+      const gate = new Promise<string>((r) => (release = () => r('done')));
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+      });
+      session.setToolRegistry(
+        registryWith({ name: 'slow', handler: () => gate, behavior: 'NON_BLOCKING' }),
+      );
+      await session.start(createMockCallSession());
+      const onmessage = mockConnect.mock.calls[0][0].callbacks.onmessage;
+      onmessage({ toolCall: { functionCalls: [{ name: 'slow', id: 'c1', args: { x: '1' } }] } });
+      await tick();
+      onmessage({ toolCallCancellation: { ids: ['c1'] } });
+      release();
+      await tick();
+      expect(mockSession.sendToolResponse).not.toHaveBeenCalled();
+      await session.stop();
+    });
+
+    it('BLOCKING tools still go through the drain path (not immediate)', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+      });
+      session.setToolRegistry(registryWith({ name: 'lookup', handler: () => 'ok' }));
+      await session.start(createMockCallSession());
+      const onmessage = mockConnect.mock.calls[0][0].callbacks.onmessage;
+      onmessage({ toolCall: { functionCalls: [{ name: 'lookup', id: 'b1', args: { x: '1' } }] } });
+      await tick();
+      expect(mockSession.sendToolResponse).not.toHaveBeenCalled();
+      await new Promise((r) => setTimeout(r, 800));
+      expect(mockSession.sendToolResponse).toHaveBeenCalledOnce();
+      await session.stop();
+    });
+
+    it('omits id when the server sent none', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+      });
+      session.setToolRegistry(
+        registryWith({ name: 'note', handler: () => 'saved', behavior: 'NON_BLOCKING' }),
+      );
+      await session.start(createMockCallSession());
+      const onmessage = mockConnect.mock.calls[0][0].callbacks.onmessage;
+      onmessage({ toolCall: { functionCalls: [{ name: 'note', args: { x: '1' } }] } });
+      await tick();
+      const [resp] = mockSession.sendToolResponse.mock.calls[0][0].functionResponses;
+      expect(resp).not.toHaveProperty('id');
+      await session.stop();
+    });
+
+    it('flushes the audio remainder on generationComplete', async () => {
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        model: 'gemini-3.8-live',
+        greeting: false,
+      });
+      const call = createMockCallSession();
+      await session.start(call);
+      const onmessage = mockConnect.mock.calls[0][0].callbacks.onmessage;
+      // 60B PCM16@24k = 30 samples → 10 samples@8k → 10B ulaw: 160B 프레임을 못 채워 잔여로 남는다.
+      const pcm = Buffer.alloc(60, 0x10).toString('base64');
+      onmessage({
+        serverContent: {
+          modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm', data: pcm } }] },
+        },
+      });
+      expect(call.sendAudio).not.toHaveBeenCalled();
+      onmessage({ serverContent: { generationComplete: true } });
+      expect(call.sendAudio).toHaveBeenCalledOnce();
+      expect((call.sendAudio.mock.calls[0][0] as Buffer).length).toBe(160);
       await session.stop();
     });
   });

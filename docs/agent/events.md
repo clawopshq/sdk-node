@@ -72,7 +72,7 @@ agent.onIncoming(async (call) => {
 
 | `reason` | 발신자가 듣는 것 |
 |------|------|
-| `'rejected'` (기본) | 수신 거절 (SIP 603) |
+| `'rejected'` (기본) | 수신 거절 (SIP 403) |
 | `'busy'` | 통화중 (SIP 486) |
 
 - `reject()` 를 부르지 않고 함수가 끝나면 **받습니다.** 이후는 평소와 같이 `call_start` 부터 이어집니다.

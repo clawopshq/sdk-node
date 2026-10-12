@@ -16,7 +16,7 @@ import type { Logger } from 'pino';
 import { AgentError } from '../error.js';
 import { NOOP_LOGGER } from './logger.js';
 
-/** 거절 사유. `'rejected'` = SIP 603(기본), `'busy'` = SIP 486(통화중). */
+/** 거절 사유. `'rejected'` = SIP 403(기본), `'busy'` = SIP 486(통화중). */
 export type IncomingRejectReason = 'rejected' | 'busy';
 
 export interface IncomingRejectOptions {

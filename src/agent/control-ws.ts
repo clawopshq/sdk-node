@@ -22,8 +22,12 @@ export interface ControlWsOptions {
 
 /**
  * Control event is a flat JSON object with an 'event' field.
- * Example: { "event": "call.incoming", "callId": "xxx", "from": "070...", "mediaUrl": "wss://...",
- *            "callerIdRestricted": false }
+ * Example: { "event": "call.incoming", "callId": "xxx", "from": "010...", "to": "070...",
+ *            "mediaUrl": "wss://...", "callerIdRestricted": false }
+ * Replies to call.incoming (SDK → server):
+ *   { "event": "call.accept", "callId": "xxx" }
+ *   { "event": "call.reject", "callId": "xxx", "reason": "rejected" | "busy" }   // agent.onIncoming()
+ *   reason is mandatory — a reject without it is treated as an agent failure and falls back.
  */
 export interface ControlEvent {
   event: string;

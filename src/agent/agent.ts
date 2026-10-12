@@ -20,6 +20,8 @@ import type { MCPServerStdio, MCPServerHTTP } from './mcp/index.js';
 import { MediaWebSocket } from './media-ws.js';
 import { AudioRecorder } from './recorder.js';
 import { CallSession } from './session.js';
+import { IncomingCall } from './incoming.js';
+import type { IncomingHandler, IncomingRejectReason } from './incoming.js';
 import { BuiltinTool, resolveBuiltinTools } from './builtin-tool.js';
 import { loadHoldAudio } from './hold-audio.js';
 import { ToolRegistry } from './tool.js';
@@ -45,6 +47,12 @@ export type AgentEventType = 'call_start' | 'call_end' | 'call_failed' | 'transc
  *    있는 동안은 유지해야 한다 — 버전 협상이 없어 "모두 새 서버" 를 확신할 방법이 없다.
  */
 const TERMINAL_FRAME_GRACE_MS = 2000;
+
+/**
+ * `onIncoming()` 선별 함수 상한. 게이트웨이는 call.accept/call.reject 를 11초 기다리므로, 그 안에
+ * 받기(세션 생성·미디어 접속)까지 마칠 여유를 남긴다. 넘기면 받는다(fail-open).
+ */
+const INCOMING_SCREEN_DEADLINE_MS = 5000;
 
 /**
  * How long `drain()` waits for in-flight calls before cutting them. **Unbounded by default.**
@@ -203,6 +211,12 @@ export class ClawOpsAgent {
   private _recording: boolean;
   private _recordingPath: string;
   private _activeSessions: Map<string, CallSession> = new Map();
+  /** `onIncoming()` 선별 함수. 없으면 수신 통화는 예전처럼 곧바로 받는다. */
+  private _incomingHook: IncomingHandler | null = null;
+  /** 선별 함수 상한(ms). 넘기면 받는다(fail-open). 게이트웨이는 11초 기다린다. 테스트에서 줄인다. */
+  private _incomingDeadlineMs = INCOMING_SCREEN_DEADLINE_MS;
+  /** 선별 중인 수신 통화. callId → 그 사이 서버가 call.ended 를 보냈나. */
+  private _screening = new Map<string, { ended: boolean }>();
   /** Set once the server hands this number to another process (rolling deploy takeover). */
   private _takenOver = false;
   /**
@@ -336,6 +350,26 @@ export class ClawOpsAgent {
       this._handlers.set(event, list);
     }
     list.push(handler);
+    return this;
+  }
+
+  /**
+   * 수신 통화를 받기 전에 거절할지 정하는 함수를 등록한다 (clawops#1251).
+   *
+   * ```ts
+   * agent.onIncoming(async (call) => {
+   *   if (call.callerIdRestricted) await call.reject({ reason: 'busy' });
+   * });
+   * ```
+   *
+   * - `call.reject()` 를 부르지 않고 돌아오면 받는다.
+   * - 5초 안에 끝나지 않거나 예외를 던지면 경고를 남기고 **받는다** — 선별 함수의 실수로 통화를
+   *   잃지 않게 한다.
+   * - 거절한 통화는 세션이 만들어지지 않으므로 `call_start`·`call_end` 등이 발화되지 않는다.
+   * - 다시 부르면 이전 함수를 바꾼다. 등록하지 않으면 동작은 예전과 같다.
+   */
+  onIncoming(handler: IncomingHandler): this {
+    this._incomingHook = handler;
     return this;
   }
 
@@ -819,7 +853,78 @@ export class ClawOpsAgent {
     return callSession;
   }
 
-  private _handleIncoming(event: ControlEvent): void {
+  /**
+   * 선별 함수가 없으면 예전 그대로 동기로 받는다(세션 생성 → call.accept → 미디어). 있으면
+   * 선별을 거친 뒤 같은 경로로 받거나, call.reject 를 보내고 끝낸다.
+   */
+  private _handleIncoming(event: ControlEvent): void | Promise<void> {
+    if (!this._incomingHook) {
+      this._acceptIncoming(event);
+      return;
+    }
+    return this._screenIncoming(event, this._incomingHook);
+  }
+
+  private async _screenIncoming(event: ControlEvent, hook: IncomingHandler): Promise<void> {
+    const callId = event['callId'] as string;
+    const fromNumber = (event['from'] as string) ?? '';
+    const toNumber = (event['to'] as string) || this._fromNumber;
+
+    const call = new IncomingCall({
+      callId,
+      fromNumber,
+      toNumber,
+      callerIdRestricted: event['callerIdRestricted'] === true,
+      logger: this._log,
+      onReject: (reason: IncomingRejectReason) => {
+        // reason 은 반드시 싣는다 — 없으면 서버는 대체 경로로 넘긴다.
+        this._log.info('Incoming call rejected: %s -> %s (%s, reason=%s)', fromNumber, toNumber, callId, reason);
+        this._controlWs?.send({ event: 'call.reject', callId, reason });
+      },
+    });
+
+    const slot = { ended: false };
+    this._screening.set(callId, slot);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const run = Promise.resolve().then(() => hook(call));
+      // 상한을 넘겨 버려진 hook 이 나중에 실패해도 unhandled rejection 이 되지 않게.
+      run.catch(() => {});
+      const outcome = await Promise.race([
+        run.then(
+          () => 'done' as const,
+          (err: unknown) => {
+            this._log.warn({ err, callId }, 'onIncoming 선별 함수가 예외를 던졌다 — 통화를 받는다');
+            return 'error' as const;
+          },
+        ),
+        new Promise<'timeout'>((resolve) => {
+          timer = setTimeout(() => resolve('timeout'), this._incomingDeadlineMs);
+        }),
+      ]);
+      if (outcome === 'timeout') {
+        this._log.warn(
+          { callId, deadlineMs: this._incomingDeadlineMs },
+          'onIncoming 선별 함수가 상한 안에 끝나지 않았다 — 통화를 받는다',
+        );
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
+      this._screening.delete(callId);
+    }
+
+    if (call.rejected) return;
+    // 받기로 확정. 이후 늦게 온 reject() 는 경고만 남기고 무시된다.
+    call._close();
+    if (slot.ended) {
+      // 선별하는 사이 발신자가 끊었다 — 받을 통화가 없다.
+      this._log.info('Incoming call ended during screening: %s', callId);
+      return;
+    }
+    this._acceptIncoming(event);
+  }
+
+  private _acceptIncoming(event: ControlEvent): void {
     const callId = event['callId'] as string;
     const fromNumber = (event['from'] as string) ?? '';
     const mediaUrl = (event['mediaUrl'] as string) ?? '';
@@ -897,6 +1002,8 @@ export class ClawOpsAgent {
     // 서버가 확정한 통화 시간. 구 서버는 이 값을 안 보내거나 0 을 보내므로 그대로 둔다 —
     // 없는 값을 로컬 계산으로 지어내면 어느 쪽인지 구분할 수 없게 된다.
     const endedDuration = event['duration'];
+    const screening = this._screening.get(callId);
+    if (screening) screening.ended = true;
     const session = this._activeSessions.get(callId);
     if (session) {
       this._log.info('Call ended (server): %s (status=%s)', callId, status);

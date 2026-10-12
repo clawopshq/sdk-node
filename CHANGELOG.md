@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.51.0 (2026-10-11)
+
+### Added
+- **`agent.onIncoming(hook)` — 수신 통화를 받기 전에 거절합니다 (clawops#1251).** 거절한 통화는 받지 않은 채
+  끝나므로 과금되지 않고 다른 경로로도 넘어가지 않습니다. Python SDK `on_incoming` 과 같은 동작입니다.
+
+  ```typescript
+  agent.onIncoming(async (call) => {
+    if (call.callerIdRestricted) await call.reject({ reason: 'busy' });   // 번호 표시제한 통화는 통화중으로
+  });
+  ```
+
+  - `call` 은 `IncomingCall`(`callId`·`fromNumber`·`toNumber`·`callerIdRestricted`·`reject()`)이며 `CallSession` 이 아닙니다.
+    거절하면 세션이 만들어지지 않아 `call_start`·`call_end` 가 발화되지 않습니다.
+  - `reason` 은 `'rejected'`(기본, SIP 403) 또는 `'busy'`(SIP 486). 다른 값은 예외입니다.
+  - `reject()` 없이 끝나면 받습니다. 5초 안에 끝나지 않거나 예외를 던지면 경고 로그를 남기고 받습니다.
+    5초 뒤의 `reject()` 는 무시되고, 두 번 불러도 한 번만 처리됩니다.
+  - `onIncoming` 을 등록하지 않으면 동작은 이전과 같습니다.
+  - 거절은 서버 쪽 `call.reject` 처리가 배포된 뒤부터 동작합니다.
+
 ## 0.50.0 (2026-10-10)
 
 ### Fixed

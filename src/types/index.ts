@@ -1,8 +1,8 @@
 export type { PaginationMeta } from './shared.js';
 export { PaginationMetaSchema } from './shared.js';
 
-export type { Call, CallControlResponse } from './call.js';
-export { CallSchema, CallControlResponseSchema } from './call.js';
+export type { Call, CallControlResponse, TransferLeg } from './call.js';
+export { CallSchema, CallControlResponseSchema, TransferLegSchema } from './call.js';
 
 export type {
   CallContextParam,

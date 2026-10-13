@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.52.0 (2026-10-13)
+
+### Added
+- **`Call` 에 전환(담당자 연결) 필드 타입 (clawops#1215).** 서버는 이미 내려 주고 있었지만 타입이 없어
+  `.passthrough()` 로만 받던 값입니다.
+  - 요약(대표 시도 하나): `transferTo` · `transferStatus` · `transferDuration` · `transferHangupCauseQ850` ·
+    `transferSipResponseCode` · `transferReasonText`. 목록·단건 조회 모두에 있습니다.
+  - 전체 시도: `transfers: TransferLeg[]` — **`calls.get` 단건 조회에만** 있습니다.
+  - `TransferLeg.answeredAt`(대상이 받은 시각)과 `TransferLeg.timeout`(적용한 대기 한도, 초)이 새로 생겼습니다.
+    담당자가 받기까지 걸린 시간은 `answeredAt - startedAt` 입니다. `connectedAt` 은 warm 전환에서 연결 전
+    안내가 끝난 뒤 시각이라 그만큼 늦습니다.
+  - **받았는지 판정은 `answeredAt` 으로 합니다.** 값이 있으면 받은 것입니다 — 연결 전 안내 도중 끝난 warm
+    전환은 `status` 가 `failed` 지만 받은 전환입니다. `answeredAt` · `timeout` 은 2026-10-13 부터 기록돼,
+    그 이전 전환(값이 `null`)만 `status` 로 판정하세요.
+  - `refer-attended` 는 기다리는 단계가 없어 `timeout` 이 항상 `null` 입니다.
+  - 요약 필드가 `null` 이어도 전환이 없었다는 뜻은 아닙니다. 대표 시도는 끝난 시도 중에서만 고르므로, 시도가
+    진행 중이거나 `interrupted` 로만 끝났으면 `null` 입니다. 전환 여부는 `transfers` 로 판정하세요.
+  - `transferReasonText` 는 대표 시도가 아니라 마지막으로 기록된 통신망 사유입니다. 시도별 사유는
+    `transfers[].reasonText` 를 쓰세요.
+
+  ```typescript
+  const call = await client.calls.get('CA...');
+  for (const leg of call.transfers ?? []) {
+    if (leg.answeredAt && leg.startedAt) {
+      const answerMs = Date.parse(leg.answeredAt) - Date.parse(leg.startedAt);
+      const limit = leg.timeout != null ? ` (한도 ${leg.timeout}초)` : '';
+      console.log(`#${leg.sequence} ${leg.status} — ${answerMs / 1000}초 만에 받음${limit}`);
+    }
+  }
+  ```
+
+  - `status` · `mode` 는 문자열입니다(enum 이 아님). 서버가 값을 넓힐 때 SDK 릴리스를 기다리지 않게 하려는 것입니다.
+  - `Call.transfers` 의 항목은 받은 값 그대로입니다(객체인지만 확인). 시도 하나의 값 타입이 어긋났다고 `calls.get`
+    전체가 검증 오류로 실패하지 않게 하려는 것입니다(이 타입이 생기기 전과 같은 동작).
+  - Python SDK 0.64.0 과 같은 필드입니다.
+
 ## 0.51.0 (2026-10-11)
 
 ### Added

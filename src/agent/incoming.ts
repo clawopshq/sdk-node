@@ -5,7 +5,7 @@
  * 아니다 — 아직 받지 않은 통화라 미디어도, 세션도 없다. 거절하면 세션이 아예 만들어지지 않는다.
  *
  * 와이어:
- *   서버 → `{ event: 'call.incoming', callId, from, to, mediaUrl, callerIdRestricted? }`
+ *   서버 → `{ event: 'call.incoming', callId, from, to, mediaUrl, callerIdRestricted?, forwardedFrom? }`
  *   SDK  → `{ event: 'call.accept', callId }` 또는 `{ event: 'call.reject', callId, reason }`
  *
  * `call.reject` 에는 **반드시 reason 을 싣는다.** reason 없는 거절은 서버가 「에이전트 응답 실패」로
@@ -35,6 +35,7 @@ export interface IncomingCallInit {
   fromNumber: string;
   toNumber: string;
   callerIdRestricted: boolean;
+  forwardedFrom?: string | null;
   /** 거절이 확정되는 순간 한 번 불린다 — `call.reject` 를 보내는 자리. */
   onReject: (reason: IncomingRejectReason) => void;
   logger?: Logger;
@@ -49,6 +50,11 @@ export class IncomingCall {
   readonly toNumber: string;
   /** 발신자가 번호 표시제한을 걸고 건 통화면 `true`. 통신사가 표시제한 여부를 안 보낸 통화는 `false`. */
   readonly callerIdRestricted: boolean;
+  /**
+   * 착신전환으로 들어온 통화에서 발신자가 **원래 건 번호**. 착신전환을 실행한 통신사가 전환 정보를
+   * 함께 보내온 경우에만 값이 있고, 직접 걸려온 통화는 `null`.
+   */
+  readonly forwardedFrom: string | null;
 
   private _state: 'pending' | 'rejected' | 'closed' = 'pending';
   private _reason: IncomingRejectReason | null = null;
@@ -61,6 +67,7 @@ export class IncomingCall {
     this.fromNumber = init.fromNumber;
     this.toNumber = init.toNumber;
     this.callerIdRestricted = init.callerIdRestricted;
+    this.forwardedFrom = init.forwardedFrom ?? null;
     this._onReject = init.onReject;
     this._log = init.logger ?? NOOP_LOGGER;
   }

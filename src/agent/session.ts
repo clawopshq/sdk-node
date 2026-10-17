@@ -67,6 +67,11 @@ export class CallSession {
    * 통신사가 표시제한 여부를 보내지 않은 통화와 발신 통화는 `false`.
    */
   readonly callerIdRestricted: boolean;
+  /**
+   * 착신전환으로 들어온 수신 통화에서 발신자가 **원래 건 번호**. 착신전환을 실행한 통신사가
+   * 전환 정보를 함께 보내온 경우에만 값이 있고, 직접 걸려온 통화와 발신 통화는 `null`.
+   */
+  readonly forwardedFrom: string | null;
   readonly startTime: Date;
   readonly metadata: Record<string, unknown>;
 
@@ -104,6 +109,7 @@ export class CallSession {
     accountId: string;
     direction: CallDirection;
     callerIdRestricted?: boolean;
+    forwardedFrom?: string | null;
     metadata?: Record<string, unknown>;
   }) {
     this.callId = options.callId;
@@ -112,6 +118,7 @@ export class CallSession {
     this.accountId = options.accountId;
     this.direction = options.direction;
     this.callerIdRestricted = options.callerIdRestricted ?? false;
+    this.forwardedFrom = options.forwardedFrom ?? null;
     this.metadata = options.metadata ?? {};
     this._status = 'ringing';
     this.startTime = new Date();

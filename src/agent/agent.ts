@@ -98,6 +98,12 @@ const DEFAULT_HANDOVER_WAIT_MS = 20_000;
  */
 const DEFAULT_SHUTDOWN_DEADLINE_MS = Infinity;
 
+/** `call.incoming` 의 착신전환 원번호. 직통 통화·옛 서버는 키가 없고, 빈 문자열도 「없음」이다. */
+function readForwardedFrom(event: ControlEvent): string | null {
+  const v = event['forwardedFrom'];
+  return typeof v === 'string' && v ? v : null;
+}
+
 /** A one-shot flag you can also await. */
 function latch(): { promise: Promise<void>; set: () => void; done: boolean } {
   let resolve!: () => void;
@@ -875,6 +881,7 @@ export class ClawOpsAgent {
       fromNumber,
       toNumber,
       callerIdRestricted: event['callerIdRestricted'] === true,
+      forwardedFrom: readForwardedFrom(event),
       logger: this._log,
       onReject: (reason: IncomingRejectReason) => {
         // reason 은 반드시 싣는다 — 없으면 서버는 대체 경로로 넘긴다.
@@ -937,6 +944,8 @@ export class ClawOpsAgent {
       direction: 'inbound',
       // 이 필드를 모르는 서버는 키를 보내지 않는다 — boolean 이 아니면 false.
       callerIdRestricted: event['callerIdRestricted'] === true,
+      // 착신전환 원번호(clawops#1423). 직통 통화·옛 서버는 키가 없다 → null.
+      forwardedFrom: readForwardedFrom(event),
     });
 
     // Register all agent-level event handlers on the session

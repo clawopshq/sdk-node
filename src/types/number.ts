@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { SmsSenderRegistrationSchema } from './sender-number.js';
+import type { SmsSenderRegistration } from './sender-number.js';
 
 /**
  * 착신 라우팅 모드.
@@ -53,6 +55,16 @@ export const PhoneNumberSchema = z
 export type PhoneNumber = Omit<z.infer<typeof PhoneNumberSchema>, 'routingType'> & {
   routingType?: RoutingType | (string & {}) | null;
 };
+
+/**
+ * 번호 발급(`numbers.create()`) 응답 — 번호 + 문자 발신번호 자동 등록 결과 `smsSender`(clawops#1489).
+ * 서버가 이 값을 보내기 전 버전에서는 `undefined` 입니다.
+ */
+export const ProvisionedPhoneNumberSchema = PhoneNumberSchema.extend({
+  smsSender: SmsSenderRegistrationSchema.optional(),
+});
+
+export type ProvisionedPhoneNumber = PhoneNumber & { smsSender?: SmsSenderRegistration };
 
 export type NumberListItem = PhoneNumber;
 export type NumberUpdateResponse = PhoneNumber;

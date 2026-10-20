@@ -35,6 +35,7 @@ export { Page } from './pagination.js';
 
 export { AssignmentLinks } from './resources/assignment-links.js';
 export { BlockedRecipients } from './resources/blocked-recipients.js';
+export { SenderNumbers } from './resources/sender-numbers.js';
 export { Calls } from './resources/calls.js';
 export {
   Kakao,
@@ -89,6 +90,12 @@ export type {
   BlockedChannel,
   BlockedRecipientStatus,
   BlockedRecipientSource,
+  SenderNumber,
+  SenderNumberGrace,
+  SenderNumberLimit,
+  SenderNumberList,
+  SmsSenderRegistration,
+  ProvisionedPhoneNumber,
   KakaoChannel,
   KakaoChannelStatus,
   KakaoTemplate,

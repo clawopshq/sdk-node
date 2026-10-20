@@ -1,8 +1,13 @@
 import { z } from 'zod';
 import { APIResource } from '../resource.js';
 import { stripNotGiven } from '../util.js';
-import { PhoneNumberSchema } from '../types/number.js';
-import type { PhoneNumber, NumberListItem, NumberUpdateResponse } from '../types/number.js';
+import { PhoneNumberSchema, ProvisionedPhoneNumberSchema } from '../types/number.js';
+import type {
+  PhoneNumber,
+  NumberListItem,
+  NumberUpdateResponse,
+  ProvisionedPhoneNumber,
+} from '../types/number.js';
 import type { NumberCreateParams, NumberUpdateParams } from '../types/number-params.js';
 
 interface RequestOptions {
@@ -17,8 +22,15 @@ export class Numbers extends APIResource {
    *
    * 발급 직후 번호는 `routingType: "webhook"` 이고 `webhookUrl` 이 비어 있어, 그대로 두면
    * 걸려온 전화가 거절됩니다. 이어서 `update()` 로 착신 라우팅을 지정하세요.
+   *
+   * 회선 수 한도 안이면 문자 발신번호로도 자동 등록되며, 결과는 `smsSender` 에 실립니다.
+   * `smsSender.registered` 가 `false` 여도 발급은 성공입니다 — 그 번호로 문자를 보내려면
+   * `reason` 을 해결한 뒤 `senderNumbers.create()` 로 등록하세요.
    */
-  async create(params: NumberCreateParams = {}, options: RequestOptions = {}): Promise<PhoneNumber> {
+  async create(
+    params: NumberCreateParams = {},
+    options: RequestOptions = {},
+  ): Promise<ProvisionedPhoneNumber> {
     const body = stripNotGiven({
       webhookUrl: params.webhookUrl,
       webhookMethod: params.webhookMethod,
@@ -28,7 +40,7 @@ export class Numbers extends APIResource {
     });
     return this._client._post(`${this._basePath}/numbers`, {
       body: Object.keys(body).length ? body : undefined,
-      castTo: PhoneNumberSchema,
+      castTo: ProvisionedPhoneNumberSchema,
       ...options,
     });
   }

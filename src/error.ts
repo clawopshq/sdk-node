@@ -57,6 +57,17 @@ export type ClawOpsErrorCode =
    *    준 우리 id 만 받는다(그게 남의 이미지를 막는 유일한 관문이다).
    */
   | 'kakao_brand_image_not_found'
+  // 문자 발신번호(clawops#1489)
+  /** 이미 등록된 발신번호 — 이미 발송에 쓸 수 있는 상태라 성공으로 다뤄도 된다. */
+  | 'sender_number_already_registered'
+  | 'sender_number_limit_reached'
+  | 'sender_number_limit_unknown'
+  | 'sender_number_holder_unresolved'
+  | 'sender_number_not_account_number'
+  | 'sender_number_not_registrable'
+  | 'sender_number_not_found'
+  | 'sender_number_not_deletable_via_api'
+  | 'api_key_sender_numbers_restricted'
   // 카카오 채널 연동
   | 'KAKAO_TOKEN_INVALID'
   | 'KAKAO_CHANNEL_ALREADY_LINKED'

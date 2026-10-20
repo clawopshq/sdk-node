@@ -3,6 +3,7 @@ import { DEFAULT_BASE_URL } from './constants.js';
 import { ClawOpsError } from './error.js';
 import { AssignmentLinks } from './resources/assignment-links.js';
 import { BlockedRecipients } from './resources/blocked-recipients.js';
+import { SenderNumbers } from './resources/sender-numbers.js';
 import { Calls } from './resources/calls.js';
 import { Kakao } from './resources/kakao.js';
 import { Messages } from './resources/messages.js';
@@ -86,6 +87,11 @@ export class ClawOps extends APIClient {
 
   get blockedRecipients(): BlockedRecipients {
     return new BlockedRecipients(this, this._defaultAccountId);
+  }
+
+  /** 문자 발신번호 — 조회·등록·삭제(clawops#1489). */
+  get senderNumbers(): SenderNumbers {
+    return new SenderNumbers(this, this._defaultAccountId);
   }
 
   /** 카카오 채널·알림톡 템플릿. 발송은 `messages.create({ kakao: … })` 다. */

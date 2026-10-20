@@ -193,6 +193,11 @@ export interface GeminiRealtimeOptions {
   /** Gemini VAD config. @google/genai RealtimeInputConfig 구조 그대로 전달. */
   realtimeInputConfig?: Record<string, unknown>;
   /**
+   * 입력 음성 전사 설정. @google/genai AudioTranscriptionConfig 구조 그대로 `inputAudioTranscription` 에 실린다.
+   * `languageCodes`(BCP-47 목록)·`customVocabulary`(최대 1,000개)를 받는다. 지정하지 않으면 `{}`.
+   */
+  inputAudioTranscription?: Record<string, unknown>;
+  /**
    * Gemini thinking 설정. @google/genai ThinkingConfig 구조 그대로 전달.
    * `gemini-3.8-live-extended-thinking` 은 `{ thinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH' }` 이 필수다.
    */
@@ -244,6 +249,7 @@ export class GeminiRealtime implements Session {
   private _language: string;
   private _greeting: boolean;
   private _realtimeInputConfig: Record<string, unknown> | null;
+  private _inputAudioTranscription: Record<string, unknown> | null;
   private _thinkingConfig: Record<string, unknown> | null;
   private _proactiveAudio: boolean | null;
   private _toolBehavior: GeminiToolBehavior | null;
@@ -290,6 +296,7 @@ export class GeminiRealtime implements Session {
     this._language = options.language ?? 'ko';
     this._greeting = options.greeting ?? true;
     this._realtimeInputConfig = options.realtimeInputConfig ?? null;
+    this._inputAudioTranscription = options.inputAudioTranscription ?? null;
     this._thinkingConfig = options.thinkingConfig ?? null;
     this._proactiveAudio = options.proactiveAudio ?? null;
     if (
@@ -495,7 +502,8 @@ export class GeminiRealtime implements Session {
           },
         },
       },
-      inputAudioTranscription: {},
+      // 전사는 끌 수 없다(대화 기록·이벤트가 쓴다). 값을 주면 해석하지 않고 그대로 넘긴다.
+      inputAudioTranscription: { ...(this._inputAudioTranscription ?? {}) },
       outputAudioTranscription: {},
     };
 

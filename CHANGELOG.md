@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.54.0 (2026-10-20)
+
+### Added
+- **`GeminiRealtime({ inputAudioTranscription })`** — Live 세션의 `inputAudioTranscription` 에 그대로 실립니다.
+  `languageCodes`(BCP-47 언어 코드 목록)와 `customVocabulary`(우선 인식할 용어, 최대 1,000개)를 넣을 수 있습니다.
+  지정하지 않으면 지금처럼 빈 설정(`{}`)을 보냅니다.
+
+  ```typescript
+  new GeminiRealtime({
+    model: 'gemini-3.8-live',
+    inputAudioTranscription: {
+      languageCodes: ['ko-KR'],
+      customVocabulary: ['클로옵스', 'ClawOps'],
+    },
+  });
+  ```
+
 ## 0.53.0 (2026-10-17)
 
 ### Added

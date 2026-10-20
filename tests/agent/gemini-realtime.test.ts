@@ -355,6 +355,29 @@ describe('GeminiRealtime', () => {
     });
   });
 
+  describe('inputAudioTranscription', () => {
+    it('passes inputAudioTranscription through unchanged', async () => {
+      const cfg = { languageCodes: ['ko-KR'], customVocabulary: ['셔클', '아이오닉'] };
+      const session = new GeminiRealtime({
+        apiKey: 'k',
+        inputAudioTranscription: cfg,
+        greeting: false,
+      });
+      await session.start(createMockCallSession());
+      const config = mockConnect.mock.calls[0][0].config;
+      expect(config.inputAudioTranscription).toEqual(cfg);
+      expect(config.outputAudioTranscription).toEqual({});
+      await session.stop();
+    });
+
+    it('sends an empty inputAudioTranscription by default', async () => {
+      const session = new GeminiRealtime({ apiKey: 'k', greeting: false });
+      await session.start(createMockCallSession());
+      expect(mockConnect.mock.calls[0][0].config.inputAudioTranscription).toEqual({});
+      await session.stop();
+    });
+  });
+
   describe('proactiveAudio / apiVersion', () => {
     it('passes proactiveAudio through as proactivity.proactiveAudio', async () => {
       const session = new GeminiRealtime({

@@ -144,6 +144,33 @@ const agent = new ClawOpsAgent({
 | --- | --- | --- |
 | `realtimeInputConfig` | `Record<string, unknown>` | Gemini VAD 설정. `automaticActivityDetection`, `activityHandling`, `turnCoverage` 등을 포함. |
 
+#### 입력 음성 전사 설정
+
+발신자 음성 전사에 언어 힌트와 고유 명사 목록을 `inputAudioTranscription` 으로 넘길 수 있습니다.
+구조는 [@google/genai SDK의 `AudioTranscriptionConfig`](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/live-api/best-practices#transcription-language-code)를 그대로 따릅니다.
+
+```typescript
+session: new GeminiRealtime({
+  systemPrompt: '상담원입니다.',
+  model: 'gemini-3.8-live',
+  inputAudioTranscription: {
+    languageCodes: ['ko-KR'],
+    customVocabulary: ['클로옵스', 'ClawOps'],
+  },
+}),
+```
+
+| 파라미터 | 타입 | 설명 |
+| --- | --- | --- |
+| `inputAudioTranscription` | `Record<string, unknown>` | 입력 음성 전사 설정. 지정하지 않으면 빈 설정(`{}`)을 보냅니다. |
+
+| 키 | 설명 |
+| --- | --- |
+| `languageCodes` | BCP-47 언어 코드 목록. 여러 개를 넣을 수 있습니다. |
+| `customVocabulary` | 전사가 우선 인식할 용어 목록. 최대 1,000개이며, 넘으면 세션을 열 때 거절됩니다. |
+
+`gemini-3.8-live`·`gemini-3.8-live-extended-thinking`·`gemini-3.1-flash-live-preview` 모두 두 키를 받습니다(2026-10-20 확인).
+
 #### 모델과 thinking 설정
 
 `model` 에는 Gemini Live API 모델명을 그대로 넣습니다. 새 모델이 나와도 SDK 업데이트 없이 이름만 바꾸면 됩니다.

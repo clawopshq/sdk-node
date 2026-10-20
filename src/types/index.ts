@@ -27,8 +27,14 @@ export type {
   KakaoFallbackParams,
 } from './message-params.js';
 
-export type { PhoneNumber, NumberListItem, NumberUpdateResponse, RoutingType } from './number.js';
-export { PhoneNumberSchema, ROUTING_TYPES } from './number.js';
+export type {
+  PhoneNumber,
+  NumberListItem,
+  NumberUpdateResponse,
+  RoutingType,
+  ProvisionedPhoneNumber,
+} from './number.js';
+export { PhoneNumberSchema, ProvisionedPhoneNumberSchema, ROUTING_TYPES } from './number.js';
 
 export type { NumberCreateParams, NumberUpdateParams } from './number-params.js';
 
@@ -73,6 +79,21 @@ export type {
   BlockedRecipientSource,
 } from './blocked-recipient.js';
 export { BlockedRecipientSchema } from './blocked-recipient.js';
+
+export type {
+  SenderNumber,
+  SenderNumberGrace,
+  SenderNumberLimit,
+  SenderNumberList,
+  SmsSenderRegistration,
+} from './sender-number.js';
+export {
+  SenderNumberSchema,
+  SenderNumberGraceSchema,
+  SenderNumberLimitSchema,
+  SenderNumberListSchema,
+  SmsSenderRegistrationSchema,
+} from './sender-number.js';
 
 export type {
   KakaoChannel,

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.55.0 (2026-10-20)
+
+### Added
+- **`senderNumbers` 리소스 — 문자 발신번호 조회·등록·삭제 (clawops#1489).**
+  - `list()` — 등록된 발신번호(`senderNumbers`), 유예 기간인 번호(`grace`), 070번호·대표번호 회선 수 한도(`limit`)
+  - `create({ number })` — ClawOps에서 개통한 070번호·대표번호를 등록합니다. 즉시 승인됩니다.
+  - `delete(senderNumberId)` — API 로는 ClawOps에서 개통한 번호만 삭제할 수 있습니다.
+  - 발신번호 범위를 지정한 API 키는 조회만 됩니다.
+- **`numbers.create()` 응답의 `smsSender`.** 발급한 번호를 문자 발신번호로 자동 등록했는지와 못 했을 때의 `reason` 입니다.
+  `registered` 가 `false` 여도 번호 발급은 성공입니다.
+- `ClawOpsErrorCode` 에 발신번호 오류 코드(`sender_number_*`, `api_key_sender_numbers_restricted`)를 더했습니다.
+
 ## 0.54.0 (2026-10-20)
 
 ### Added

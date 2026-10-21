@@ -9,7 +9,7 @@ const PROFILES = Object.freeze({
 });
 export function mediaContract(profile: MediaProfile) {
   const contract = PROFILES[profile];
-  if (!contract) throw new Error('Unsupported media profile');
+  if (!Object.prototype.hasOwnProperty.call(PROFILES, profile)) throw new Error('Unsupported media profile');
   return contract;
 }
 export function validateMediaFormat(profile: MediaProfile, format: Record<string, unknown>) {

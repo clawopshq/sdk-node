@@ -167,6 +167,9 @@ export class MediaWebSocket {
    * 서버가 `ws://` 를 주던 동안엔 계정 API 키가 평문 첫 요청에 실려 나갔다(clawops#1250).
    */
   async connect(url: string, _apiKey?: string): Promise<void> {
+    // Format admission belongs to this connection, not a previous successful peer.
+    // The legacy/default transport remains ready immediately, as before.
+    this._formatValidated = this.options.expectedMediaProfile === undefined;
     const { WebSocket } = await import('ws');
     warnIfPlaintext(url, this._log);
 

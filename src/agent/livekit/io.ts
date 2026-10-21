@@ -25,6 +25,7 @@
  */
 
 import { pcm16ToUlaw, DECODE_TABLE } from '../audio.js';
+import { MediaProfile, mediaContract } from '../media-profile.js';
 import type { CallSession } from '../session.js';
 
 export const SAMPLE_RATE = 8000;
@@ -49,6 +50,7 @@ interface AudioSink {
 export interface ClawOpsAudioInputInstance {
   readonly stream: unknown;
   pushUlaw(ulaw: Buffer): void;
+  pushAudio(audio: Buffer): void;
   endInput(): void;
   close(): Promise<void>;
   onAttached(): void;
@@ -63,8 +65,8 @@ export interface ClawOpsAudioOutputInstance {
 }
 
 export interface ClawOpsIO {
-  ClawOpsAudioInput: new () => ClawOpsAudioInputInstance;
-  ClawOpsAudioOutput: new (call: AudioSink) => ClawOpsAudioOutputInstance;
+  ClawOpsAudioInput: new (profile?: MediaProfile) => ClawOpsAudioInputInstance;
+  ClawOpsAudioOutput: new (call: AudioSink, profile?: MediaProfile) => ClawOpsAudioOutputInstance;
 }
 
 /** 외부 resolve 를 노출하는 1회성 Deferred (agents-js 의 non-exported `Future` 대응). */
@@ -132,7 +134,9 @@ export async function loadClawOpsIO(): Promise<ClawOpsIO> {
     private readonly _stream: ReadableStream<any>;
     private _closed = false;
 
-    constructor() {
+    private readonly _profile;
+    constructor(private readonly profile: MediaProfile = MediaProfile.MULAW_8000) {
+      this._profile = mediaContract(profile);
       this._stream = new ReadableStream({
         start: (c) => {
           this._controller = c;
@@ -149,13 +153,19 @@ export async function loadClawOpsIO(): Promise<ClawOpsIO> {
 
     /** G.711 μ-law 청크를 PCM16 프레임으로 바꿔 스트림에 밀어넣는다. */
     pushUlaw(ulaw: Buffer): void {
-      if (this._closed || !this._controller || ulaw.length === 0) return;
+      if (this.profile !== MediaProfile.MULAW_8000) throw new Error('pushUlaw requires mulaw_8000');
+      this.pushAudio(ulaw);
+    }
+    pushAudio(audio: Buffer): void {
+      if (this._closed || !this._controller || audio.length === 0) return;
+      if (this.profile === MediaProfile.PCM_S16LE_16000 && audio.length % 2) throw new Error('Incomplete PCM16 sample');
+      const ulaw = audio;
       // μ-law 를 곧장 Int16Array 로 디코드한다 (중간 Buffer + 재읽기 루프 생략).
-      const samples = new Int16Array(ulaw.length);
-      for (let i = 0; i < ulaw.length; i++) {
-        samples[i] = DECODE_TABLE[ulaw[i]!]!;
+      const samples = new Int16Array(this.profile === MediaProfile.MULAW_8000 ? ulaw.length : ulaw.length / 2);
+      for (let i = 0; i < samples.length; i++) {
+        samples[i] = this.profile === MediaProfile.MULAW_8000 ? DECODE_TABLE[ulaw[i]!]! : ulaw.readInt16LE(i * 2);
       }
-      const frame = new AudioFrame(samples, SAMPLE_RATE, 1, samples.length);
+      const frame = new AudioFrame(samples, this._profile.sampleRate, 1, samples.length);
       try {
         this._controller.enqueue(frame);
       } catch {
@@ -207,9 +217,11 @@ export async function loadClawOpsIO(): Promise<ClawOpsIO> {
     private _markSeq = 0;
     private _closed = false;
 
-    constructor(call: AudioSink) {
+    private readonly _profile;
+    constructor(call: AudioSink, private readonly profile: MediaProfile = MediaProfile.MULAW_8000) {
       // AudioOutput(sampleRate?, nextInChain?, capabilities?)
-      super(SAMPLE_RATE, undefined, { pause: false });
+      super(mediaContract(profile).sampleRate, undefined, { pause: false });
+      this._profile = mediaContract(profile);
       this._call = call;
     }
 
@@ -232,6 +244,10 @@ export async function loadClawOpsIO(): Promise<ClawOpsIO> {
       // ⚠️ close() 후엔 base 를 건드리지 않는다 — super.captureFrame 이 세그먼트 카운트를
       //    올린 뒤 여기서 bail 하면 onPlaybackFinished 가 안 나가 teardown 시 wait 이 샌다.
       if (this._closed) return;
+      if (this.profile === MediaProfile.PCM_S16LE_16000 &&
+          (frame.sampleRate !== 16000 || frame.channels !== 1 || frame.data.length !== frame.samplesPerChannel)) {
+        throw new Error('Audio frame does not match selected PCM16 profile');
+      }
       await super.captureFrame(frame);
 
       // 이전 세그먼트 flush 가 진행 중이면 기다린다 (TcpAudioOutput 과 동일).
@@ -249,13 +265,16 @@ export async function loadClawOpsIO(): Promise<ClawOpsIO> {
 
       // frame.data 는 Int16Array(PCM16). LE 플랫폼에서 그대로 바이트 뷰로 읽는다.
       const pcm = Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
-      const encoded = pcm16ToUlaw(pcm);
+      const encoded = this.profile === MediaProfile.MULAW_8000 ? pcm16ToUlaw(pcm) : Buffer.alloc(frame.data.length * 2);
+      if (this.profile === MediaProfile.PCM_S16LE_16000) {
+        for (let i = 0; i < frame.data.length; i++) encoded.writeInt16LE(frame.data[i], i * 2);
+      }
       // 대부분의 프레임은 160바이트 정렬돼 tail 이 비어 있다 — 그때는 concat(추가 할당+복사)을 건너뛴다.
       const ulaw = this._tail.length === 0 ? encoded : Buffer.concat([this._tail, encoded]);
       let off = 0;
-      while (off + FRAME_BYTES <= ulaw.length) {
-        await this._call.sendAudio(ulaw.subarray(off, off + FRAME_BYTES));
-        off += FRAME_BYTES;
+      while (off + this._profile.frameBytes <= ulaw.length) {
+        await this._call.sendAudio(ulaw.subarray(off, off + this._profile.frameBytes));
+        off += this._profile.frameBytes;
       }
       this._tail = Buffer.from(ulaw.subarray(off));
     }
@@ -332,7 +351,7 @@ export async function loadClawOpsIO(): Promise<ClawOpsIO> {
         if (tail.length > 0) {
           const padded = Buffer.concat([
             tail,
-            Buffer.alloc(FRAME_BYTES - tail.length, ULAW_SILENCE_BYTE),
+            Buffer.alloc(this._profile.frameBytes - tail.length, this._profile.silenceByte),
           ]);
           await this._call.sendAudio(padded);
         }

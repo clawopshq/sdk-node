@@ -1,3 +1,4 @@
+import { MediaProfile, mediaContract, validateMediaFormat } from './media-profile.js';
 /**
  * Media WebSocket for streaming audio to/from the telephony platform.
  *
@@ -116,6 +117,12 @@ export class MediaWebSocket {
   private _markWaiters: Map<string, () => void> = new Map();
   private _log: Logger = NOOP_LOGGER;
 
+  private _formatValidated: boolean;
+  constructor(private readonly options: { expectedMediaProfile?: MediaProfile } = {}) {
+    if (options.expectedMediaProfile !== undefined) mediaContract(options.expectedMediaProfile);
+    this._formatValidated = options.expectedMediaProfile === undefined;
+  }
+
   setLogger(logger: Logger): void {
     this._log = logger;
   }
@@ -160,6 +167,9 @@ export class MediaWebSocket {
    * 서버가 `ws://` 를 주던 동안엔 계정 API 키가 평문 첫 요청에 실려 나갔다(clawops#1250).
    */
   async connect(url: string, _apiKey?: string): Promise<void> {
+    // Format admission belongs to this connection, not a previous successful peer.
+    // The legacy/default transport remains ready immediately, as before.
+    this._formatValidated = this.options.expectedMediaProfile === undefined;
     const { WebSocket } = await import('ws');
     warnIfPlaintext(url, this._log);
 
@@ -268,6 +278,16 @@ export class MediaWebSocket {
 
     switch (event) {
       case 'start': {
+        if (this.options.expectedMediaProfile !== undefined) {
+          try {
+            validateMediaFormat(this.options.expectedMediaProfile,
+              ((msg['start'] as Record<string, unknown>)?.['mediaFormat'] ?? {}) as Record<string, unknown>);
+            this._formatValidated = true;
+          } catch {
+            this.close();
+            return;
+          }
+        }
         const startEvt = parseStartEvent(msg);
         if (this._onStart) {
           this._onStart(startEvt);
@@ -275,6 +295,7 @@ export class MediaWebSocket {
         break;
       }
       case 'media': {
+        if (!this._formatValidated) { this.close(); return; }
         const mediaEvt = parseMediaEvent(msg);
         if (this._onAudio) {
           this._onAudio(mediaEvt.audio, mediaEvt.timestamp);
@@ -316,7 +337,7 @@ export class MediaWebSocket {
         return;
       }
 
-      while (this._audioQueue.length > 0 && this._ws && this._ws.readyState === 1) {
+      while (this._formatValidated && this._audioQueue.length > 0 && this._ws && this._ws.readyState === 1) {
         const payload = this._audioQueue.shift()!;
         this._ws.send(buildMediaResponse(payload));
       }

@@ -73,3 +73,5 @@ export type { MCPServerConfig, MCPServerStdio, MCPServerHTTP } from './mcp/index
 // Tracing
 export type { TracingConfig } from './tracing/index.js';
 export { setTracingConfig, getTracingConfig, resetTracingConfig } from './tracing/index.js';
+
+export { MediaProfile } from './media-profile.js';

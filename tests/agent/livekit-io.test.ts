@@ -132,3 +132,60 @@ describe('ClawOpsAudioOutput', () => {
     expect((finished.mock.calls[0]![0] as any).interrupted).toBe(true);
   });
 });
+
+describe('explicit PCM16 16kHz profile', () => {
+  it('preserves a full second of 5kHz PCM in both directions', async () => {
+    const { MediaProfile } = await import('../../src/agent/media-profile.js');
+    const { ClawOpsAudioInput, ClawOpsAudioOutput } = await loadClawOpsIO();
+    const samples = Int16Array.from({ length: 16000 }, (_, i) => Math.round(10000 * Math.sin(2 * Math.PI * 5000 * i / 16000)));
+    const sink = { sent: [] as Buffer[], sendAudio(b: Buffer) { this.sent.push(Buffer.from(b)); }, clearAudio() {} };
+    const out = new ClawOpsAudioOutput(sink, MediaProfile.PCM_S16LE_16000);
+    const input = new ClawOpsAudioInput(MediaProfile.PCM_S16LE_16000);
+    try {
+      await (out as any).captureFrame(new AudioFrame(samples, 16000, 1, samples.length));
+      expect(sink.sent).toHaveLength(50);
+      expect(sink.sent.every(b => b.length === 640)).toBe(true);
+      const reader = (input.stream as ReadableStream<any>).getReader();
+      for (const [index, b] of sink.sent.entries()) {
+        input.pushAudio(b);
+        const { value } = await reader.read();
+        expect(value.sampleRate).toBe(16000);
+        expect(value.samplesPerChannel).toBe(320);
+        expect(Array.from(value.data)).toEqual(Array.from(samples.slice(index * 320, (index + 1) * 320)));
+      }
+      expect(() => input.pushUlaw(Buffer.alloc(160))).toThrow('pushUlaw');
+      expect(() => input.pushAudio(Buffer.alloc(1))).toThrow('Incomplete');
+    } finally { out.close(); await input.close(); }
+  });
+  it('rejects a wrong sample rate without sending bytes', async () => {
+    const { MediaProfile } = await import('../../src/agent/media-profile.js');
+    const { ClawOpsAudioOutput } = await loadClawOpsIO();
+    const sendAudio = vi.fn();
+    const out = new ClawOpsAudioOutput({ sendAudio, clearAudio() {} }, MediaProfile.PCM_S16LE_16000);
+    try {
+      await expect((out as any).captureFrame(makeFrame(160))).rejects.toThrow('PCM16');
+      expect(sendAudio).not.toHaveBeenCalled();
+    } finally { out.close(); }
+  });
+});
+
+it('PCM16 tail uses zeros and a single mark completion with correct duration', async () => {
+  const { MediaProfile } = await import('../../src/agent/media-profile.js');
+  const { ClawOpsAudioOutput } = await loadClawOpsIO();
+  const sent: Buffer[] = [];
+  const call = { sendAudio(b: Buffer) { sent.push(Buffer.from(b)); }, clearAudio() {},
+    _isTransportConnected: () => true, _flushTransport: async () => {},
+    _sendMark: vi.fn(), _waitForMark: async () => {} };
+  const out = new ClawOpsAudioOutput(call, MediaProfile.PCM_S16LE_16000);
+  const finished = vi.spyOn(out as any, 'onPlaybackFinished');
+  try {
+    await (out as any).captureFrame(new AudioFrame(new Int16Array(400).fill(1234), 16000, 1, 400));
+    (out as any).flush();
+    await new Promise(r => setTimeout(r, 20));
+    expect(sent.map(b => b.length)).toEqual([640, 640]);
+    expect(sent[1]!.subarray(160)).toEqual(Buffer.alloc(480));
+    expect(finished).toHaveBeenCalledTimes(1);
+    expect(finished).toHaveBeenCalledWith({ playbackPosition: .025, interrupted: false });
+    expect(call._sendMark).toHaveBeenCalledTimes(1);
+  } finally { out.close(); }
+});

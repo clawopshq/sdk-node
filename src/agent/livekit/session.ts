@@ -1,3 +1,4 @@
+import { MediaProfile, mediaContract } from '../media-profile.js';
 /**
  * LiveKitSession — 유저의 LiveKit AgentSession 을 ClawOps `Session` 계약으로 감싼다.
  *
@@ -58,7 +59,8 @@ export class LiveKitSession implements Session {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _llm: any = null;
 
-  constructor(create: LiveKitCreateFn) {
+  constructor(create: LiveKitCreateFn, private readonly options: { mediaProfile?: MediaProfile } = {}) {
+    mediaContract(options.mediaProfile ?? MediaProfile.MULAW_8000);
     this._create = create;
   }
 
@@ -109,7 +111,7 @@ export class LiveKitSession implements Session {
   }
 
   feedAudio(audio: Buffer, _timestamp?: number): void {
-    this._input?.pushUlaw(audio);
+    this._input?.pushAudio(audio);
   }
 
   async feedDtmf(digits: string): Promise<void> {
@@ -147,11 +149,11 @@ export class LiveKitSession implements Session {
     const [session, agent] = await this._create(call);
     this._validate(session, agent);
 
-    const input = new ClawOpsAudioInput();
+    const input = new ClawOpsAudioInput(this.options.mediaProfile);
     const output = new ClawOpsAudioOutput(target as unknown as {
       sendAudio(audio: Buffer): void | Promise<void>;
       clearAudio(): void;
-    });
+    }, this.options.mediaProfile);
     this._input = input;
     this._output = output;
 

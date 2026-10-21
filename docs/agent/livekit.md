@@ -69,3 +69,22 @@ ClawOps 는 room 없는 transport 라, LiveKit 기능 중 room/서버에 묶인 
 - **녹음·telemetry** 는 LiveKit `record` 가 아니라 ClawOps 자체 기능을 씁니다 (미디어
   레이어에서 세션 무관하게 동작).
 - **동시통화 1건** — 현재는 한 번에 한 통화만 처리합니다.
+
+## Explicit PCM16 profile (coordinated server integration)
+
+Existing Node clients remain μ-law 8kHz with unchanged framing and timing. PCM16 is
+opt-in and is not enabled by installing this SDK. The server must support it first.
+Select `MediaProfile.PCM_S16LE_16000` before prewarm with
+`new LiveKitSession(create, { mediaProfile })` and use the same value in
+`new MediaWebSocket({ expectedMediaProfile: mediaProfile })`. Import `MediaProfile`
+from `@teamlearners/clawops/agent`. This integration is for callers that wire the
+transport explicitly; ordinary `ClawOpsAgent`, pipeline and realtime paths retain
+8kHz defaults.
+
+The contract matches Python: signed PCM16 little-endian, mono, 16000Hz, 640 bytes
+per 20ms. Start encoding is
+`audio/pcm;encoding=signed-integer;bits=16;endianness=little`, sampleRate 16000,
+channels 1. This differs from RTP L16 byte order. A mismatched start or media before
+validation closes the transport; buffered prewarm PCM cannot reach a legacy server.
+Do not change profiles after prewarm. Node's existing tail padding and playout mark
+behavior remain in place, with PCM zero padding on the new profile.

@@ -148,3 +148,37 @@ describe('warnIfPlaintext', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 });
+
+describe('explicit media format negotiation', () => {
+  it.each([true, false])('gates queued PCM before matching start=%s', async (matching) => {
+    const { MediaProfile, mediaContract } = await import('../../src/agent/media-profile.js');
+    const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const received: unknown[] = [];
+    let peer: import('ws').WebSocket;
+    const connected = new Promise<void>(resolve => server.once('connection', ws => {
+      peer = ws;
+      ws.on('message', bytes => received.push(JSON.parse(bytes.toString())));
+      resolve();
+    }));
+    const client = new MediaWebSocket({ expectedMediaProfile: MediaProfile.PCM_S16LE_16000 });
+    const start = vi.fn(); client.onStart(start);
+    try {
+      client.sendAudio(Buffer.alloc(640).toString('base64'));
+      await client.connect(`ws://127.0.0.1:${port}`);
+      await connected;
+      await new Promise(r => setTimeout(r, 30));
+      expect(received).toEqual([]);
+      const format = mediaContract(matching ? MediaProfile.PCM_S16LE_16000 : MediaProfile.MULAW_8000);
+      peer!.send(JSON.stringify({ event: 'start', start: { mediaFormat: { encoding: format.encoding, sampleRate: format.sampleRate, channels: 1 } } }));
+      await new Promise(r => setTimeout(r, 50));
+      expect(start).toHaveBeenCalledTimes(matching ? 1 : 0);
+      expect(received).toHaveLength(matching ? 1 : 0);
+      if (!matching) expect(client.isConnected).toBe(false);
+    } finally {
+      client.close(); server.clients.forEach(ws => ws.terminate());
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+});

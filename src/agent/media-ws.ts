@@ -1,3 +1,4 @@
+import { MediaProfile, mediaContract, validateMediaFormat } from './media-profile.js';
 /**
  * Media WebSocket for streaming audio to/from the telephony platform.
  *
@@ -115,6 +116,12 @@ export class MediaWebSocket {
   private _onDtmf: ((digit: string) => void) | null = null;
   private _markWaiters: Map<string, () => void> = new Map();
   private _log: Logger = NOOP_LOGGER;
+
+  private _formatValidated: boolean;
+  constructor(private readonly options: { expectedMediaProfile?: MediaProfile } = {}) {
+    if (options.expectedMediaProfile !== undefined) mediaContract(options.expectedMediaProfile);
+    this._formatValidated = options.expectedMediaProfile === undefined;
+  }
 
   setLogger(logger: Logger): void {
     this._log = logger;
@@ -268,6 +275,16 @@ export class MediaWebSocket {
 
     switch (event) {
       case 'start': {
+        if (this.options.expectedMediaProfile !== undefined) {
+          try {
+            validateMediaFormat(this.options.expectedMediaProfile,
+              ((msg['start'] as Record<string, unknown>)?.['mediaFormat'] ?? {}) as Record<string, unknown>);
+            this._formatValidated = true;
+          } catch {
+            this.close();
+            return;
+          }
+        }
         const startEvt = parseStartEvent(msg);
         if (this._onStart) {
           this._onStart(startEvt);
@@ -275,6 +292,7 @@ export class MediaWebSocket {
         break;
       }
       case 'media': {
+        if (!this._formatValidated) { this.close(); return; }
         const mediaEvt = parseMediaEvent(msg);
         if (this._onAudio) {
           this._onAudio(mediaEvt.audio, mediaEvt.timestamp);
@@ -316,7 +334,7 @@ export class MediaWebSocket {
         return;
       }
 
-      while (this._audioQueue.length > 0 && this._ws && this._ws.readyState === 1) {
+      while (this._formatValidated && this._audioQueue.length > 0 && this._ws && this._ws.readyState === 1) {
         const payload = this._audioQueue.shift()!;
         this._ws.send(buildMediaResponse(payload));
       }

@@ -26,6 +26,7 @@ jobs:
   livekit-runtime:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         node-version: [18, 20, 22]
     steps:
@@ -36,7 +37,9 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Install real optional LiveKit dependencies
-        run: npm install --no-save --package-lock=false @livekit/agents@1.5.0 @livekit/rtc-node@0.13.35
+        run: |
+          npm install --save-dev --package-lock=false @livekit/agents@1.5.0 @livekit/rtc-node@0.13.35
+          node -e "require.resolve('@livekit/rtc-node')"
       - run: npm run build
       - name: Real 8kHz and 16kHz media contract (no mocks)
         run: node verify/livekit-media.mjs

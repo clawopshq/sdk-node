@@ -166,8 +166,24 @@ export interface ClawOpsAgentOptions {
   tracing?: TracingConfig;
   /** 활성화할 내장 도구. Default: BuiltinTool.ALL */
   builtinTools?: BuiltinTool | BuiltinTool[];
-  /** Debounce time (ms) for passive DTMF accumulation. Default: 500 */
+  /**
+   * 키패드 자동 전달: 마지막 키 뒤 이만큼(ms) 더 안 눌리면 모은 키를 모델에 전달한다. Default: 2000
+   *
+   * 확정 규칙은 셋 중 먼저 오는 것이다 — 종료키 / 자리 수 / 이 대기. 2초는 Pipecat
+   * `DTMFAggregator` 와 같다. 0.5초였을 땐 사람 손 간격(실측 0.33~0.94초)보다 짧아 534 가
+   * 5·3·4 로 쪼개져 들어갔다.
+   */
   passiveDtmfDebounceMs?: number;
+  /**
+   * 키패드 자동 전달의 종료키. 누르는 즉시 그때까지를 전달하고, 키 자신은 값에서 뺀다.
+   * 모인 키 없이 누르면 그 키를 그대로 전달한다(「#번을 누르세요」 메뉴). `null` 이면 끈다. Default: '#'
+   */
+  passiveDtmfFinishKey?: string | null;
+  /**
+   * 키패드 자동 전달: 이 자리 수가 모이면 바로 전달한다. 받을 자리 수가 항상 같을 때만 쓴다 —
+   * 넘치게 누른 키는 다음 입력으로 넘어간다. Default: 없음
+   */
+  passiveDtmfMaxDigits?: number | null;
   /** Custom pino logger instance. If omitted, a default logger is created. */
   logger?: Logger;
   /** Tool 실행 관련 설정. */
@@ -243,9 +259,8 @@ export class ClawOpsAgent {
   private _terminalWaiters = new Map<string, () => void>();
   private _builtinTools!: Set<BuiltinTool>;
   private _passiveDtmfDebounceMs: number;
-  private _passiveDtmfBuffer: string[] = [];
-  private _passiveDtmfTimer: ReturnType<typeof setTimeout> | null = null;
-  private _passiveDtmfCallId: string | null = null;
+  private _passiveDtmfFinishKey: string | null;
+  private _passiveDtmfMaxDigits: number | null;
   private _callSessions = new Map<string, Session>();
   private _log: Logger;
   private _pipelineLog: Logger;
@@ -271,7 +286,21 @@ export class ClawOpsAgent {
     this._recordingPath = options.recordingPath ?? './recordings';
     this._mcpServers = options.mcpServers ?? [];
     this._builtinTools = resolveBuiltinTools(options.builtinTools ?? BuiltinTool.ALL);
-    this._passiveDtmfDebounceMs = options.passiveDtmfDebounceMs ?? 500;
+    this._passiveDtmfDebounceMs = options.passiveDtmfDebounceMs ?? 2000;
+    this._passiveDtmfFinishKey = options.passiveDtmfFinishKey === undefined ? '#' : options.passiveDtmfFinishKey;
+    this._passiveDtmfMaxDigits = options.passiveDtmfMaxDigits ?? null;
+    if (!Number.isFinite(this._passiveDtmfDebounceMs) || this._passiveDtmfDebounceMs < 0) {
+      throw new AgentError('passiveDtmfDebounceMs must be a finite number >= 0');
+    }
+    if (
+      this._passiveDtmfFinishKey !== null &&
+      (this._passiveDtmfFinishKey.length !== 1 || !'0123456789*#'.includes(this._passiveDtmfFinishKey))
+    ) {
+      throw new AgentError('passiveDtmfFinishKey must be one of 0-9, *, # or null');
+    }
+    if (this._passiveDtmfMaxDigits !== null && (!Number.isInteger(this._passiveDtmfMaxDigits) || this._passiveDtmfMaxDigits < 1)) {
+      throw new AgentError('passiveDtmfMaxDigits must be an integer >= 1 or null');
+    }
     this._rxGain = ClawOpsAgent._validateGain('rxGain', options.rxGain ?? 1.0);
     this._txGain = ClawOpsAgent._validateGain('txGain', options.txGain ?? 1.0);
     this._prewarmEnabled = options.prewarmEnabled ?? true;
@@ -1224,35 +1253,62 @@ export class ClawOpsAgent {
     void this._cleanupPrewarm(callId);
   }
 
+  /**
+   * 키 하나를 수집 중인 collectDtmf 로, 아니면 모델 자동 전달로 보낸다. 한 키는 둘 중 한 곳으로만 간다.
+   *
+   * 자동 전달 버퍼는 **통화별**(`CallSession`)이다. 예전엔 에이전트에 하나뿐이라 동시 통화 두 건이
+   * 대기 창 안에서 누르면 키가 합쳐져 마지막 통화 하나로만 갔다.
+   */
   private _onDtmfEvent(callSession: CallSession, digit: string): void {
     callSession._emit('dtmf', digit);
 
-    // Always route to session buffer — collector may not be active yet (tool call timing)
-    callSession._routeDtmf(digit);
-
-    if ((callSession as any)._dtmfCollectorActive) {
+    if ((callSession as unknown as { _dtmfCollectorActive: boolean })._dtmfCollectorActive) {
+      callSession._routeDtmf(digit);
+      // 안내 도중 누르면 안내를 끊는다(Twilio <Gather> 와 같다).
       callSession.clearAudio();
       return;
     }
 
-    this._passiveDtmfBuffer.push(digit);
-    this._passiveDtmfCallId = callSession.callId;
-    if (this._passiveDtmfTimer) {
-      clearTimeout(this._passiveDtmfTimer);
+    if (this._passiveDtmfFinishKey !== null && digit === this._passiveDtmfFinishKey) {
+      // 종료키 = 지금까지를 즉시 확정, 키 자신은 값에서 뺀다. 모인 게 없으면 키 자체를 넘긴다.
+      this._confirmPassiveDtmf(callSession, digit);
+      return;
     }
-    this._passiveDtmfTimer = setTimeout(() => {
-      const digits = this._passiveDtmfBuffer.join('');
-      this._passiveDtmfBuffer = [];
-      const sessionHandler = this._passiveDtmfCallId
-        ? this._callSessions.get(this._passiveDtmfCallId)
-        : null;
-      this._passiveDtmfCallId = null;
-      if (digits && sessionHandler && sessionHandler.feedDtmf) {
-        sessionHandler.feedDtmf(digits).catch((err: unknown) => {
-          this._log.error({ err }, 'DTMF feed error');
-        });
-      }
+
+    callSession._passiveDtmfBuffer.push(digit);
+    callSession._passiveDtmfConfirmNow = () => this._confirmPassiveDtmf(callSession);
+    if (this._passiveDtmfMaxDigits !== null && callSession._passiveDtmfBuffer.length >= this._passiveDtmfMaxDigits) {
+      this._confirmPassiveDtmf(callSession);
+      return;
+    }
+    if (callSession._passiveDtmfTimer) clearTimeout(callSession._passiveDtmfTimer);
+    callSession._passiveDtmfTimer = setTimeout(() => {
+      callSession._passiveDtmfTimer = null;
+      this._confirmPassiveDtmf(callSession);
     }, this._passiveDtmfDebounceMs);
+  }
+
+  /** 대기 없이 지금까지 모인 키를 확정해 전달한다. */
+  private _confirmPassiveDtmf(callSession: CallSession, loneKey?: string): void {
+    if (callSession._passiveDtmfTimer) {
+      clearTimeout(callSession._passiveDtmfTimer);
+      callSession._passiveDtmfTimer = null;
+    }
+    const digits = callSession._passiveDtmfBuffer.join('') || (loneKey ?? '');
+    callSession._passiveDtmfBuffer = [];
+    if (!digits) return;
+    // 종료키·자리 수 확정은 대기 없이 연달아 올 수 있다(1#2#). 한 통화 안에선 차례로 보낸다.
+    callSession._passiveDtmfFeedChain = callSession._passiveDtmfFeedChain.then(async () => {
+      const sessionHandler = this._callSessions.get(callSession.callId);
+      if (!sessionHandler?.feedDtmf) return;
+      // 값은 카드번호일 수 있다 — 자릿수만 남긴다.
+      this._log.info('키패드 입력 %d자리 자동 전달 (call=%s)', digits.length, callSession.callId);
+      try {
+        await sessionHandler.feedDtmf(digits);
+      } catch (err) {
+        this._log.error({ err }, 'DTMF feed error');
+      }
+    });
   }
 
   /**
@@ -1371,6 +1427,7 @@ export class ClawOpsAgent {
         session._sendMark = (name: string) => mediaWs.sendMark(name);
         session._waitForMark = (name: string, timeoutMs: number) => mediaWs.waitForMark(name, timeoutMs);
         session._flushTransport = () => mediaWs.flush();
+        session._waitPlayedOut = (timeoutMs: number, signal?: AbortSignal) => mediaWs.waitPlayedOut(timeoutMs, signal);
 
         const sessionHandler = this._session;
 

@@ -202,6 +202,20 @@ export function loadHoldAudio(source: true | string | Buffer): Buffer[] {
 }
 
 /**
+ * 발신자에게 키를 받는 도구. 이게 끼어 있는 묶음엔 대기음을 틀지 않는다 — 발신자가 키를 누를
+ * 차례에 대기음이 안내를 덮고, 수집 내내 「기다리세요」 소리를 낸다.
+ */
+const NO_HOLD_AUDIO_TOOLS = new Set(['collect_dtmf']);
+
+/** 이 도구 묶음을 실행하는 동안 대기음을 틀어도 되는가. */
+export function holdAudioAllowed(toolNames: Iterable<string>): boolean {
+  for (const name of toolNames) {
+    if (NO_HOLD_AUDIO_TOOLS.has(name)) return false;
+  }
+  return true;
+}
+
+/**
  * Tool 실행 중 대기 오디오를 루프 재생한다.
  */
 export class HoldAudioPlayer {

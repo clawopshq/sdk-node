@@ -92,6 +92,21 @@ export class CallSession {
   /** @internal */ _sendMark: ((name: string) => void) | null = null;
   /** @internal */ _waitForMark: ((name: string, timeoutMs: number) => Promise<void>) | null = null;
   /** @internal */ _flushTransport: (() => Promise<void>) | null = null;
+  /**
+   * @internal 지금까지 보낸 오디오가 다 재생될 때까지 기다린다(`MediaWebSocket.waitPlayedOut`).
+   * `collectDtmf` 가 안내 재생이 끝난 뒤부터 대기를 세는 데 쓴다. 없으면 바로 센다(종전 동작).
+   */
+  /** @internal */ _waitPlayedOut: ((timeoutMs: number, signal?: AbortSignal) => Promise<boolean>) | null = null;
+  /**
+   * @internal 키패드 자동 전달(=collectDtmf 가 안 걸린 입력)의 버퍼. 통화별로 들고 있어야
+   * 동시 통화의 키가 서로 섞이지 않는다. 확정·전달은 ClawOpsAgent 가 한다 — 규칙이 에이전트 설정이라서다.
+   */
+  /** @internal */ _passiveDtmfBuffer: string[] = [];
+  /** @internal */ _passiveDtmfTimer: ReturnType<typeof setTimeout> | null = null;
+  /** @internal 버퍼에 남은 키를 대기 없이 확정하는 함수. collectDtmf 가 열릴 때 부른다. */
+  /** @internal */ _passiveDtmfConfirmNow: (() => void) | null = null;
+  /** @internal 한 통화의 자동 전달은 차례로 보낸다. */
+  /** @internal */ _passiveDtmfFeedChain: Promise<void> = Promise.resolve();
   private _dtmfCollectorActive = false;
   private _dtmfResolvers: ((digit: string) => void)[] = [];
   private _dtmfBuffer: string[] = [];
@@ -223,13 +238,16 @@ export class CallSession {
     }
   }
 
-  /** @internal Route a received DTMF digit to an active collector or buffer. */
+  /** @internal 수집 중인 collectDtmf 에 키를 넘긴다.
+   *
+   * ClawOpsAgent 는 수집이 열려 있을 때만 부른다. 구간 밖 키는 모델에 자동 전달되므로 여기까지
+   * 오면 같은 키가 두 경로로 간다 — 동의 때 누른 `1` 이 다음 수집의 첫 자리가 돼 「1534」 가 나왔다. */
   _routeDtmf(digit: string): void {
     if (this._dtmfCollectorActive && this._dtmfResolvers.length > 0) {
       const resolve = this._dtmfResolvers.shift()!;
       resolve(digit);
     } else {
-      // Buffer the digit — collector may not be active yet (tool call timing)
+      // 수집 중이지만 다음 자리를 기다리기 전 — 루프가 버퍼부터 비운다.
       this._dtmfBuffer.push(digit);
     }
   }
@@ -240,10 +258,17 @@ export class CallSession {
    * `timeout` 은 **자리 사이** 대기다(inter-digit). `<Gather>` 를 비롯한 IVR 관행과 같은
    * 의미이고, 자리가 들어올 때마다 다시 시작한다.
    *
+   * 대기는 **안내 음성이 다 재생된 뒤**부터 센다(Twilio `<Gather>` 와 같다). 모델은 안내 텍스트를
+   * 다 만든 순간 이 도구를 부르지만 발신자 쪽에선 음성이 아직 10초 넘게 남아 있을 수 있다 — 그때부터
+   * 세면 누를 틈도 없이 빈 값으로 끝난다. 재생 중에 누른 첫 키는 그대로 받고(안내는 ClawOpsAgent 가
+   * 끊는다), 그 순간부터 센다.
+   *
+   * 수집이 열린 **뒤에** 누른 키만 받는다. 그 전에 누른 키는 모델에 자동 전달된다.
+   *
    * `maxWait` 는 그 관행이 만드는 최악을 막는 **전체 상한**이다(기본 30초). 자리마다
    * 리셋되는 타이머만 있으면 수집 하나가 최대 `maxDigits × timeout` 동안 산다 —
    * 11자리·5초면 **55초**이고, 그동안 모델은 이 도구에 붙들려 아무 말도 못 한다.
-   * `null` 을 주면 상한 없이 종전대로 돈다.
+   * 이것도 재생이 끝난 뒤부터 센다. `null` 을 주면 상한 없이 종전대로 돈다.
    *
    * ⚠️ **수집값을 로그에 쓰지 않는다.** 키패드로 받는 값은 카드번호·주민번호일 수 있고,
    * 실제로 그런 구성이 있다. `secure` 와 무관하게 **자릿수만** 남긴다 — 이 옵션은 호환을
@@ -262,11 +287,50 @@ export class CallSession {
 
     const { maxDigits, finishOnKey = '#', timeout = 5, maxWait = 30 } = options;
     this._dtmfCollectorActive = true;
-    // Don't clear buffer — digits may have arrived before tool call was processed
+    // 수집 직전에 눌러 아직 자동 전달 대기 중인 키는 지금 모델에 넘긴다. 수집으로 가져오면 앞
+    // 질문의 답(동의 1 등)이 섞이고, 버리면 잃는다. 대기 시간 동안 두면 도구 호출 중에 늦게 들어간다.
+    if (this._passiveDtmfBuffer.length > 0 && this._passiveDtmfConfirmNow) {
+      this._passiveDtmfConfirmNow();
+    }
+    // 구간 밖 키가 남아 있으면 버린다(방어 — 정상 경로에선 비어 있다).
+    this._dtmfBuffer = [];
     const collected: string[] = [];
-    const deadline = maxWait === null ? null : Date.now() + maxWait * 1000;
+    let deadline: number | null = null;
 
     try {
+      // 1) 안내가 다 재생되거나 첫 키가 올 때까지. 재생 대기 상한은 maxWait(없으면 60초).
+      if (this._waitPlayedOut) {
+        const abort = new AbortController();
+        let onFirst!: (digit: string) => void;
+        const firstDigit = new Promise<string>((resolve) => {
+          onFirst = resolve;
+        });
+        this._dtmfResolvers.push(onFirst);
+        const started = Date.now();
+        const outcome = await Promise.race([
+          firstDigit.then((digit) => ({ digit })),
+          this._waitPlayedOut((maxWait ?? 60) * 1000, abort.signal).then(
+            (played) => ({ played }),
+            () => ({ played: false }),
+          ),
+        ]);
+        abort.abort();
+        if ('digit' in outcome) {
+          // 재생 중에 눌렀다 — 그 키부터 받는다.
+          this._dtmfBuffer.unshift(outcome.digit);
+        } else {
+          // 재생이 먼저 끝났다. 걸어 둔 resolver 를 거둬야 다음 키가 버려진 promise 로 가지 않는다.
+          this._dtmfResolvers = this._dtmfResolvers.filter((r) => r !== onFirst);
+          this._log.info(
+            '키패드 수집: 안내 재생 끝 %ss%s',
+            ((Date.now() - started) / 1000).toFixed(2),
+            outcome.played ? '' : ' (확인 못 함)',
+          );
+        }
+      }
+
+      // 2) 여기서부터 자리 사이 대기·전체 상한을 센다.
+      deadline = maxWait === null ? null : Date.now() + maxWait * 1000;
       while (collected.length < maxDigits) {
         // Drain the buffer first
         if (this._dtmfBuffer.length > 0) {
@@ -442,6 +506,11 @@ export class CallSession {
       this._endedStatus = 'completed';
     }
     this._status = 'ended';
+    // 아직 안 깨어난 자동 전달을 접는다 — 끝난 통화에 늦게 주입하지 않고, 타이머가 이벤트 루프를
+    // 붙잡지 않게.
+    if (this._passiveDtmfTimer) clearTimeout(this._passiveDtmfTimer);
+    this._passiveDtmfTimer = null;
+    this._passiveDtmfBuffer = [];
     this._resolveEnded();
   }
 

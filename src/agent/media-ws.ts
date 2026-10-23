@@ -286,10 +286,19 @@ export class MediaWebSocket {
   async waitPlayedOut(timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
     if (this._closed || !this.isConnected) return false;
     const deadline = Date.now() + timeoutMs;
+    // 타이머가 먼저 끝나면 abort 리스너도 떼야 한다 — 오디오가 이어지는 동안 300ms 마다 돌므로,
+    // 안 떼면 signal 에 리스너가 쌓여 MaxListenersExceededWarning 이 난다.
     const sleep = (ms: number) =>
       new Promise<void>((resolve) => {
-        const t = setTimeout(resolve, ms);
-        signal?.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+        const onAbort = () => {
+          clearTimeout(t);
+          resolve();
+        };
+        const t = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        }, ms);
+        signal?.addEventListener('abort', onAbort, { once: true });
       });
     for (;;) {
       if (signal?.aborted || this._closed) return false;

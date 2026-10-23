@@ -1299,6 +1299,8 @@ export class ClawOpsAgent {
     if (!digits) return;
     // 종료키·자리 수 확정은 대기 없이 연달아 올 수 있다(1#2#). 한 통화 안에선 차례로 보낸다.
     callSession._passiveDtmfFeedChain = callSession._passiveDtmfFeedChain.then(async () => {
+      // 앞선 주입을 기다리는 사이 통화가 끝났으면 보내지 않는다.
+      if (callSession.status === 'ended') return;
       const sessionHandler = this._callSessions.get(callSession.callId);
       if (!sessionHandler?.feedDtmf) return;
       // 값은 카드번호일 수 있다 — 자릿수만 남긴다.

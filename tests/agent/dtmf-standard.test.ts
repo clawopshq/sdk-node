@@ -426,3 +426,64 @@ describe('대기음', () => {
     expect(holdAudioAllowed(['lookup_order', 'collect_dtmf'])).toBe(false);
   });
 });
+
+describe('코드 리뷰 반영', () => {
+  it('재생 끝 대기가 길어져도 abort 리스너가 쌓이지 않는다', async () => {
+    const mws = new MediaWebSocket();
+    (mws as any)._ws = {
+      readyState: 1,
+      send(raw: string) {
+        const msg = JSON.parse(raw);
+        if (msg.event === 'mark') (mws as any)._markWaiters.get(msg.mark.name)();
+      },
+      close() {},
+    };
+    (mws as any)._formatValidated = true;
+    const ac = new AbortController();
+    let added = 0;
+    let removed = 0;
+    const origAdd = ac.signal.addEventListener.bind(ac.signal);
+    const origRemove = ac.signal.removeEventListener.bind(ac.signal);
+    (ac.signal as any).addEventListener = (...a: Parameters<AbortSignal['addEventListener']>) => {
+      added++;
+      origAdd(...a);
+    };
+    (ac.signal as any).removeEventListener = (
+      ...a: Parameters<AbortSignal['removeEventListener']>
+    ) => {
+      removed++;
+      origRemove(...a);
+    };
+    const trickle = (async () => {
+      for (let i = 0; i < 4; i++) {
+        mws.sendAudio('AA==');
+        (mws as any)._audioQueue.length = 0;
+        await sleep(100);
+      }
+    })();
+    await sleep(5);
+    expect(await mws.waitPlayedOut(5000, ac.signal)).toBe(true);
+    await trickle;
+    // 조용한 구간 대기마다 붙인 리스너는 타이머가 끝날 때 떼었다(마지막 mark 대기 하나만 남을 수 있다).
+    expect(added - removed).toBeLessThanOrEqual(1);
+  });
+
+  it('앞선 주입을 기다리는 사이 통화가 끝나면 남은 주입을 보내지 않는다', async () => {
+    const agent = makeAgent({ passiveDtmfDebounceMs: 5000 });
+    const s = recordingSession(60);
+    const call = attachCall(agent, s);
+    call._bindTransport(
+      () => {},
+      () => {},
+      async () => {},
+    );
+    press(agent, call, '1');
+    press(agent, call, '#'); // '1' 주입 시작(60ms 걸림)
+    press(agent, call, '2');
+    press(agent, call, '#'); // '2' 는 줄 서서 기다림
+    await sleep(20);
+    (call as any)._markEnded();
+    await sleep(200);
+    expect(s.fed).toEqual(['1']);
+  });
+});

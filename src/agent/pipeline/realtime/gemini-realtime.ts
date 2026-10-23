@@ -17,7 +17,7 @@ import { pcm16ToUlaw, resamplePcm16, ulawToPcm16 } from '../../audio.js';
 import { BuiltinTool } from '../../builtin-tool.js';
 import type { Logger } from 'pino';
 import { NOOP_LOGGER } from '../../logger.js';
-import { HoldAudioPlayer } from '../../hold-audio.js';
+import { HoldAudioPlayer, holdAudioAllowed } from '../../hold-audio.js';
 import {
   BUILTIN_TOOL_NAMES,
   CALL_NOT_READY_RESULT,
@@ -1113,7 +1113,10 @@ export class GeminiRealtime implements Session {
     const responses: Array<Record<string, unknown>> = [];
 
     const player =
-      this._holdAudioChunks && this._call && !(this._call instanceof BufferingCall)
+      this._holdAudioChunks &&
+      this._call &&
+      !(this._call instanceof BufferingCall) &&
+      holdAudioAllowed(functionCalls.map((fc) => fc.name ?? ''))
         ? new HoldAudioPlayer(this._call, this._holdAudioChunks)
         : null;
     player?.start();

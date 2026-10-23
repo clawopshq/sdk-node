@@ -105,6 +105,9 @@ function stripQuery(url: string): string {
   return i === -1 ? url : url.slice(0, i);
 }
 
+/** 재생 끝 mark 를 보내기 전에 새 오디오가 이만큼 안 들어와야 한다(조각 TTS 대비). */
+export const PLAYOUT_QUIET_MS = 300;
+
 export class MediaWebSocket {
   private _ws: WsType | null = null;
   private _audioQueue: string[] = [];
@@ -115,6 +118,8 @@ export class MediaWebSocket {
   private _onClose: (() => void) | null = null;
   private _onDtmf: ((digit: string) => void) | null = null;
   private _markWaiters: Map<string, () => void> = new Map();
+  /** 마지막으로 오디오를 큐에 넣은 시각(ms). 재생 끝 판정의 「조용한 구간」 기준. */
+  private _lastAudioAt = 0;
   private _log: Logger = NOOP_LOGGER;
 
   private _formatValidated: boolean;
@@ -211,6 +216,7 @@ export class MediaWebSocket {
 
   /** Queue base64-encoded audio for sending. */
   sendAudio(audioBase64: string): void {
+    this._lastAudioAt = Date.now();
     this._audioQueue.push(audioBase64);
   }
 
@@ -264,9 +270,68 @@ export class MediaWebSocket {
     });
   }
 
+  /**
+   * 지금까지 보낸 오디오가 발신자에게 다 재생될 때까지 기다린다. 재생 끝 echo 를 받았으면 `true`.
+   *
+   * 서버는 mark 앞의 오디오를 RTP 로 다 내보낸 뒤 mark 를 돌려주고, `clear` 때는 남은 mark 를
+   * 즉시 돌려준다(Twilio Media Streams 와 같은 의미). 그래서 순서가 중요하다.
+   * - 오디오는 송신 큐를 거치고 mark 는 바로 나가므로, 큐를 먼저 비워야 mark 가 오디오를 앞지르지 않는다.
+   * - 오디오가 조각조각 이어서 들어오는 중이면(TTS 를 만들면서 흘려 보내는 경로) 큐가 잠깐 빈 틈을
+   *   재생 끝으로 보게 된다. 새 오디오가 {@link PLAYOUT_QUIET_MS} 동안 안 들어온 뒤에 보낸다.
+   * - 재생할 게 없으면 echo 가 곧장 오므로 waiter 를 **보내기 전에** 건다.
+   *
+   * `signal` 이 abort 되면(먼저 키가 눌렸을 때) 기다림을 접고 `false` 를 돌려준다 — 타이머가
+   * 남아 이벤트 루프를 붙잡지 않게.
+   */
+  async waitPlayedOut(timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
+    if (this._closed || !this.isConnected) return false;
+    const deadline = Date.now() + timeoutMs;
+    // 타이머가 먼저 끝나면 abort 리스너도 떼야 한다 — 오디오가 이어지는 동안 300ms 마다 돌므로,
+    // 안 떼면 signal 에 리스너가 쌓여 MaxListenersExceededWarning 이 난다.
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => {
+        const onAbort = () => {
+          clearTimeout(t);
+          resolve();
+        };
+        const t = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        }, ms);
+        signal?.addEventListener('abort', onAbort, { once: true });
+      });
+    for (;;) {
+      if (signal?.aborted || this._closed) return false;
+      await this.flush();
+      const quietFor = Date.now() - this._lastAudioAt;
+      if (quietFor >= PLAYOUT_QUIET_MS || Date.now() >= deadline) break;
+      await sleep(PLAYOUT_QUIET_MS - quietFor);
+    }
+    if (signal?.aborted || this._closed) return false;
+
+    const name = `playout-${Math.random().toString(36).slice(2, 14)}`;
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (echoed: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this._markWaiters.delete(name);
+        resolve(echoed && !this._closed);
+      };
+      const timer = setTimeout(() => finish(false), Math.max(0, deadline - Date.now()));
+      signal?.addEventListener('abort', () => finish(false), { once: true });
+      this._markWaiters.set(name, () => finish(true));
+      this.sendMark(name);
+    });
+  }
+
   /** Close the media WebSocket. */
   close(): void {
     this._closed = true;
+    // 기다리던 mark 는 이제 안 온다 — 상한까지 붙잡지 말고 깨운다.
+    for (const resolve of [...this._markWaiters.values()]) resolve();
+    this._markWaiters.clear();
     if (this._ws) {
       this._ws.close();
       this._ws = null;

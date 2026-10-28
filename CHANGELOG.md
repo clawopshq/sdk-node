@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.58.0 (2026-10-28)
+
+Python SDK 0.71.0 과 같은 변경입니다.
+
+### Fixed
+- **API 키가 폐기·만료됐거나 번호가 계정 것이 아니면 에이전트가 끝없이 재연결하던 문제.** 서버가 control 연결을
+  거절하면(HTTP 400·401·403) 다시 시도하지 않고 `AgentAuthRejectedError` 로 멈춥니다. 다시 붙어도 결과가 같기 때문입니다.
+  종전에는 1초부터 30초 간격으로 영원히 다시 시도했고, `waitConnected()` 는 끝나지 않았습니다.
+  - `agent.connect()`·`serve()` 가 곧바로 `AgentAuthRejectedError` 를 던집니다.
+  - 실행 중에 키가 폐기되거나 번호가 회수되면 `serve()` 가 진행 중 통화를 마친 뒤 이 오류로 끝납니다(정상 종료로 묻히지 않습니다).
+  - `err.code` 로 사유를 구분합니다: `api_key_invalid`·`api_key_missing`·`number_not_owned`·`number_missing`.
+  - 429·5xx·네트워크 오류는 종전처럼 다시 연결합니다.
+
 ## 0.57.0 (2026-10-23)
 
 키패드(DTMF) 입력을 Twilio `<Gather>`·LiveKit `GetDtmfTask`·Pipecat `DTMFAggregator` 와 같은 방식으로 맞췄습니다. Python SDK 0.70.0 과 같은 변경입니다.

@@ -25,6 +25,7 @@ export {
   ServiceUnavailableError,
   AgentError,
   AgentConnectionError,
+  AgentAuthRejectedError,
   SolapiBridgeError,
 } from './error.js';
 export type { ClawOpsErrorCode } from './error.js';

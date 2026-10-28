@@ -5,6 +5,7 @@
 import type { WebSocket as WsType } from 'ws';
 import type { Logger } from 'pino';
 import { NOOP_LOGGER } from './logger.js';
+import { AgentAuthRejectedError } from '../error.js';
 
 export interface ControlWsOptions {
   baseUrl: string;
@@ -18,6 +19,11 @@ export interface ControlWsOptions {
    * Reconnection has already been abandoned by the time this fires.
    */
   onTerminalClose?: (info: { code: number; reason: string }) => void;
+  /**
+   * Called when the server refuses the handshake for good (revoked key, number not owned …).
+   * Reconnection has already been abandoned by the time this fires.
+   */
+  onRejected?: (err: AgentAuthRejectedError) => void;
 }
 
 /**
@@ -62,6 +68,35 @@ export const CLOSE_OWNERSHIP_LOST = 4403;
 const NON_RETRYABLE_CLOSE_CODES = new Set<number>([CLOSE_REPLACED, CLOSE_OWNERSHIP_LOST]);
 
 /**
+ * Handshake statuses that will not change on retry — the key (401·403), the number (403) or the
+ * request itself (400). Measured on the server on 2026-10-28: agents on 21 accounts were retrying
+ * a 403 every 30 seconds, forever, with a revoked key or a reclaimed number — and nobody knew.
+ * Transient failures (429 reconnect throttle, 5xx, network) still reconnect.
+ */
+const REJECTED_HANDSHAKE_STATUSES = new Set<number>([400, 401, 403]);
+
+function rejectionMessage(status: number, code: string | null, accountId: string, number?: string): string {
+  switch (code) {
+    case 'api_key_invalid':
+      return (
+        'The API key is not valid (revoked, expired, or from another account). ' +
+        `Issue a new key for account ${accountId} and set it.`
+      );
+    case 'api_key_missing':
+      return 'No API key was sent. Set the apiKey option or CLAWOPS_API_KEY.';
+    case 'number_not_owned':
+      return (
+        `Number ${number ?? '(none)'} does not belong to account ${accountId} ` +
+        '(released, reclaimed, or another account\'s). Check the number in the console.'
+      );
+    case 'number_missing':
+      return 'No number was sent. Set the from option.';
+    default:
+      return `The server refused the connection (HTTP ${status}). Check the API key and the number (${number ?? '(none)'}).`;
+  }
+}
+
+/**
  * Build the full control WebSocket URL from options.
  * Matches Python SDK: /v1/accounts/{account_id}/agent/listen?number={number}
  */
@@ -94,7 +129,9 @@ export class ControlWebSocket {
   private _reconnectDelay = INITIAL_RECONNECT_DELAY;
   private _closed = false;
   private _connectedResolve: (() => void) | null = null;
+  private _connectedReject: ((err: Error) => void) | null = null;
   private _connectedPromise: Promise<void>;
+  private _rejected: AgentAuthRejectedError | null = null;
   private _log: Logger = NOOP_LOGGER;
   private _pingTimer: ReturnType<typeof setTimeout> | null = null;
   // Lame duck: this process is stepping down. It must NOT reconnect for any reason — a
@@ -108,9 +145,13 @@ export class ControlWebSocket {
 
   constructor(private readonly _options: ControlWsOptions) {
     this._url = buildControlWsUrl(_options);
-    this._connectedPromise = new Promise<void>((resolve) => {
+    this._connectedPromise = new Promise<void>((resolve, reject) => {
       this._connectedResolve = resolve;
+      this._connectedReject = reject;
     });
+    // A rejection nobody awaits must not become an unhandled rejection (which kills the process
+    // on Node's default settings). waitConnected() still returns the original promise.
+    this._connectedPromise.catch(() => {});
   }
 
   /** Stop reconnecting for good — this process is stepping down. Not reversible. */
@@ -141,9 +182,19 @@ export class ControlWebSocket {
     await this._doConnect();
   }
 
-  /** Wait until the WebSocket is connected. */
+  /**
+   * Wait until the WebSocket is connected.
+   *
+   * Rejects with `AgentAuthRejectedError` as soon as the server refuses the handshake for good —
+   * before, it never settled and the reconnect loop ran on in the background.
+   */
   async waitConnected(): Promise<void> {
     return this._connectedPromise;
+  }
+
+  /** The refusal that stopped this connection, if any. */
+  get rejected(): AgentAuthRejectedError | null {
+    return this._rejected;
   }
 
   /** Request a call transfer and wait for the result. */
@@ -200,12 +251,49 @@ export class ControlWebSocket {
     });
     this._ws = ws;
 
+    // Without this listener ws turns any non-101 answer into a generic error + close(1006), so a
+    // revoked key looked exactly like a network blip and was retried forever. With it, ws leaves
+    // the handshake to us: read the status, then terminate() to get the usual error + close.
+    ws.on('unexpected-response', (_req, res) => {
+      const status = res.statusCode ?? 0;
+      const header = res.headers['x-clawops-error-code'];
+      const code = (Array.isArray(header) ? header[0] : header) || null;
+      res.resume();
+      if (REJECTED_HANDSHAKE_STATUSES.has(status)) {
+        const err = new AgentAuthRejectedError(
+          rejectionMessage(status, code, this._options.accountId, this._options.number),
+          { status, code },
+        );
+        // Stop for good before terminate(): the close it emits must not schedule a reconnect.
+        this._closed = true;
+        this._rejected = err;
+        this._log.error(
+          'Control WS refused (%d %s) — not reconnecting: %s',
+          status,
+          code ?? '-',
+          err.message,
+        );
+        this._connectedReject?.(err);
+        this._connectedResolve = null;
+        this._connectedReject = null;
+        try {
+          this._options.onRejected?.(err);
+        } catch (cbErr) {
+          this._log.error({ err: cbErr }, 'onRejected callback failed');
+        }
+      } else {
+        this._log.warn('Control WS error: Unexpected server response: %d', status);
+      }
+      ws.terminate();
+    });
+
     ws.on('open', () => {
       this._reconnectDelay = INITIAL_RECONNECT_DELAY;
       this._resetPingTimer();
       if (this._connectedResolve) {
         this._connectedResolve();
         this._connectedResolve = null;
+        this._connectedReject = null;
       }
       this._log.info('Control WS connected: %s', this._url);
     });
@@ -244,6 +332,8 @@ export class ControlWebSocket {
     });
 
     ws.on('error', (err: Error) => {
+      // The refusal was already logged with its reason; terminate()'s own error adds nothing.
+      if (this._rejected) return;
       this._log.warn('Control WS error: %s', err.message);
     });
   }

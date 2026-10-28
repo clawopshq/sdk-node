@@ -3,7 +3,7 @@
  */
 
 import { DEFAULT_BASE_URL } from '../constants.js';
-import { AgentConnectionError, AgentError } from '../error.js';
+import { AgentAuthRejectedError, AgentConnectionError, AgentError } from '../error.js';
 import { applyUlawGain, ulawToPcm16 } from './audio.js';
 import { CLOSE_REPLACED, ControlWebSocket } from './control-ws.js';
 import {
@@ -242,6 +242,11 @@ export class ClawOpsAgent {
   /** Set once the server hands this number to another process (rolling deploy takeover). */
   private _takenOver = false;
   /**
+   * Set once the server refuses the control connection for good (revoked key, number reclaimed).
+   * Reconnecting gives the same answer, so this agent is finished.
+   */
+  private _authRejected: AgentAuthRejectedError | null = null;
+  /**
    * Set once we deliberately give up the control connection (`drain()`/`disconnect()`).
    * Distinct from `_controlWs === null`, which also covers "never connected": only after a
    * hand-back is it certain that no server terminal frame can still arrive.
@@ -408,8 +413,15 @@ export class ClawOpsAgent {
     return this;
   }
 
-  /** Connect to the ClawOps platform and start listening for calls. */
+  /**
+   * Connect to the ClawOps platform and start listening for calls.
+   *
+   * Throws `AgentAuthRejectedError` right away when the server refuses the connection (the API
+   * key is revoked or expired, or the number is not this account's). Retrying gives the same
+   * answer — fix the key or number and start a new agent.
+   */
   async connect(): Promise<void> {
+    if (this._authRejected) throw this._authRejected;
     if (this._controlWs) return;
 
     // Deployment diagnostics — these change nothing, they only make the quiet failures loud.
@@ -455,6 +467,7 @@ export class ClawOpsAgent {
       accountId: this._accountId,
       number: this._fromNumber,
       onTerminalClose: (info) => this._handleTakenOver(info),
+      onRejected: (err) => this._handleRejected(err),
     });
 
     this._controlWs.setLogger(this._log);
@@ -482,6 +495,12 @@ export class ClawOpsAgent {
       this._ready = true;
       writeReadyMarker(this._log);
     } catch (err) {
+      if (err instanceof AgentAuthRejectedError) {
+        // Refused on the first attempt — the reconnect loop has already stopped. It never
+        // connected, so leave the slot empty.
+        this._controlWs = null;
+        throw err;
+      }
       throw new AgentConnectionError(
         `Failed to connect to ClawOps: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -566,6 +585,8 @@ export class ClawOpsAgent {
       retired.set();
       stop.set();
     }
+    // Refused right after connect — go straight to draining below.
+    if (this._authRejected) stop.set();
 
     let signals = 0;
     const onSignal = (name: string): void => {
@@ -600,6 +621,8 @@ export class ClawOpsAgent {
     try {
       await stop.promise;
       const deadlineAt = Date.now() + shutdownDeadlineMs;
+      // A refused slot has no successor to hand to and nothing to hold — only finish the calls.
+      if (this._authRejected) skipHandover.set();
 
       // ── Phase 1: wait for the handover ──
       if (handoverWaitMs > 0 && !skipHandover.done && !retired.done && !cut.done) {
@@ -644,6 +667,8 @@ export class ClawOpsAgent {
       this._stopServe = null;
       this._onRetired = null;
     }
+    // Returning quietly would end the process with exit code 0 and bury the refusal.
+    if (this._authRejected) throw this._authRejected;
   }
 
   private _handleTakenOver(info: { code: number; reason: string }): void {
@@ -684,6 +709,17 @@ export class ClawOpsAgent {
     this._onTakenOver?.({ code: CLOSE_REPLACED, reason });
     this._onRetired?.();
     this._stopServe?.('retired');
+  }
+
+  /**
+   * The server refused a reconnect for good — the key was revoked or the number reclaimed while
+   * running. No more calls can come here: drop readiness and wake serve() so it finishes the calls
+   * in progress and ends with `AgentAuthRejectedError`.
+   */
+  private _handleRejected(err: AgentAuthRejectedError): void {
+    this._authRejected = err;
+    this._notReady();
+    this._stopServe?.('rejected');
   }
 
   /** No longer able to take calls — drop both readiness signals. Idempotent. */

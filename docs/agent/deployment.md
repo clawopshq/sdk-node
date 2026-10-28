@@ -250,6 +250,7 @@ const { completed, forced } = await agent.drain(); // 상한 없음: 통화가 �
 | 스케일인·정지에서 전화가 끊김 | 후임이 없는데 자리를 붙들고 기다림 | `serve({ handoverWaitMs: 0 })` |
 | 인스턴스 여러 개가 서로 밀어냄 · `CrashLoopBackOff` | SDK 가 `0.43.0` 미만 | 1번 |
 | `call_end` 의 `ended_duration` 이 `null` | 드레이닝 중에 끝난 통화 | 통화 조회 API 로 확인 |
+| `AgentAuthRejectedError` 로 멈춤(`Control WS refused`) | API 키 폐기·만료(`api_key_invalid`) 또는 번호가 계정 것이 아님(`number_not_owned`) | 새 키를 넣거나 번호를 고친 뒤 다시 띄움. 다시 연결해도 같아 SDK 는 재시도하지 않음(0.58.0~) |
 
 ### read-only 파일시스템
 

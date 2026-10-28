@@ -301,6 +301,26 @@ export class AgentConnectionError extends AgentError {
   }
 }
 
+/**
+ * The server refused the control connection (HTTP 400·401·403) — retrying gives the same answer.
+ *
+ * Thrown when the API key is missing, revoked, expired or belongs to another account, or the
+ * number is not this account's. The SDK stops reconnecting. `code` is the server's reason
+ * (`X-ClawOps-Error-Code`): `api_key_missing` · `api_key_invalid` · `number_missing` ·
+ * `number_not_owned`, or `null` from a server that does not send one.
+ */
+export class AgentAuthRejectedError extends AgentConnectionError {
+  readonly status: number;
+  readonly code: string | null;
+
+  constructor(message: string, options: { status: number; code: string | null }) {
+    super(message);
+    this.name = 'AgentAuthRejectedError';
+    this.status = options.status;
+    this.code = options.code;
+  }
+}
+
 const STATUS_CODE_TO_ERROR: Record<
   number,
   new (
